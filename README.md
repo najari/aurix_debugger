@@ -7,6 +7,7 @@ AURIX(TC27x) 디버그 환경 실험 — Infineon DAS/TAS 스택 위에서 동�
 | [`mcd_tas/`](mcd_tas/README.md) | **MCD API v1.1 over TAS** — `mcdxdas.dll` 대체 DLL 프로토타입(C++, CMake). TAS 서버(TCP 24817)를 백엔드로 MCD 54개 함수 export, run/stop/step/reset/트리거 실구현 |
 | [`mcdsrl/`](mcdsrl/README.md) | **MCDS Recorder Library over TAS** — `mcds_recorder.dll` API 호환 재구현(22 export), TAS 백엔드로 MCDS 트레이스 녹화 → `.mcds` |
 | [`mcdsdl/`](mcdsdl/README.md) | **MCDS Decoder Library** — `mcds_decoder.dll` API 표면(25 export) 프로토타입: `.mcds` 로드/저장·ELF 심볼·메시지 문자열 (디코드 엔진은 미구현) |
+| [`m25_tcf/`](m25_tcf/README.md) | **AURIX TCF 에이전트 백엔드** — Eclipse TCF 에이전트(`tcf.agent` c441453)에 얹는 TC27x 네이티브 백엔드: TAS 접속, 3코어 run/stop/step, HW 브레이크포인트(TR0–7), CSA 스택 크롤, TriCore 디스어셈블러, 리셋. VS Code(AURIX TCF 확장)에서 디버깅 |
 | [`docs/`](docs/) | TAS 프로토콜 캡처, DAS/MCD 도구 분석, TC27x 디버그 레지스터, 프로토타입 설계 문서 |
 
 ## 빠른 시작
