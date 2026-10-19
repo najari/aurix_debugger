@@ -1,0 +1,67 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: demo_flash.elf",
+      "detail": "Link the demo for PF1 sector 0x8021C000 (build_flash.ps1)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\build_flash.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "m25: flash demo (PF1 0x8021C000)",
+      "detail": "Build demo_flash.elf, write it with the M25 flasher (PF1 sector 0x8021C000 only), reset, run",
+      "dependsOn": "build: demo_flash.elf",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\..\\..\\tools\\m25_flash_task.ps1",
+        "-Elf", "${workspaceFolder}\\build\\demo_flash.elf",
+        "-Agent", "${workspaceFolder}\\agent\\tcf-agent.exe",
+        "-Device", "DAS JTAG AURDUINO 46YPEADW",
+        "-BackupDir", "${workspaceFolder}\\.m25_flash_backup"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "m25: flash PF1 test image",
+      "detail": "M25 flasher: write m25_flashtest_tc27x.elf (PF1 sector 0xA021C000 only), reset, run",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\..\\..\\tools\\m25_flash_task.ps1",
+        "-Elf", "${workspaceFolder}\\..\\..\\flasher\\m25_flashtest_tc27x.elf",
+        "-Agent", "${workspaceFolder}\\agent\\tcf-agent.exe",
+        "-Device", "DAS JTAG AURDUINO 46YPEADW",
+        "-BackupDir", "${workspaceFolder}\\.m25_flash_backup"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "m25: restore PF1 test sector",
+      "detail": "M25 flasher: put the sectors written by the last flash back from .m25_flash_backup",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\..\\..\\tools\\m25_flash_task.ps1",
+        "-Elf", "${workspaceFolder}\\..\\..\\flasher\\m25_flashtest_tc27x.elf",
+        "-Agent", "${workspaceFolder}\\agent\\tcf-agent.exe",
+        "-Device", "DAS JTAG AURDUINO 46YPEADW",
+        "-BackupDir", "${workspaceFolder}\\.m25_flash_backup",
+        "-Restore"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    }
+  ]
+}

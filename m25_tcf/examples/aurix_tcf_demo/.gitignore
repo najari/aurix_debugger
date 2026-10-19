@@ -1,0 +1,5 @@
+# build output, agent binary and local state are not tracked
+/build/
+/agent/
+/state/
+/.m25_flash_backup/

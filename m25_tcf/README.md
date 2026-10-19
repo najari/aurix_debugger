@@ -27,6 +27,7 @@ flasher/                   자체 PFLASH 플래시 로더 (TC27x / TC37x 빌드)
 tools/m25_4b_flash.js      플래셔 호스트 드라이버 (장치 자동 판별, 페이지 단위 백업·복원)
 tools/m25_4b_flash_selftest.ps1  플래시 셀프테스트 (M25_4B_FLASHER.md 12절)
 tools/m25_flash_task.ps1   VS Code preLaunchTask: F5에서 ELF 굽기 → 리셋 → 디버그 (13절)
+examples/aurix_tcf_demo/   VS Code 테스트 프로젝트: 호출 스택·디스어셈블리·스텝, RAM/PFLASH 링크, 두 플래셔 (14절)
 patches/
   cmake-tcf-lib.patch   업스트림 cmake-tcf-lib.txt 수정 (aurix glob + context-win32 제외 + ENABLE_*)
   main-options.patch    업스트림 main.c 수정 (aurix-debugger 호환 옵션 수용)
@@ -89,3 +90,4 @@ Step Over(호출 포함, 긴 줄 포함), Step Into(프롤로그 건너뜀), Ste
 - `tcf_test_client.js` — TCF 프로토콜 스모크 (컨텍스트·레지스터·메모리·suspend)
 - `ext_client_test.js` — VS Code 확장 자체 클라이언트(out/tcfclient.js)로 조회
   (위 파일들은 `C:\work\tcf_agent\`에 있음 — 필요 시 이 디렉터리로 이동)
+

@@ -1,0 +1,52 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "aurix-tcf",
+      "request": "launch",
+      "name": "aurix_tcf_demo (RAM, CPU0)",
+      "host": "127.0.0.1",
+      "port": 1534,
+      "autoStartAgent": true,
+      "program": "${workspaceFolder}\\build\\demo.elf",
+      "workspace": "${workspaceFolder}",
+      "targetDevice": "DAS JTAG AURDUINO 46YPEADW",
+      "entryFunction": "",
+      "svdFile": "",
+      "enableFlashing": false,
+      "enableConsoleLog": true
+    },
+    {
+      "type": "aurix-tcf",
+      "request": "launch",
+      "name": "aurix_tcf_demo (PFLASH, CPU0)",
+      "preLaunchTask": "build: demo_flash.elf",
+      "host": "127.0.0.1",
+      "port": 1534,
+      "autoStartAgent": true,
+      "program": "${workspaceFolder}\\build\\demo_flash.elf",
+      "workspace": "${workspaceFolder}",
+      "targetDevice": "DAS JTAG AURDUINO 46YPEADW",
+      "entryFunction": "",
+      "svdFile": "",
+      "enableFlashing": true,
+      "enableConsoleLog": true
+    },
+    {
+      "type": "aurix-tcf",
+      "request": "launch",
+      "name": "aurix_tcf_demo (PFLASH, CPU0, M25 flasher)",
+      "preLaunchTask": "m25: flash demo (PF1 0x8021C000)",
+      "host": "127.0.0.1",
+      "port": 1534,
+      "autoStartAgent": true,
+      "program": "${workspaceFolder}\\build\\demo_flash.elf",
+      "workspace": "${workspaceFolder}",
+      "targetDevice": "DAS JTAG AURDUINO 46YPEADW",
+      "entryFunction": "",
+      "svdFile": "",
+      "enableFlashing": false,
+      "enableConsoleLog": true
+    }
+  ]
+}

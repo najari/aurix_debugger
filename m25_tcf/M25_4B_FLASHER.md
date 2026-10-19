@@ -248,3 +248,39 @@ F5 → preLaunchTask: m25_flash_task.ps1 -Elf <elf> -Agent <tcf-agent.exe> -Devi
 - VS Code F5: preLaunchTask가 굽고 리셋·실행 → 디버그 세션 시작 → 세션 중 flashcheck 일치 확인
 - VS Code 작업 "m25: restore PF1 test sector": 512 페이지 모두 지워진 원래 상태로 복원
 - 사후: 앱 섹터 12개 = 전체 백업과 일치, 3코어 앱 실행
+
+
+## 14. Infineon AURIX Flasher(확장의 `enableFlashing`)로 이 보드 굽기 (2026-10-20)
+
+13절의 "동작하지 않음"은 **장치 목록에 없어서**였고, 목록에 추가하면 Aurix Flasher로도 PFLASH에 쓸 수 있다.
+두 플래셔의 차이: Infineon 플래셔는 ELF 세그먼트를 **ELF에 적힌 주소**에 쓴다 → RAM 주소로 링크한 ELF
+(`demo.elf`, PSPR/DSPR)는 SRAM에만 쓰이고(`Found Data to write/verify in SRAM`) 브레이크·스텝이 동작하지 않는다.
+PFLASH 주소(0x8…)로 링크한 ELF를 써야 한다 (`examples/aurix_tcf_demo/demo_flash.ld`).
+
+**장치 추가** (설치된 확장 `…\extensions\zehuazhang.vscode-aurix-tcf-debug-0.1.0\bin\aurixflasher\DeviceConfigs\`):
+
+1. `TC27x_D_step_Extended_ADAS.json`을 `TC27x_C_step_ED.json`으로 복사하고 세 값만 변경
+   - `deviceName`: `TC27x C step ED (JTAG ID 0x401DA083, added for ShieldBuddy TC275ED)`
+   - `ChipID`: `0x47427060`, `JTAGID`: `0x401DA083` (C-step. D-step은 `0x501DA083`)
+   - 메모리·섹터 맵은 그대로 (PD/ED는 ChipID만 다르고, C/D-step은 같은 플래시 구성)
+2. `devices.json`의 배열에 `"TC27x_C_step_ED.json"` 한 줄 추가 (원본은 `devices.json.orig_m25`로 보관)
+3. VS Code 창 Reload Window
+
+JTAG ID는 `m25_4b_flash.js device` 또는 `No device found with JTAG ID 0x…` 메시지로 확인한다.
+**확장을 업데이트하면 이 변경이 사라진다** (다시 적용).
+
+**`-erase all` 재시도 제거**: 확장은 플래싱이 실패하면 `-erase all`(PFLASH 전체 지우기)로 자동 재시도한다.
+연결 실패·ELF 오류에서도 전체가 지워지므로 `out/extension.js`의 재시도 블록을 제거하고 실패 메시지만 남겼다
+(원본 `extension.js.orig_erase_all`, 확장 업데이트 시 덮어써짐).
+
+**검증** (`examples/aurix_tcf_demo`, 구성 "aurix_tcf_demo (PFLASH, CPU0)", `enableFlashing: true`):
+- `aurixflasher.exe -gui off -elf demo_flash.elf -start off -ver on -id 0` → Connected `[TC2x] TC27x`,
+  Erasing / Programming / Verifying 모두 Pass, `Flashing completed successfully` (PF1 `0xA021C000`, 8 페이지)
+- 세션 시작 후 `node tools/flash_start.js`(플래시 내용 일치 확인, core0 PC = `main`) →
+  줄 브레이크 적중("PAUSED ON BREAKPOINT"), 호출 스택 `scale → accumulate → compute → main`(소스 줄 포함),
+  지역 변수, 플래시 주소 디스어셈블리, Step Over/Into — 모두 정상
+- 사후: `reset run`, 앱 섹터 12개 = 전체 백업과 일치
+
+**주의**: Aurix Flasher 실행 후에는 지워진 페이지가 리셋 전까지 데이터로 읽히고 core0 PC가 플래셔 스텁에 있다
+(`-start off`). 디버그 세션의 시작 PC를 지정하려면 `flash_start.js`처럼 PC를 직접 설정하거나 리셋한다.
+데모 프로젝트: `examples/aurix_tcf_demo/` (RAM 링크 / PFLASH 링크, 두 플래셔 구성).
