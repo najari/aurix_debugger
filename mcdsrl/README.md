@@ -29,7 +29,22 @@ cleanup write_list!)·`get_data_from_fifo`(연속 전용 → 미지원).
   `RecordingTime` + `START_OF_MCDS_CONFIG` + (addr,value) 쌍 + `START_OF_TDR` + raw
 - 검증 도구: `tests/mcdsrl_record.cpp`(CCL 정본 흐름!) · `tests/map_probe.cpp`(접근 매트릭스)
 
-### ⚠ MCDS 접근 하드웨어 블로커 (실측 규명 — 원본도 동일 실패!)
+## 코드 리뷰 수정 (2026-10-19)
+
+소스 리뷰에서 찾은 결함 6건 수정 (2·3·4·6번은 수정 전/후 DLL로 재현·검증, 스모크 회귀 원본과 동일):
+
+1. **어댑터 클럭 덮어쓰기**: 녹화 시작 시 AM15 `0xC0100`(어댑터 JTAG 클럭, 이 구성에서 400 kHz)이 2 MHz 미만이면
+   80 MHz를 써 넣던 동작 제거 → 읽기 전용, 값이 부적절하면 `McdsFrequencyMHz` 줄을 쓰지 않음
+   (※ 녹화 경로는 MCDS 블로커 때문에 실행 검증 불가 — 코드·기존 파일 근거)
+2. **cleanup 설정 범위 미검사**: 잘못된 `num_reg`/`vsi`로 전역 배열 밖에 써서 크래시(0xC0000005) → 검사 추가
+3. **블록 접근 정렬/크기 제한**: `read_block`/`write_block`이 8바이트 정렬·1KB 이하만 성공 →
+   4B 머리/1KB 단위/4B 꼬리로 분할 (`0x70000004`·2052B 등 전부 성공, 워드 읽기와 내용 일치).
+   API 규정(32비트 정렬·크기) 밖의 3·5·6·7바이트나 비정렬은 오류로 거절(1·2바이트는 종전대로)
+4. **단일 접근 실패 시 오류 문자열 없음**: `get_error`가 이전 값/NULL → 실패 이유 기록
+5. **`McdsToolUsed`**: 어댑터 이름 대신 원본과 같은 `"MCDS Recorder Library 3.3.0"`
+6. **거부된 설정이 이전 설정을 유효로 남김**: 설정 교체 시작 시 `cfg_set`/`cleanup_set` 해제 → 전체 수락 후에만 설정
+
+## ⚠ MCDS 접근 하드웨어 블로커 (실측 규명 — 원본도 동일 실패!)
 
 이 구성(DAS JTAG AURDUINO)에서는 **MCDS 레지스터 접근(map 1, 0xF00E6xxx/8xxx)이 불가능**
 (서버 응답 0x8D 버스 에러) — **원본 recorder도 동일 지점에서 실패**("Write of addr F00E6000

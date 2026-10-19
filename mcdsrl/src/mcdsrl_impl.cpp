@@ -485,8 +485,9 @@ mcdsl_return_et mcdsrl_reset_device(mcd_bool_t halt_after_reset)
 static mcdsl_return_et map_rw_result(int rc, uint8_t pl0_err,
                                      const char *what)
 {
-    if (rc == 0)
-        return MCDSL_RET_DEVICE_DATA;
+    if (rc == 0)    /* frame processed, but the access itself failed */
+        return err_set(MCDSL_RET_DEVICE_DATA,
+                       "%s: access failed (device returned an error)", what);
     if (rc == -1 || rc == -2)
         return err_set(MCDSL_RET_TOOL_HW_CONNECTION,
                        "%s: transport error (rc %d)", what, rc);
@@ -652,12 +653,76 @@ mcdsl_return_et mcdsrl_write_list(const uint32_t *addr, const uint32_t *value,
     return map_rw_result(rc, pe, "mcdsrl_write_list");
 }
 
+/* Block access of any 32 bit aligned / sized length.  The TAS block
+ * commands are limited (RDBLK: 8 byte aligned, multiple of 8, <= 1 KB;
+ * WRBLK: multiple of 4, <= 1 KB), so the block is split into: an optional
+ * leading 4 byte word (reads at addr % 8 == 4), the 1 KB (or smaller)
+ * block items, and an optional trailing 4 byte word.  Sizes 1, 2 and 8
+ * keep the single-item path of the earlier versions. */
+static mcdsl_return_et block_access(uint32_t addr, uint8_t *data,
+                                    uint32_t num_bytes, int is_write,
+                                    uint32_t *num_bytes_ok, const char *what)
+{
+    tas_rw_item *items;
+    uint32_t n = 0, off = 0, i, okb = 0;
+    uint32_t cap = num_bytes / 1024u + 3u;
+    uint8_t pe = 0;
+    int rc;
+
+    if (num_bytes_ok != NULL)
+        *num_bytes_ok = 0;
+    if (num_bytes != 1 && num_bytes != 2 &&
+        ((addr & 3u) != 0 || (num_bytes & 3u) != 0))
+        return err_set(MCDSL_RET_FUNCTION_USED_WRONGLY,
+                       "%s: block must be 32 bit aligned and sized", what);
+    if ((uint64_t)addr + num_bytes > 0x100000000ull)
+        return err_set(MCDSL_RET_FUNCTION_USED_WRONGLY,
+                       "%s: block exceeds the 32 bit address range", what);
+
+    items = (tas_rw_item *)calloc(cap, sizeof(*items));
+    if (items == NULL)
+        return err_set(MCDSL_RET_UNKNOWN_ERROR, "Out of memory");
+
+    while (off < num_bytes) {
+        uint32_t len = num_bytes - off;
+        uint32_t a = addr + off;
+
+        if (!is_write && len > 8 && (a & 7u) != 0)
+            len = 4;                       /* align to 8 for RDBLK        */
+        else if (len > 1024)
+            len = 1024;
+        else if (!is_write && len > 8 && (len & 7u) != 0)
+            len &= ~7u;                    /* the tail goes in a 4 B item */
+        if (n >= cap) {                    /* guard: cannot happen        */
+            free(items);
+            return err_set(MCDSL_RET_UNKNOWN_ERROR, "%s: internal error",
+                           what);
+        }
+        items[n].addr_map = 0;             /* the target map (0)          */
+        items[n].addr = a;
+        items[n].num_bytes = len;
+        items[n].is_write = is_write;
+        items[n].data = data + off;
+        n++;
+        off += len;
+    }
+
+    rc = tas_rw_exec(&g.conn, items, n, g.con.pl0_max_num_rw, &pe);
+    for (i = 0; i < n && items[i].ok; i++)
+        okb += items[i].num_bytes;
+    if (num_bytes_ok != NULL)
+        *num_bytes_ok = okb;
+    free(items);
+    if (rc == 0 && okb == num_bytes) {
+        err_clear();
+        return MCDSL_RET_SUCCESS;
+    }
+    return map_rw_result(rc, pe, what);
+}
+
 mcdsl_return_et mcdsrl_read_block(uint32_t addr, void *data,
                                   uint32_t num_bytes, uint32_t *num_bytes_ok)
 {
-    tas_rw_item it;
-    uint8_t pe = 0;
-    int rc;
     mcdsl_return_et r;
 
     r = rw_check();
@@ -666,28 +731,13 @@ mcdsl_return_et mcdsrl_read_block(uint32_t addr, void *data,
     if (data == NULL || num_bytes == 0)
         return err_set(MCDSL_RET_FUNCTION_USED_WRONGLY,
                        "invalid block parameters");
-
-    memset(&it, 0, sizeof(it));
-    it.addr_map = 0;   /* the public access: the caller's map (0) */
-    it.addr = addr;
-    it.num_bytes = num_bytes;
-    it.data = (uint8_t *)data;
-    rc = tas_rw_exec(&g.conn, &it, 1, g.con.pl0_max_num_rw, &pe);
-    if (num_bytes_ok != NULL)
-        *num_bytes_ok = it.num_bytes_ok;
-    if (rc == 0 && it.ok) {
-        err_clear();
-        return MCDSL_RET_SUCCESS;
-    }
-    return map_rw_result((rc == 0) ? 0 : rc, pe, "mcdsrl_read_block");
+    return block_access(addr, (uint8_t *)data, num_bytes, 0, num_bytes_ok,
+                        "mcdsrl_read_block");
 }
 
 mcdsl_return_et mcdsrl_write_block(uint32_t addr, const void *data,
                                    uint32_t num_bytes, uint32_t *num_bytes_ok)
 {
-    tas_rw_item it;
-    uint8_t pe = 0;
-    int rc;
     mcdsl_return_et r;
 
     r = rw_check();
@@ -696,21 +746,8 @@ mcdsl_return_et mcdsrl_write_block(uint32_t addr, const void *data,
     if (data == NULL || num_bytes == 0)
         return err_set(MCDSL_RET_FUNCTION_USED_WRONGLY,
                        "invalid block parameters");
-
-    memset(&it, 0, sizeof(it));
-    it.addr_map = 0;   /* the public access: the caller's map (0) */
-    it.addr = addr;
-    it.num_bytes = num_bytes;
-    it.is_write = 1;
-    it.data = (uint8_t *)data;
-    rc = tas_rw_exec(&g.conn, &it, 1, g.con.pl0_max_num_rw, &pe);
-    if (num_bytes_ok != NULL)
-        *num_bytes_ok = it.num_bytes_ok;
-    if (rc == 0 && it.ok) {
-        err_clear();
-        return MCDSL_RET_SUCCESS;
-    }
-    return map_rw_result((rc == 0) ? 0 : rc, pe, "mcdsrl_write_block");
+    return block_access(addr, (uint8_t *)data, num_bytes, 1, num_bytes_ok,
+                        "mcdsrl_write_block");
 }
 
 mcdsl_return_et mcdsrl_read_timestamped(uint32_t addr, uint32_t *value,
@@ -786,7 +823,6 @@ mcdsl_return_et mcdsrl_read_timestamped(uint32_t addr, uint32_t *value,
 #define MCDSRL_OFF_FIFO_FILL    0x000200u
 #define MCDSRL_TRACE_STOP_VAL   0x8400u
 #define MCDSRL_FREQ_REG         0xC0100u
-#define MCDSRL_FREQ_DEFAULT     80000000u
 #define MCDSRL_FREQ_MIN         2000000u
 #define MCDSRL_CPU0_START_A     0xF0000490u
 #define MCDSRL_CPU0_START_B     0xFA101010u
@@ -1010,15 +1046,20 @@ static mcdsl_return_et mcdsrl_write_list_emap(const uint32_t *addr,
     return map_rw_result(rc, pe, "mcdsrl_write_list_emap");
 }
 
-/* the MCDS clock measurement (reference recorder_measure_mcds_freq: read
- * 0xC0100 via the server internal map 15; a value below 2 MHz is replaced
- * by the 80 MHz default). */
+/* The MCDS clock measurement: read 0xC0100 via the server internal map 15
+ * (reference recorder_measure_mcds_freq).  Read only: the register is the
+ * access HW (adapter) frequency - on this setup it reads 400 kHz - so it
+ * must never be overwritten with a default (an earlier version wrote
+ * 80 MHz into it and thereby changed the JTAG clock).  A value below
+ * 2 MHz is not a usable MCDS clock: the frequency stays unknown (0) and
+ * the .mcds header carries no McdsFrequencyMHz line. */
 static void measure_mcds_freq(void)
 {
     tas_rw_item it;
     uint8_t pe = 0;
     uint32_t f = 0;
 
+    g.freq_hz = 0.0f;
     memset(&it, 0, sizeof(it));
     it.addr_map = TAS_AM15;
     it.addr = MCDSRL_FREQ_REG;
@@ -1026,17 +1067,8 @@ static void measure_mcds_freq(void)
     it.data = (uint8_t *)&f;
     if (tas_rw_exec(&g.conn, &it, 1, g.con.pl0_max_num_rw, &pe) != 0 || !it.ok)
         return;
-    if (f < MCDSRL_FREQ_MIN) {
-        f = MCDSRL_FREQ_DEFAULT;
-        memset(&it, 0, sizeof(it));
-        it.addr_map = TAS_AM15;
-        it.addr = MCDSRL_FREQ_REG;
-        it.num_bytes = 4;
-        it.is_write = 1;
-        it.data = (uint8_t *)&f;
-        tas_rw_exec(&g.conn, &it, 1, g.con.pl0_max_num_rw, &pe);
-    }
-    g.freq_hz = (float)f;
+    if (f >= MCDSRL_FREQ_MIN)
+        g.freq_hz = (float)f;
 }
 
 /* the .mcds text header (reference trace_file_write_header) */
@@ -1052,8 +1084,9 @@ static void trace_file_write_header(void)
     fprintf(g.trace_file, "McdsDeviceUsed=0x%8.8X  (%.32s)\n",
             (unsigned)g.mcdsc.hdr.device_type,
             device_id_to_name_long(g.mcdsc.hdr.device_type, ed));
+    /* the reference writes its library name here (not the access HW) */
     fprintf(g.trace_file, "McdsToolUsed=\"%.64s\"\n",
-            (g.n_targets > 0) ? g.targets[0].identifier : "");
+            "MCDS Recorder Library 3.3.0");
     if (g.freq_hz > 1000000.0f)
         fprintf(g.trace_file, "McdsFrequencyMHz=%.1f\n",
                 (double)(g.freq_hz / 1000000.0f));
@@ -1083,6 +1116,21 @@ mcdsl_return_et mcdsrl_set_mcdsconfig(const mcdsl_mcdsc_st *mcdsc,
         vsi + num > 2 * MCDSL_MCDSC_MAX_NUM_REG)
         return err_set(MCDSL_RET_PARAM_VALUE_NOT_SUPPORTED,
                        "mcdsconfig register arrays out of range");
+    /* the cleanup config is copied below with the same indexing: it needs
+     * the same range checks (a bad header would write outside the arrays) */
+    if (mcdsc_cleanup->hdr.num_reg > MCDSL_MCDSC_MAX_NUM_REG ||
+        mcdsc_cleanup->hdr.vsi > 2 * MCDSL_MCDSC_MAX_NUM_REG ||
+        mcdsc_cleanup->hdr.vsi + mcdsc_cleanup->hdr.num_reg >
+            2 * MCDSL_MCDSC_MAX_NUM_REG)
+        return err_set(MCDSL_RET_PARAM_VALUE_NOT_SUPPORTED,
+                       "mcdsconfig cleanup register arrays out of range");
+
+    /* From here the stored config is replaced.  A rejection further down
+     * (no EMEM configuration) must not leave the previous, now overwritten
+     * config marked valid, so the flags are cleared first and set again
+     * only when the whole configuration is accepted. */
+    g.cfg_set = 0;
+    g.cleanup_set = 0;
 
     /* the reference compacts the copy: the values are placed directly
      * after the addresses (vsi := num_reg) */
@@ -1105,7 +1153,6 @@ mcdsl_return_et mcdsrl_set_mcdsconfig(const mcdsl_mcdsc_st *mcdsc,
         }
         g.mcdsc_cleanup.hdr.vsi = cnum;
     }
-    g.cleanup_set = 1;
 
     /* derive the MCDS parameters (reference FUN_180005c40, class 1 path:
      * the register windows and the FIFO base/top from the config).
@@ -1140,6 +1187,7 @@ mcdsl_return_et mcdsrl_set_mcdsconfig(const mcdsl_mcdsc_st *mcdsc,
     if (!g.mcds_present && g.trace_max_kb == 0)
         return err_set(MCDSL_RET_PARAM_VALUE_NOT_SUPPORTED,
                        "No EMEM configuration found in MCDS configuration");
+    g.cleanup_set = 1;
     g.cfg_set = 1;
     err_clear();
     return MCDSL_RET_SUCCESS;
