@@ -135,7 +135,9 @@ int crawl_stack_frame_tricore(StackFrame * frame, StackFrame * down) {
                ((uint32_t)buf[i * 4 + 2] << 16) | ((uint32_t)buf[i * 4 + 3] << 24);
     }
 
-    if (w[3] == 0) return 0;                        /* null return address: end */
+    /* w[3] is the caller's own return address: 0 means the caller is the
+     * outermost frame (reset/startup), not that it does not exist - it is
+     * still shown, and the walk ends at it through 'ra == 0' above. */
 
     /* Fill the caller frame: PC from the current A11, the rest from the CSA. */
 #define WR(did, val) do { \

@@ -120,6 +120,11 @@ typedef struct ContextExtensionAurix {
     ContextBreakpoint * triggered_hw_bp[AURIX_TRIG_UNITS + 1];
     /* pending trigger accumulator (latched by the run verification) */
     uint32_t trig_acc;
+    /* the TriCore disassembler is registered for this core's CPU group */
+    int disassembler_inited;
+    /* a stop report is posted (aurix_stopped_event / aurix_async_stop_event
+     * pending): the monitor must not report the same stop itself */
+    int stop_posted;
 } ContextExtensionAurix;
 
 static size_t context_extension_offset = 0;
@@ -481,8 +486,14 @@ static void aurix_report_stop(Context * ctx, int core, int async_stop) {
         }
     }
 
-    if (async_stop && !ctx->exiting)
-        ctx->pending_intercept = 1;   /* the client must see the stop */
+    /* A halt the framework did not ask for must be shown to the client -
+     * except a breakpoint stop: the Breakpoints service decides that
+     * (suspend_by_breakpoint() requests the intercept for a user
+     * breakpoint whose condition holds).  Forcing it here also stopped the
+     * client at the step machine's own breakpoints - Step Over a call
+     * halted at the return address in the middle of the line. */
+    if (async_stop && !ctx->exiting && ctx->stopped_by_cb == NULL && !ctx->stopped_by_bp)
+        ctx->pending_intercept = 1;
     ctx->stopped = 1;
     send_context_stopped_event(ctx);
 }
@@ -493,13 +504,21 @@ static void aurix_report_stop(Context * ctx, int core, int async_stop) {
  * delivered by a posted event. */
 static void aurix_stopped_event(void * args) {
     Context * ctx = (Context *)args;
-    if (!ctx->stopped)
+    EXT(ctx)->stop_posted = 0;
+    if (!ctx->stopped && !ctx->exited)
         aurix_report_stop(ctx, EXT(ctx)->core_index, 0);
     context_unlock(ctx);
 }
 
+/* The posted stop must be the one that reports the halt.  A single step
+ * sends "started" and posts the stop; if the monitor ran in between it saw
+ * a "running" context with a halted core and reported an asynchronous stop
+ * with the intercept - the step machine was then cut off and the client saw
+ * a "Suspended" stop in the middle of a source line (Step Over / Step Out
+ * stopped at a random instruction). */
 static int post_stopped_event(Context * ctx) {
     context_lock(ctx);
+    EXT(ctx)->stop_posted = 1;
     post_event(aurix_stopped_event, ctx);
     return 0;
 }
@@ -507,13 +526,15 @@ static int post_stopped_event(Context * ctx) {
 /* asynchronous stop (breakpoint hit): request the intercept */
 static void aurix_async_stop_event(void * args) {
     Context * ctx = (Context *)args;
-    if (!ctx->stopped)
+    EXT(ctx)->stop_posted = 0;
+    if (!ctx->stopped && !ctx->exited)
         aurix_report_stop(ctx, EXT(ctx)->core_index, 1);
     context_unlock(ctx);
 }
 
 static int post_async_stop_event(Context * ctx) {
     context_lock(ctx);
+    EXT(ctx)->stop_posted = 1;
     post_event(aurix_async_stop_event, ctx);
     return 0;
 }
@@ -533,6 +554,7 @@ static void aurix_monitor(void * args) {
         uint32_t v = 0;
 
         if (ctx == NULL || ctx->exited) continue;
+        if (EXT(ctx)->stop_posted) continue;    /* reported by the posted event */
         if (core_csfr_read(i, AURIX_CSFR_DBGSR, &v) != 0) continue;
         if (!ctx->stopped) {
             if (((v >> 1) & 3u) == 1u) {
@@ -952,12 +974,15 @@ int context_write_reg(Context * ctx, RegisterDefinition * def, unsigned offs,
 }
 
 Context * context_get_group(Context * ctx, int group) {
-    static int disassembler_inited = 0;
-
-    /* register the TriCore disassembler once (the Disassembly service
-     * looks it up through the CPU group context) */
-    if (!disassembler_inited) {
-        disassembler_inited = 1;
+    /* Register the TriCore disassembler for this core.  The Disassembly
+     * service keeps its disassembler list per CPU group context, and every
+     * core is its own group (below) - a single registration (an earlier
+     * version used one static flag) left CPU1/CPU2 without a decoder, so
+     * their disassembly fell back to raw .half/.word values.  The flag is
+     * set before the call: add_disassembler() calls back into this
+     * function. */
+    if (!EXT(ctx)->disassembler_inited) {
+        EXT(ctx)->disassembler_inited = 1;
         ini_cpu_disassembler(ctx);
     }
     (void)group;
