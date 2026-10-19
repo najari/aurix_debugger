@@ -26,6 +26,7 @@ agent/tcf/                 업스트림 파일을 대체하는 수정본 (같은
 flasher/                   자체 PFLASH 플래시 로더 (TC27x / TC37x 빌드) + TC27x 셀프테스트 이미지
 tools/m25_4b_flash.js      플래셔 호스트 드라이버 (장치 자동 판별, 페이지 단위 백업·복원)
 tools/m25_4b_flash_selftest.ps1  플래시 셀프테스트 (M25_4B_FLASHER.md 12절)
+tools/m25_flash_task.ps1   VS Code preLaunchTask: F5에서 ELF 굽기 → 리셋 → 디버그 (13절)
 patches/
   cmake-tcf-lib.patch   업스트림 cmake-tcf-lib.txt 수정 (aurix glob + context-win32 제외 + ENABLE_*)
   main-options.patch    업스트림 main.c 수정 (aurix-debugger 호환 옵션 수용)

@@ -415,6 +415,36 @@ async function doBackup(addr, file) {
     process.exit(0);
 }
 
+/* back up every PFLASH sector that holds data (read only), one JSON per sector */
+async function doBackupAll(dir) {
+    fs.mkdirSync(dir, { recursive: true });
+    let saved = 0;
+    for (const sec of DEV.sectors) {
+        const img = await readPages(sec.base, sec.size);
+        const nb = countBlank(img.blank);
+        if (nb === img.blank.length) { console.log(`0x${sec.base.toString(16)} (${sec.size / 1024} KiB): blank`); continue; }
+        const file = require('path').join(dir, `sector_${sec.base.toString(16)}.json`);
+        saveBackup(file, sec.base, img);
+        saved++;
+        console.log(`0x${sec.base.toString(16)} (${sec.size / 1024} KiB): ${img.blank.length - nb} programmed page(s) -> ${file}`);
+    }
+    console.log(`backupall done: ${saved} sector(s) with data saved in ${dir}`);
+    process.exit(0);
+}
+
+/* compare every backup in dir with the target (read only) */
+async function doVerifyAll(dir) {
+    let bad = 0;
+    for (const f of fs.readdirSync(dir).filter((x) => /^sector_[0-9a-f]+\.json$/.test(x)).sort()) {
+        const bk = loadBackup(require('path').join(dir, f));
+        const r = await verifyPages(bk.base, bk.image, bk.blank);
+        console.log(`${f}: ${r ? 'DIFFERS - ' + r : 'matches'}`);
+        if (r) bad++;
+    }
+    console.log(bad ? `${bad} sector(s) differ` : 'all backed up sectors match');
+    process.exit(bad ? 1 : 0);
+}
+
 async function doVerifySector(file) {
     const bk = loadBackup(file);
     const bad = await verifyPages(bk.base, bk.image, bk.blank);
@@ -541,6 +571,15 @@ function parseElf(buf) {
 const toUncached = (a) => ((((a >>> 0) >>> 28) === 0x8) ? ((a >>> 0) + 0x20000000) >>> 0 : (a >>> 0));
 const inPflash = (a) => sectorAt(toUncached(a)) !== undefined;
 
+/* sector backups of 'flash': next to the ELF, or in M25_BACKUP_DIR */
+function backupDir(elfPath) {
+    const d = process.env.M25_BACKUP_DIR || require('path').dirname(elfPath);
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+}
+const backupPath = (elfPath, base) =>
+    require('path').join(backupDir(elfPath), `${require('path').basename(elfPath)}.sector_${base.toString(16)}.json`);
+
 async function doFlash(elfPath, opts) {
     const buf = fs.readFileSync(elfPath);
     const segs = parseElf(buf).filter((s) => inPflash(s.paddr));
@@ -587,8 +626,13 @@ async function doFlash(elfPath, opts) {
             skipped++;
             continue;
         }
+        if (opts.check) {                 /* flashcheck: report only, no backup */
+            console.log(`0x${e.base.toString(16)} (${e.size / 1024} KiB): differs - needs flashing`);
+            flashed++;
+            continue;
+        }
         /* backup before touching */
-        const bak = `${elfPath}.sector_${e.base.toString(16)}.json`;
+        const bak = backupPath(elfPath, e.base);
         saveBackup(bak, e.base, cur);
         console.log(`0x${e.base.toString(16)} (${e.size / 1024} KiB): backup -> ${bak}`);
         if (opts.dryRun) { console.log('  (dry-run: not writing)'); continue; }
@@ -599,13 +643,17 @@ async function doFlash(elfPath, opts) {
         console.log(`0x${e.base.toString(16)}: erased, ${n} page(s) programmed, verified`);
         flashed++;
     }
+    if (opts.check) {
+        console.log(flashed ? `check: ${flashed} sector(s) differ - flashing needed` : 'check: target already matches the ELF');
+        process.exit(flashed ? 3 : 0);
+    }
     console.log(`flash done: ${flashed} sector(s) written, ${skipped} skipped`);
     process.exit(0);
 }
 
 async function doFlashRestore(elfPath) {
     /* restore all sector backups taken by doFlash */
-    const dir = require('path').dirname(elfPath);
+    const dir = backupDir(elfPath);
     const prefix = require('path').basename(elfPath) + '.sector_';
     const files = fs.readdirSync(dir).filter((f) => f.startsWith(prefix) && f.endsWith('.json'));
     if (files.length === 0) { console.log('no sector backups found'); process.exit(1); }
@@ -629,6 +677,18 @@ async function doW32(addr, val) {
     const b = Buffer.alloc(4); b.writeUInt32LE(val >>> 0, 0);
     await memWrite(addr >>> 0, b);
     console.log(`wrote 0x${(val >>> 0).toString(16)} to 0x${(addr >>> 0).toString(16)}`);
+    process.exit(0);
+}
+
+/* resume every suspended core (the agent halts all cores when it attaches) */
+async function doResumeAll() {
+    for (const c of ['core0', 'core1', 'core2']) {
+        const st = j(await cmd('RunControl', 'getState', c));
+        if (st === true || st === 'true') {
+            await cmd('RunControl', 'resume', c, 0, 1);
+            console.log(`${c} resumed`);
+        } else console.log(`${c} already running`);
+    }
     process.exit(0);
 }
 
@@ -694,7 +754,7 @@ async function doHalt() {
             console.log(JSON.stringify(d.sectors.map((s) => [s.base, s.size])));
             process.exit(0);
         }
-        if (['device', 'load', 'erase', 'program', 'restore', 'backup', 'verifysector', 'flash', 'flashrestore', 'scan'].includes(c)) {
+        if (['device', 'load', 'erase', 'program', 'restore', 'backup', 'verifysector', 'backupall', 'verifyall', 'flash', 'flashcheck', 'flashrestore', 'scan'].includes(c)) {
             const id = await detectDevice();
             console.log(`device: ${DEV.name} (JTAG ID 0x${id.toString(16)}, ${DEV.sectors.length} PFLASH sectors, loader ${DEV.loader})`);
             if (c === 'device') process.exit(0);
@@ -708,6 +768,8 @@ async function doHalt() {
         else if (c === 'restore') await doRestore(process.argv[3]);
         else if (c === 'backup') await doBackup(num(process.argv[3], 0) >>> 0, process.argv[4]);
         else if (c === 'verifysector') await doVerifySector(process.argv[3]);
+        else if (c === 'backupall') await doBackupAll(process.argv[3]);
+        else if (c === 'verifyall') await doVerifyAll(process.argv[3]);
         else if (c === 'stop') await doStop();
         else if (c === 'bpset') await doBpSet(num(process.argv[3],0) >>> 0);
         else if (c === 'bp') await doBp();
@@ -717,8 +779,10 @@ async function doHalt() {
         else if (c === 'halt') await doHalt();
         else if (c === 'step') await doStep(num(process.argv[3],4));
         else if (c === 'resume') await doResume();
+        else if (c === 'resumeall') await doResumeAll();
         else if (c === 'w32') await doW32(num(process.argv[3],0), num(process.argv[4],0));
         else if (c === 'flash') await doFlash(process.argv[3], { dryRun: process.argv.includes('--dry-run') });
+        else if (c === 'flashcheck') await doFlash(process.argv[3], { check: true });
         else if (c === 'flashrestore') await doFlashRestore(process.argv[3]);
         else if (c === 'scan') await doScan(num(process.argv[3], 0x80000000) >>> 0, num(process.argv[4], 8));
         else {

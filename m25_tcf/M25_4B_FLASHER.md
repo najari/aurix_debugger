@@ -219,3 +219,32 @@ Infineon AURIX Flasher의 `DeviceConfigs/TC27x_D_step.json`(섹터 맵)과 `flax
 | 사후 | 이웃 섹터·앱 섹터(0xA0000000, 데이터 26 페이지) 변화 없음, WDT CON0 = 0xFFFC000F(ENDINIT=1), 3코어 앱 실행 |
 
 TC37x 로더(`m25_flash_loader.bin`)도 3~6번 수정이 들어갔지만 TC37x 보드에서는 다시 검증하지 않았습니다.
+
+## 13. VS Code 연동 (2026-10-20)
+
+**Infineon 플래셔(확장의 `enableFlashing`)는 이 보드에서 동작하지 않음**: 확장에 포함된 AURIX Flasher 3.0.18의
+`DeviceConfigs`는 TC27x D-step(JTAG ID `0x501DA083`)만 있음 → `No device found with JTAG ID 0x401DA083`, exit 2
+(장치 확인 단계에서 종료, 플래시 무변경 - 전체 백업과 비교로 확인). 연결 시 리셋 후 정지가 일어나므로 이후 core0 재개 필요.
+확장은 실패 시 무조건 `-erase all`(플래시 전체 지우기)로 재시도했음 → 설치된 확장의 `out/extension.js`에서 재시도를
+제거(원본: `extension.js.orig_erase_all`, 확장 업데이트 시 덮어써짐).
+
+**M25 플래셔 연동**: `tools/m25_flash_task.ps1`을 `launch.json`의 `preLaunchTask`로 실행.
+
+```
+F5 → preLaunchTask: m25_flash_task.ps1 -Elf <elf> -Agent <tcf-agent.exe> -Device <이름> [-BackupDir <폴더>]
+       1. 에이전트 시작 (이미 포트를 쓰는 에이전트가 있으면 그것을 사용)
+       2. flashcheck: PFLASH가 ELF와 같으면 쓰지 않고 코어만 재개
+       3. 다르면 save → load → flash(섹터별 백업·지우기·쓰기·검증) → stop → reset run (새 이미지로 부팅)
+       4. 시작한 에이전트 종료 → 확장이 평소처럼 자기 에이전트로 디버그 세션 시작
+   복원: 같은 스크립트에 -Restore (마지막 굽기 전 섹터 백업으로 되돌림)
+   종료 코드가 0이 아니면 VS Code는 세션을 시작하지 않음
+```
+
+`m25_4b_flash.js` 추가 명령: `flashcheck <elf>`(쓸 필요 여부만, 종료 코드 0/3), `resumeall`,
+`backupall <dir>` / `verifyall <dir>`(데이터가 있는 PFLASH 섹터 전체 백업·비교), `M25_BACKUP_DIR`(굽기 백업 위치).
+
+**검증** (데모 워크스페이스 `C:\work\aurix_tcf_demo`, 구성 "M25 flash PF1 test image + debug"):
+- 터미널 실행: 굽기(4 페이지, 검증) → 두 번째 실행은 "already matches"로 건너뜀 → `-Restore`로 원상태
+- VS Code F5: preLaunchTask가 굽고 리셋·실행 → 디버그 세션 시작 → 세션 중 flashcheck 일치 확인
+- VS Code 작업 "m25: restore PF1 test sector": 512 페이지 모두 지워진 원래 상태로 복원
+- 사후: 앱 섹터 12개 = 전체 백업과 일치, 3코어 앱 실행
