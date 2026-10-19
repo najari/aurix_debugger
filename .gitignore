@@ -1,0 +1,22 @@
+# separate repository (github.com/najari/tas-sw)
+/tas-sw/
+
+# build output
+build/
+out/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# binaries: vendor tools (Infineon DAS) and locally built DLLs are not redistributed
+*.exe
+*.dll
+
+# drop-in test folder: only the launcher script is tracked
+/mcd_tas/drop_in/*
+!/mcd_tas/drop_in/run_client.cmd
+
+# runtime logs
+*.log
