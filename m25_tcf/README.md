@@ -23,6 +23,9 @@ agent/tcf/                 업스트림 파일을 대체하는 수정본 (같은
   services/stacktrace-ext.h  복귀 주소 0에서 스택 추적 종료
   services/runctrl.c       스텝 판정의 프레임 식별자 = CSA 주소 (PCXI가 있는 타깃)
   framework/cpudefs.c      PCXI가 0이면 CSA를 읽지 않음
+flasher/                   자체 PFLASH 플래시 로더 (TC27x / TC37x 빌드) + TC27x 셀프테스트 이미지
+tools/m25_4b_flash.js      플래셔 호스트 드라이버 (장치 자동 판별, 페이지 단위 백업·복원)
+tools/m25_4b_flash_selftest.ps1  플래시 셀프테스트 (M25_4B_FLASHER.md 12절)
 patches/
   cmake-tcf-lib.patch   업스트림 cmake-tcf-lib.txt 수정 (aurix glob + context-win32 제외 + ENABLE_*)
   main-options.patch    업스트림 main.c 수정 (aurix-debugger 호환 옵션 수용)
