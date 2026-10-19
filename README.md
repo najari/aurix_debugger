@@ -5,6 +5,8 @@ AURIX(TC27x) 디버그 환경 실험 — Infineon DAS/TAS 스택 위에서 동�
 | 경로 | 내용 |
 |---|---|
 | [`mcd_tas/`](mcd_tas/README.md) | **MCD API v1.1 over TAS** — `mcdxdas.dll` 대체 DLL 프로토타입(C++, CMake). TAS 서버(TCP 24817)를 백엔드로 MCD 54개 함수 export, run/stop/step/reset/트리거 실구현 |
+| [`mcdsrl/`](mcdsrl/README.md) | **MCDS Recorder Library over TAS** — `mcds_recorder.dll` API 호환 재구현(22 export), TAS 백엔드로 MCDS 트레이스 녹화 → `.mcds` |
+| [`mcdsdl/`](mcdsdl/README.md) | **MCDS Decoder Library** — `mcds_decoder.dll` API 표면(25 export) 프로토타입: `.mcds` 로드/저장·ELF 심볼·메시지 문자열 (디코드 엔진은 미구현) |
 | [`docs/`](docs/) | TAS 프로토콜 캡처, DAS/MCD 도구 분석, TC27x 디버그 레지스터, 프로토타입 설계 문서 |
 
 ## 빠른 시작
@@ -20,5 +22,7 @@ MCD Basic Client 연동: 클라이언트 폴더 사본에 `mcd_tas.dll`을 `mcdx
 
 ## 라이선스
 
-- `mcd_tas/include/` SPRINT MCD API 헤더: 원 SPRINT 라이선스(헤더 내 고지 참조)
+- `*/include/mcd_api.h`, `mcd_types.h` SPRINT MCD API 헤더: 원 SPRINT 라이선스(헤더 내 고지 참조)
+- `mcdsdl/include/`, `mcdsrl/include/`의 `mcds_*.h`: Infineon 헤더 원본(헤더 내 고지 —
+  Infineon 마이크로컨트롤러용 개발 도구 제작에 자유 사용)
 - 그 외 프로젝트 코드: MIT
