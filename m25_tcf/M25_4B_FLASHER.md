@@ -1,0 +1,173 @@
+# M25-4b: 자체 플래셔 (PFLASH erase/program) — 1차 구현·검증 (2026-10-19)
+
+## 1. 참조 구현 정찰
+
+- 확장은 `aurixflasher.exe -gui off -elf <elf> [-hex ...] -start off -ver on -id <device>`로
+  굽는다 (`extension.js:624` `runAurixFlasher`) — 별도 도구가 플래시를 담당.
+- 이 머신의 AURIX Flasher Software Tool 3.1.0
+  (`...\com.ifx.ads2.flash_2.0.24\AurixFlasherSoftwareTool\3.1.0.0\`):
+  - `flax_TC37x.hex` = 플래시 알고리즘 (HEX: DSPR 0x70003800 스테이징 +
+    PSPR 0x70100000 코드, 엔트리 0x70100008, start-address 레코드)
+  - `DeviceConfigs/TC37x_A_step.json`: PFLASH 6MB(0xA0000000), 물리 1MB×6,
+    **논리(소거) 섹터 16KB**, UCB 0xAF400000
+- 알고리즘의 레지스터 시퀀스는 **iLLD IfxFlash**(TC3xx, Boost Software License 1.0 —
+  파생 구현 허용)로 확정:
+  - 커맨드 인터페이스: `0xAF000000 | {0x5554, 0xAA50, 0xAA58, 0xAAA8, 0x55F0}`
+  - 소거: [AA50]=sectorAddr, [AA58]=1, [AAA8]=0x80, [AAA8]=0x50
+  - 페이지(32B): enterPageMode 0x50 → [55F0]에 64비트×4 로드 →
+    [AA50]=pageAddr, [AA58]=0, [AAA8]=0xA0, [AAA8]=0xAA
+  - 상태: `DMU_HF_STATUS`(0xF8040010) P0BUSY=bit2/P1BUSY=bit3,
+    에러 `DMU_HF_ERRSR`(0xF8040034)
+  - ENDINIT: SCU `WDTS_CON0`(0xF00362A8) [ENDINIT0/LCK1/PW15:2] 클리어·복원
+  - 워치독 비활성화: CON1.DR(bit3) — CPU0(0xF003624C/50), Safety(0xF00362A8/AC)
+
+## 2. 자체 구현 (원본에 없는 신규)
+
+- `flasher/m25_flash_loader.c` (TriCore C, HighTec 툴체인, **858 B**):
+  - PSPR(0x70100000)에서 실행, DSPR 메일박스(0x7000F000) 폴링
+  - 명령: erase(섹터 N개)/program(32B 페이지 N개)/exit
+  - 시작 시 CPU0 + Safety 워치독 비활성화(표준 플래셔 관행), ENDINIT 클리어/복원
+- `tools/m25_4b_flash.js` (호스트 드라이버, TCF/TAS 경유):
+  - `save`(레지스터 40 + DSPR/PSPR 스크래치 저장 → 불변식),
+    `load`(로더 업로드 → PC/SP 설정 → 실행 → magic 확인),
+    `erase`/`program`/`read`/`verify`/`restore`, `stop`(ENDINIT 복원 + 상태 복원 + 재개),
+    `scan`(섹터 상태), `bp`/`bpclear`
+
+## 3. 라이브 검증 (마지막 논리 섹터 0xA05FC000 — 원래 내용 전부 0x00)
+
+1. backup(16KB) → 2. erase(1섹터) → 3. program(로더 앞 256B 페이로드)
+→ 4. **verify: 정확 일치 ✓** → 5. restore(0x00 16KB) → 6. **verify: 일치 ✓**
+— **2회 반복 성공**
+
+- 페이로드에 1-비트 포함 → erase 없이는 기록 불가 → **erase 실증** ✓
+- 복원 후 대상 섹터 = 원래 값(0x00) ✓, 앱/다른 섹터 무변화 ✓ (앱 정상 실행 확인)
+- 로더 기동: "loader ready (magic OK)" ✓
+
+## 4. 알려진 제약 / 다음 단계
+
+- 에이전트의 `-f` 엔트리 BP(M25-4a 파리티 — 앱 `_START`=0x8003A176에서 정지)가
+  앱 재부팅 시 코어를 정지시켜 플래셔 운용과 간섭 → **리셋(트리거 클리어) 후 재개**로 해제 ✓
+  (운영 플로우는 원본과 동일하게 "플래시 → 리셋 → 실행")
+- 다음: ELF 로더블 섹션 자동 추출 + 부분 섹터 read-modify-write + 원본 `-f` 플로우 통합
+
+## 6. M25-4b2 진행 (2026-10-19 후속): ELF 굽기 플로우
+
+**구현 완료** (`tools/m25_4b_flash.js` 확장):
+- ELF32 파서(PT_LOAD 추출) → PFLASH 세그먼트(0x80000000-0x805FFFFF) 필터
+- 16KB 논리 섹터 단위 그룹핑 + **read-modify-write** 이미지 구성 +
+  내용이 같으면 skip
+- 쓰기 전 **섹터 백업 자동 저장** (`<elf>.sector_<addr>.bak`) +
+  `flashrestore <elf>`(백업에서 복원)
+- `flash <elf> [--dry-run]` 명령
+- **코어1/2 정지** 후 플래시(앱의 코어 간 모니터 억제) + 3코어 상태 저장/복원
+- `reset [run]` 명령(ContextReset 통합 — 리셋이 WDT를 UCB 기본 상태로 되돌림)
+- 버그 수정: JS int32 비트연산으로 섹터 주소가 음수가 되던 문제(>>> 0)
+- 로더 보강: ENDINIT 대기 **상한**(행 방지), magic 선기록, WDT 비활성화는
+  best-effort(앱이 hidden 비밀번호를 쓰면 no-op → **리셋 선행**이 정석)
+
+**현재 블로커**: 리셋 직후 상태에서 로더 기동(코어 재지향)이 되지 않는 문제.
+
+**진단 결과 (2026-10-19 2차)**:
+- `reset(suspend=true)` 직후: PC=0xA0000020 ✓, **R0(PC) 쓰기 자체는 정상**
+  (0x70100000 쓰고 읽기 확인 ✓)
+- 그러나 **resume하면 PC가 무시되고 부팅이 재시작됨** (PC가 0xA0031374/0xA0000160 =
+  앱의 언캐시드 별칭 실행) — 즉 **리셋+홀트 후에는 resume = 부팅**이고,
+  이 OCDS 상태는 이후의 suspend/resume에도 **고착**됨 (앱이 계속 부팅/실행, 로더 미기동)
+- 리셋 이전(정상 디버그 홀트 상태)에서는 동일 플로우가 **2회 성공** ✓
+  (save→load→erase/program/verify/restore)
+- **복구 방법**: 보드 **전원 재투입**(power-cycle) — OCDS/디버그 래치와 RAM 상태가
+  초기화되어 정상 디버그 상태로 복귀. (플래시 내용은 무관 — 무변경 확인 ✓)
+- 추가 주의: 리셋/재부팅을 사이에 둔 채 이전 스냅샷을 복원하면 앱 RAM을 덮어쓸 수 있음
+  → 운영 플로우에서는 **리셋 없이**(save→load→flash→stop) 수행 권장
+- 후속 과제: 에이전트에 "PC 유지 resume" 프리미티브(리셋 상태에서도 PC 반영) 추가
+  또는 플로우에서 reset 제거 + ENDINIT 실패 시 명시적 오류 처리(구현됨 ✓)
+
+**타깃 무결**: 테스트 섹터(0x805F0000) 전부 0x00 유지 ✓ (실패 시도 중 쓰기 없음 ✓).
+
+## 7. `-p` 타깃 옵션 구현 + DEVICE_CONNECT 진단 (2026-10-19 3차)
+
+**구현** (원본의 `-p "Board"` 옵션 파리티 — 그동안 "accepted (ignored)"였음):
+- `tcf/main/main.c`: `aurix_device_name` 전역 + `-p` 저장(무시 제거)
+- `system/aurix/tcf/context-aurix.c`: TAS 타깃 목록(`tas_get_targets`)에서
+  `-p` 이름과 매칭(`strcasecmp`/`strstr`) → **그 타깃으로 SESSION_START**,
+  목록 전체 로깅 + 미발견 시 명시적 실패
+- 검증(에이전트 로그 `-L`):
+  ```
+  AURIX: target [0] 'DAS JTAG AURDUINO 46YPEADW'   <- selected
+  ```
+
+**진단 도구**: `tools/m25_4b2_tas_probe.js` — tas_server(24817)에 직접
+SERVER_CONNECT(0x80)+GET_TARGETS(0x86) 질의 (4바이트 LE 길이 프레임,
+타깃 엔트리 88B: identifier[64]+type+id[4]+phys+nclient).
+결과: 타깃 목록/카운트 정상 ✓, `nclient` = 접속 클라이언트 수(에이전트 유무로 검증 ✓).
+
+**ELF 로드 불가 원인 규명** (에이전트 `-L` 로그):
+```
+AURIX: DEVICE_CONNECT failed (tas_err=0x20)
+```
+- 0x20 = `TAS_PL1_ERR_CMD_FAILED` — **DAS↔타깃 JTAG 통신 실패**(하드웨어 측)
+- 소프트웨어 경로는 전부 정상 ✓ (서버 접속/타깃 목록/세션/키/`-p` 선택)
+- 즉 ELF 심볼 로드(TCF MemoryMap) 이전 단계인 디바이스 접속에서 막힘 →
+  단일 USB(COM3+COM4+COM5+debug) 재열거/보드 재부팅 필요
+
+## 5. 산출물
+
+- `flasher/m25_flash_loader.{c,ld,bin}` + `flasher/m25_flash_loader_build.ps1`
+- `tools/m25_4b_flash.js`
+- 도구 체인: `C:\Infineon\AURIX-Configuration-Studio-1.0.24\eclipse\tricore-gcc11\bin`
+
+## 8. RUNCMD 값 스윕 + 디바이스 단절 패턴 (2026-10-19 4차)
+
+- **RUNCMD(0xF000049C) 값 1/2 모두**: run → 부팅 (CSFR PC=0xa0031374)
+  — 값과 무관하게 **DAS 레벨 run의 의미가 "부팅"** (강제 halt 후에도 동일)
+- **step은 PC 존중** ✓ (0x70100000 → 02 → 04, 로더 실행) — 현재 유일한 작동 경로
+- **디바이스 단절 패턴**: 유휴 시 96초+ 안정 ✓ /
+  **에이전트 하드킬 → 스테일 TAS 세션 → 디바이스 목록 소실(count=0)** ✗
+  → tas_server 재시작으로 해소 (운영 규칙: 에이전트 재시작 시 tas_server도 재시작)
+- 다음 후보: step 대량 count 기반 실행 / no-reset 플로우(hot attach) /
+  DAS run을 대체하는 경로(예: BP 걸고 step 연속)
+
+## 9. DAS API 완전 규명 (2026-10-19 5차, M25-4c)
+
+- `das_api_load(version, *state)`: **v3/v4 성공**, v5 -> state=0x01000000 (버전 오류)
+  — 실호출 검증 완료 (PowerShell P/Invoke)
+- 반환 = **정보 구조체** (단순 함수 테이블이 아님):
+  ```
+  [0] -> "DAS Client DLL"   [1] -> "Infineon"   [2] = 0x03040302 (버전)
+  [3] -> "Apr 30 2026"      [4] = 0
+  [5]..[30] = 약 28개 함수 포인터 (DLL RVA 0x1000 ~ 0x1D50)
+  [31]+ = 데이터(문자열/상수)
+  ```
+- `das.dll` = **Windows 서비스** (익스포트: ServiceMain, SvchostPushServiceGlobals만)
+  → das_api.dll = 클라이언트 API, das.dll = DAS 서비스 본체
+- tas_server는 DAS DLL을 쓰지 않음 (FTD2XX 자체 구현) — 확인 완료
+- **다음**: 함수 포인터 28개의 역할 디스어셈블 -> C 테스트(디바이스 목록 조회)
+  -> **"AURDUINO" 인식 판정** (성공 시 에이전트 DAS API 백엔드 구현 착수)
+
+## 10. das_api.dll = 공식 TAS/DAS 클라이언트 API (2026-10-19 6차) - 결정적 발견
+
+- das_api.dll 문자열이 **tas_server와 동일한 TAS API 오류 세트**:
+  "ERROR: Wrong TAS API usage", "ERROR: Set acc_mode not supported for %s of addr %llX %s",
+  "ERROR: Could not read channel description from device", "ERROR: Target not connected" 등
+- 즉 **das_api.dll = 공식 TAS 클라이언트**(우리 aurix-tas.c가 손으로 구현한 와이어와 동일 프로토콜),
+  **tas_server = TAS 서버**(DAS 구현: FTD2XX -> AURDUINO 어댑터)
+- 아키텍처: `[das_api.dll/TAS 클라이언트] <-> [TAS 서버] <-> FTD2XX <-> AURDUINO <-> 타깃`
+- **두 가지 경로**:
+  (a) 에이전트가 das_api.dll(공식 클라이언트) 사용 - 여전히 TAS 서버 필요
+  (b) **das_api.dll -> 표준 DAS 서비스(das.dll)** - tas_server 제거 가능성
+      (표준 DAS가 AURDUINO를 인식하는지가 관건 - 다음 실험)
+- 다음: 28개 함수 역할 파악 -> 디바이스 목록 조회 테스트 -> AURDUINO 인식 판정
+
+## 11. M25-4c 7차: 아키텍처 확정 (2026-10-19)
+
+- **정정**: `C:\WINDOWS\system32\das.dll` = Windows "Device Association Service" (무관, 이름 중복)
+- **Infineon 스택**: `das_api.dll`(TAS 클라이언트, "Infineon"/TAS_INSTALL_DIR/start_tas_server.bat 문자열)
+  + `mcdxdas.dll`(MCD↔DAS 브리지, 2026-05-02 동일 빌드) + `tas_server.exe`(사용자 TAS 서버 = AURDUINO 드라이버)
+- **원본 경로**: aurix-debugger -> MCD -> mcdxdas.dll -> das_api.dll -> tas_server -> FTD2XX -> AURDUINO
+  (원본 `-p "Board"` = TAS 타깃 선택 - 우리 `-p` 구현과 일치)
+- **das_api.dll API**: das_api_load -> 정보 구조체 + 약 28개 함수 포인터;
+  함수들은 TAS 세션 오브젝트(매직 0x1B30CCF7 + 버전 3/4) 검증 후 동작;
+  다수 엔트리가 동일 스텁(0x1D30)을 가리킴(미지원 함수 패턴)
+- **결론**: tas_server는 커스텀 어댑터의 드라이버로 **필수** - 제거하려면 FTDI/DAS 저수준 재구현(대규모).
+  실질 대안: 에이전트가 das_api.dll(공식 클라이언트) 사용 (경로 a) - tas_server 유지
+- 다음: das_api.dll 함수 역할 매핑(디바이스 목록) 또는 플래셔 블로커(step 기반 run) 우선순위 결정
