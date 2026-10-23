@@ -19,6 +19,8 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `tools/ram_load.js` | save state, load `demo.elf` into RAM, PC = `main` |
 | `tools/ram_restore.js` | restore the saved registers + RAM |
 | `.vscode/launch.json` | aurix-tcf: RAM configuration (`build/demo.elf`) and two PFLASH configurations (`build/demo_flash.elf`); probe-rs: PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, and a compound that starts all three |
+| `src/reset_start.S`, `src/reset_demo.c`, `reset_demo.ld`, `build_reset.ps1` | the reset image with `core0_main` (see below; needs a PF0 change) |
+| `tools/pf0_jump_hex.py` | HEX files that point the PF0 reset jump at the reset image, and put it back |
 | `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks |
 | `build_flash.ps1`, `demo_flash.ld` | the same program linked for PF1 sector `0x8021C000` |
 | `tools/flash_start.js` | point core0 at `main` of the flashed demo |
@@ -122,6 +124,40 @@ own session continues it. Notes:
   the program, not the `DEBUG` instructions. If a session ends without a
   disconnect (the debugger is killed), the `DEBUG` instructions stay in RAM:
   load the program again.
+
+### Reset image with `core0_main` (writes PF0)
+
+`build_reset.ps1` builds `build/reset_demo.elf`: the demo call chain started by
+the reset, with `core0_main` as the entry function. `src/reset_start.S` jumps
+from the non-cached to the cached alias, sets PSW, the stack, A11 = PCXI = 0 and
+the CSA list (64 contexts at `0x70010000`); `_c_start` (`src/reset_demo.c`)
+disables the Safety and CPU0 watchdogs, clears `.bss` and calls `core0_main`.
+The code lives in the PF1 test sector `0x8021C000` (`reset_demo.ld`); only
+CPU0 runs, CPU1 and CPU2 stay halted after the reset.
+
+The reset reaches it only when the jump at `0x80000020` in PF0 (after the boot
+mode header; `ja 0x8003CD9A` into the application) is changed to
+`j 0x8021C000`. This rewrites PF0 sector 0 and stops the application from
+starting, so do it only with a sector backup and put the sector back after:
+
+1. `pflash_check` (probe-rs-infineon example) against the backup: all sectors
+   the same.
+2. `python tools/pf0_jump_hex.py <backup>/sector_a0000000.json <dir>` writes
+   `pf0_patch.hex` (the backup with the jump changed) and `pf0_restore.hex`
+   (the backup), programmed pages only, so erased pages stay erased and the
+   boot mode header is kept.
+3. `probe-rs download --verify build\reset_demo.elf`, then
+   `probe-rs download --binary-format hex --verify <dir>\pf0_patch.hex`.
+4. Debug with a probe-rs `launch` and `"entryFunction": "core0_main"` on core
+   0 (`flashingEnabled: false`): the reset runs to `core0_main`.
+5. `probe-rs download --binary-format hex --verify <dir>\pf0_restore.hex`,
+   `pflash_check` again (all the same), then write `demo_flash.elf` back into
+   PF1 and reset.
+
+Checked on 2026-10-23: launch and restart stop at `core0_main` (reason
+`entry`, `g_ticks` = 0), a breakpoint in `square` shows the call chain down
+to `_c_start`, the core runs without a watchdog reset; PF0 compared equal to
+the backup after the restore.
 
 ### Aurix Flasher on a TC275 C-step ED (ShieldBuddy)
 

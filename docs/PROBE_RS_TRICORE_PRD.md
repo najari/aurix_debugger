@@ -90,8 +90,6 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 - **원격 TAS 서버와 DAP**: TAS 목록은 로컬 서버만 나열하므로, DAP · VS Code에서 원격 TAS 셀렉터는 아직 열리지 않는다.
 - **VS Code 설정**: 코어별 `launch.json`(CPU0–CPU2와 compound) · `tasks.json`을 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에 옮겼다(`8e849cc`).
 - **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 하드웨어로 멈추지 못하고, 그 코어의 세션이 정지를 확인할 때(폴링, 수십 ms 안) 멈춘다. 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
-- **진입 함수 실기**: 실제 `core0_main`은 리셋으로 시작하는 이미지를 PF0에 써야 해서 확인하지 않았다. PF0 앱 함수에 심볼만 붙인 시험용 ELF로 확인했다.
-
 ### 0.6 PRD 이후 추가한 기능
 
 VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. 모두 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
@@ -102,7 +100,7 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `ff7ddc0` | Infineon PD SVD 번들과 칩별 자동 매칭(TC275 → TC27XDPD, `.svd.gz`). AURIX Flasher 장치 파일을 설치된 aurix-tcf 확장에서 실행 중에 읽어 PFLASH 맵·금지 섹터를 확인(배포하지 않음) | DAP `Peripherals`에 TC27XDPD 주변장치, `probe-rs info`에 장치 파일·SVD 표시 |
 | `2561449` | DAP `liveWatch` 요청과 VS Code 확장 `najari.probe-rs-live-watch`. 실행 중에 전역 변수를 읽는다 | `g_ticks`가 실행 중 증가, 요청당 약 50 ms, VS Code 뷰 표시 |
 | `d7b3b30` | `Peripherals`의 레지스터·필드 쓰기. 필드는 read-modify-write, 폭 검사 | STM2 `CMCON.MSTART1`·`CMP1` 쓰기와 복원, 폭을 넘는 값 거부 |
-| `68a5f6a` | `entryFunction`: 리셋 뒤 진입 함수까지 실행(이유 `entry`). GDB 서버가 `[::1]`과 `127.0.0.1` 모두에서 대기 | 시험용 ELF로 launch·restart 정지와 BP 제거 확인. GDB 11항목 통과 |
+| `68a5f6a` | `entryFunction`: 리셋 뒤 진입 함수까지 실행(이유 `entry`). GDB 서버가 `[::1]`과 `127.0.0.1` 모두에서 대기 | 시험용 ELF로 launch·restart 정지와 BP 제거 확인. GDB 11항목 통과. 리셋으로 시작하는 `core0_main` 이미지(`reset_demo.elf`, PF0의 리셋 점프를 잠시 바꿈)로 launch·restart 정지 9항목 통과, PF0는 백업으로 되돌려 전 섹터 일치 확인 |
 | `84c21eb` | 동시 정지(DAP `allStop`). OCDS 트리거 스위치의 라인 7에 각 코어의 HALT와 BRKIN을 연결(`CBS_TRCn`, `EXEVT`)해 한 코어가 멈추면 나머지도 하드웨어로 멈춘다(이유 `external`). continue는 그룹이 멈춘 코어를 함께 실행. 다른 세션이 리셋해도 세션이 끊기지 않고 라우팅을 다시 쓴다 | 세션 3개 시나리오 14항목(BP·pause·step·continue, 세션 종료 후 복원)과 리셋 시나리오 6항목 통과. 정지 이벤트는 폴링 때문에 40–60 ms 안에 도착 |
 | `ad00ecc` | SW 브레이크포인트(FR-C5). 코어 자신의 PSPR에 있는 BP는 `debug` 명령(16·32비트)을 심고, 다른 곳은 트리거 유닛을 쓴다. 슬롯은 40개(트리거 8 + SW 32). 읽기는 원래 코드를 보여 주고, continue·step은 원래 명령을 한 번 실행한 뒤 다시 심는다. 동시 정지 보완: 다른 코어를 먼저 실행, 놓친 정지는 세션이 확인할 때 멈춤 | RAM 데모로 BP 12개를 실행 순서대로 적중, 16·32비트 명령에서 step, 메모리·디스어셈블리 표시, 해제·`disconnect` 뒤 코드 복원 13항목. 세션 3개로 SW BP 동시 정지 5항목. 기존 동시 정지 20항목, DAP 10항목, GDB 11항목 회귀 없음 |
 
