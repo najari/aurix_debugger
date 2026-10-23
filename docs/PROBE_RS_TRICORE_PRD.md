@@ -1,6 +1,94 @@
 # probe-rs TriCore · MCD · MCDS 연동 개발지시서 (PRD)
 
-2026-10-23 · 원본(다이어그램 포함): [Claude 문서](https://claude.ai/artifact/GqYnnvgJjCWxkZUUsqJSzq)
+2026-10-23 · 원본(다이어그램 포함): [Claude 문서](https://claude.ai/artifact/GqYnnvgJjCWxkZUUsqJSzq) · 구현 현황 갱신 2026-10-23
+
+## 0. 구현 현황 (2026-10-23)
+
+이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다.
+
+- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 11개, 업스트림 PR 없음)
+- 빌드: `cargo build -p probe-rs-tools` (MCD 프로브는 `--features mcd`)
+
+### 0.1 작업 패키지
+
+| WP | 상태 | 커밋 | 내용 |
+| --- | --- | --- | --- |
+| WP-0 | 하지 않음 | — | 2026-10-23 결정. 셀렉터 VID/PID는 자리표시 값으로 남는다 |
+| WP-1 | 완료 | `bc08400` | `Architecture` · `CoreType` · `InstructionSet` · `CoreAccessOptions`의 TriCore 변형, `TriCoreBusAccess`, `TC27x.yaml`, JTAG ID 칩 감지 |
+| WP-2 | 완료 | `fa3fdf6` | `TasProbe` · `TasFactory`, 가짜 TAS 서버 테스트, 참조 클라이언트 바이트와 대조한 프레임 테스트 |
+| WP-3 | 완료 | `bc08400`, `d8f9b7c` | TriCore 코어(halt · run · step · HW BP 8개 · 레지스터 · 메모리 · 리셋), `ArchitectureInterface::TriCore`, 가짜 CSFR 테스트, 하드웨어 스모크 예제 |
+| WP-4 | 완료 | `03842c9` | `TriCoreExceptionHandler`(CSA 언와인드), GCC 11 DWARF 5 단위의 line program v3 처리 |
+| WP-5 | 완료 | `da9fc4c`, `c056d07` | `Tc27xFlash`(`DebugFlashSequence`), 로더 소스 · 빌드 스크립트 · 바이너리(946 B, SHA-256 검사), 호스트 측 지우기 |
+| WP-6 | 완료 | `51a3bd5` | DAP 경로 수정 2건, `attach` 방식 `launch.json` |
+| WP-7 | 완료 | `5bf7ee8` | `McdProbe`(feature `mcd`, `libloading`), `probe-rs info`의 TriCore 항목 |
+| WP-8 | 구현 완료, T-15 미검증 | `ef0f17e`, `1ae7058` | `probe-rs mcds record`(FR-S1, S2), `probe-rs mcds timestamp`(FR-S3) |
+| WP-9 | 남음 | — | TC37x 보드가 있어야 한다 |
+
+`b42e067`은 rustfmt · clippy 정리다.
+
+### 0.2 하드웨어 시험 결과
+
+| ID | 결과 | 확인한 내용 |
+| --- | --- | --- |
+| T-01 | 통과 | `probe-rs list`에 TAS 대상 표시. `probe-rs info --verbose`가 JTAG ID 0x401DA083 · SCU\_CHIPID 0x47427060 · 코어 3개(CPU\_ID 0x00B7C002 / 0x00C0C012 ×2) 보고 |
+| T-02 | 통과 | DSPR0에 2500 B를 +3 비정렬로 쓰고 읽어 일치, 4 KB 원래 내용 복원. 로컬 DSPR 별칭(0xD000A008)과 전역 주소 값 일치 |
+| T-03 | 통과 | 맵 1(0xF00E0080) 읽기가 0이 아니라 `TransferFailed`(코드 0x8D)로 실패 |
+| T-04 | 통과 | CPU0–2 각각 halt, CPU0 run → Running → halt → Halted(Request). 다른 코어 무영향은 따로 측정하지 않음 |
+| T-05 | 부분 | `main`부터 step 20회, 매번 PC가 바뀌고 정지 이유 = Step. 기준인 100회 · objdump 주소 대조는 하지 않음 |
+| T-06 | 통과 | HW BP 8개 설정, 9번째 거부. `square`의 BP에서 Halted(Breakpoint(Hardware)), BP에서 다시 run하면 다음 호출에서 다시 정지 |
+| T-07 | 부분 | D0–D15 쓰기 · 읽기 · 복원 일치. PC · A10 · A11 · PCXI · ICR 쓰기는 데모 시작에 사용. A0–A15 전체 대조는 하지 않음 |
+| T-08 | 통과 | reset\_and\_halt 후 CPU0가 리셋 벡터 0xA0000020에서 정지, 리셋 후 실행 |
+| T-09 | 통과 | `square ← scale ← accumulate ← compute ← main` |
+| T-10 | 부분 | DAP에서 `scale`의 지역 변수 `v=0, k=3, s=0` 표시. aurix-tcf 확장 값과 직접 대조는 하지 않음 |
+| T-11 | 통과 | PF1 0xA021C000에 쓰기 · 검증(같은 이미지는 건너뜀, 512 B 패턴 16페이지, 데모 복원 6페이지). 앱 섹터 12개가 백업과 일치, 로더 후 ENDINIT 확인 |
+| T-12 | 통과 | 비정렬 지우기, PFLASH 밖 주소, 알 수 없는 JTAG ID 등 4건 모두 쓰기 없이 거부 |
+| T-13 | 통과 | VS Code probe-rs 확장: `demo.c:17` BP 정지, 콜스택 5단, 변수, Step Over · Into · Out, Continue. 화면 기록은 남기지 않음 |
+| T-14 | 통과 | `mcd_tas.dll`로 T-01–T-09(+T-03)이 TAS와 같은 결과(스모크 16/16). MCD 경유 PFLASH 비교(앱 섹터 12개 일치)와 DAP 시험도 통과 |
+| T-15 | 미검증 | 이 어댑터는 맵 1을 막는다. `mcds record`가 OCS 읽기(0xF00E6004, 0x8D)에서 "The MCDS registers (EEC address map 1) are not accessible through this probe"로 멈추고, 아무것도 쓰지 않으며 파일도 만들지 않는 것까지 확인 |
+
+플래시 시험은 승인받은 PF1 시험 섹터에서만 했다. 마지막 상태는 PF1에 `demo_flash.elf`, 나머지 섹터는 백업 `C:\work\aurix_flash_backup\2026-10-20_pflash`와 같고, 보드는 리셋돼 앱이 3개 코어에서 돈다.
+
+FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했다. 카운터는 약 1 MHz로 세고, SCU\_CHIPID를 카운터 두 번 사이에 약 1,000 tick 안에 읽는다.
+
+### 0.3 하드웨어 없는 테스트
+
+| 크레이트 | 테스트 | 내용 |
+| --- | --- | --- |
+| `probe-rs` (`tricore`) | 14개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유 |
+| `probe-rs-debug` (`tricore`) | 3개 | CSA 체인 언와인드 |
+| `probe-rs-infineon` | 41개 (`--features mcd`) | TAS 프레임 · 가짜 서버, 섹터 맵 54개 · 로더 해시 · 페이지 패치, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델) |
+| `probe-rs-tools` | 193개 | 기존 테스트 회귀 없음 |
+
+`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`)로 하드웨어를 시험한다. `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
+
+### 0.4 이 문서와 달라진 점
+
+| 항목 | 문서 | 구현 |
+| --- | --- | --- |
+| `CoreType` (8.2) | `Tc16E`, `Tc16P` | `TriCore` 하나. 1.6E와 1.6P는 디버그 방식이 같다 |
+| 칩 감지 (8.2, 8.3) | `ChipDetectionMethod::Infineon { jtag_id, chip_id, variants }` | 벤더 훅 `try_detect_chip_from_probe`가 JTAG ID(제조사 0x41, 부품 번호 0x01DA)로 `TC275`를 고른다. CHIPID로 변형을 나누지 않는다 |
+| `ArchitectureInterface` (8.2) | `TriCore(Box<dyn TriCoreBusAccess>)` | `TriCore(Probe)`. 버스는 `DebugProbe::try_as_tricore_bus()`로 얻는다 |
+| `BusTransfer` (8.1) | Read / Write enum | 구조체 `{ map, address, kind, data, status: Option<TransferStatus> }`. 프로브는 첫 실패 전송에서 멈춘다 |
+| 오류 (8.5) | `Pl0Status`, `AccessDenied` 등 | `TriCoreError::TransferFailed { map, address, len, code }`(0x8D 포함), `TransferNotExecuted`, `CoreDidNotHalt`, `NotHalted`, `Timeout` 등. 플래시 오류는 플래시 시퀀스가 낸다 |
+| PFLASH 영역 (8.3) | 0xA000\_0000 주, 0x8000\_0000 별칭 | 0x8000\_0000(캐시, ELF 링크 주소)이 주 영역이고 0xA000\_0000이 `is_alias`. 플래셔가 0xA000\_0000으로 바꿔 쓴다. 섹터 크기별로 영역 10개씩 |
+| TAS 셀렉터 (8.4) | `<VID>:<PID>:<host>[:port][/<target>]` | `058b:0000[:[host[:port]/]target]` (예: `058b:0000:DAS JTAG AURDUINO 46YPEADW`) |
+| MCD 셀렉터 (8.4) | `--probe mcd:<dll 경로>` | probe-rs 셀렉터는 `VID:PID`만 받으므로 `058b:0001:<dll 경로>[\|<서버 설정>]`, 또는 `PROBE_RS_MCD_DLL` · `PROBE_RS_MCD_CONFIG` |
+| MCD 헤더 (NFR-5) | SPRINT 헤더 없이 FFI 타입 직접 정의 | 헤더 파일은 넣지 않았다. Rust로 옮긴 `ffi.rs`에 SPRINT 라이선스가 요구하는 저작권 고지와 변경 고지를 넣었다 |
+| DAP (UC-4) | `launch` | probe-rs DAP의 `launch`는 항상 리셋하므로 `attach`를 쓴다 |
+| MCDS 설정 입력 (UC-7) | `--config <cfg>` | Infineon 설정기가 만든 `.mcds` 파일(`START_OF_MCDS_CONFIG`) 또는 `주소 값` 줄 목록. 정리 설정은 `--cleanup`, HAR 기록은 `--reset` |
+
+### 0.5 남은 것과 알려진 제한
+
+- **WP-9 (TC37x)**: TC37x 보드가 필요하다.
+- **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다.
+- **FR-P1 유휴 PING**: `Connection::ping()`은 있지만 유휴 중에 보내지 않는다.
+- **FR-C5 (SW 브레이크포인트, Could)**, **FR-V3 (주변장치 뷰, Could)**: 구현하지 않았다.
+- **FR-F5**: 쓰기 전에 섹터를 읽어 같으면 건너뛰고, 이웃 섹터 무변화는 `pflash_check`로 검증한다. 백업 파일 저장 옵션은 없다.
+- **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. 시험 보드에서 실행하지 말 것.
+- **Step Into**: probe-rs의 GCC 프롤로그 처리 때문에 함수 첫 줄에서 멈춘다.
+- **MCD 프로브**: 서버의 첫 장치 · 첫 코어만 연다. 맵 0만 지원한다(맵 1 · 15는 0x8D로 거부). 원본 Infineon `mcdxdas.dll`로는 시험하지 않았다.
+- **원격 TAS 서버와 DAP**: TAS 목록은 로컬 서버만 나열하므로, DAP · VS Code에서 원격 TAS 셀렉터는 아직 열리지 않는다.
+- **VS Code 설정**: `launch.json` · `tasks.json`의 probe-rs 항목은 `C:\work\aurix_tcf_demo`에만 있고, 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에는 옮기지 않았다.
 
 ## 1. 개요
 
@@ -309,13 +397,13 @@ ELF는 보통 캐시 주소(0x8021C000)로 링크되므로, 플래셔는 0x8xxx\
 
 **미결 사항**
 
-- [ ] TAS 프로브의 자리표시 VID/PID와 셀렉터 문법 (메인테이너 합의)
-- [ ] 0x8000\_0000 캐시 별칭을 `is_alias`로 둘지, 플래셔에서 주소를 바꿀지
-- [ ] probe-rs가 쓰는 capstone 버전의 TriCore 지원 여부 (없으면 디스어셈블러 이식 또는 제외)
-- [ ] 성능 목표치 (step 지연, 메모리 처리량): Phase 1 측정 후 확정
-- [ ] MCD FFI 타입을 SPRINT 헤더 없이 직접 정의해도 되는지 라이선스 확인
-- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보
-- [ ] TC37x를 2차에 넣을지 (로더는 이미 TC37x 빌드가 있음)
+- [ ] TAS 프로브의 자리표시 VID/PID와 셀렉터 문법 (메인테이너 합의) — WP-0을 하지 않으므로 자리표시 값(`058b:0000` TAS, `058b:0001` MCD)으로 남는다
+- [x] 0x8000\_0000 캐시 별칭을 `is_alias`로 둘지, 플래셔에서 주소를 바꿀지 — 0x8000\_0000이 주 영역, 0xA000\_0000이 `is_alias`. 플래셔가 0xA000\_0000으로 바꿔 쓴다 (0.4절)
+- [x] probe-rs가 쓰는 capstone 버전의 TriCore 지원 여부 — `arch_tricore` 기능(TriCore 1.6.1)으로 DAP 디스어셈블리 동작 (FR-U3)
+- [ ] 성능 목표치 (step 지연, 메모리 처리량): 측정하지 않음. 참고: MCD 경유로 앱 섹터 12개와 PF1 시험 섹터를 ECC 인식 방식으로 읽어 비교하는 데 77초
+- [x] MCD FFI 타입을 SPRINT 헤더 없이 직접 정의해도 되는지 라이선스 확인 — 헤더는 넣지 않고 `ffi.rs`에 원문 저작권 고지와 변경 고지를 넣었다. 최종 확인은 담당자 몫
+- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보 — 보드는 TC27x ED(EMEM 읽힘)로 확인. 맵 1을 여는 어댑터가 남았다
+- [x] TC37x를 2차에 넣을지 — WP-9로 남기고 TC37x 보드가 생기면 진행
 
 ## 12. 부록
 
