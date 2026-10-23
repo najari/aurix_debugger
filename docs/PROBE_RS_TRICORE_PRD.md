@@ -4,9 +4,9 @@
 
 ## 0. 구현 현황 (2026-10-23)
 
-이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6). TRACE32 비교에서 나온 보완 항목(step 중 인터럽트 막기, 데이터 BP, 성능 카운터, 리셋 처리)은 [보완 개발지시서](AURIX_DEBUGGER_IMPROVEMENT_PRD.md)대로 구현했다(0.6). 그 뒤 남은 작은 항목(원격 TAS 셀렉터, 유휴 PING, Watch 표현식의 데이터 BP, 부분 통과 시험 T-04·T-05·T-07·T-10)을 마치고, 리셋 감지 틈과 0x44 오류를 고쳤다(0.6).
+이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6). TRACE32 비교에서 나온 보완 항목(step 중 인터럽트 막기, 데이터 BP, 성능 카운터, 리셋 처리)은 [보완 개발지시서](AURIX_DEBUGGER_IMPROVEMENT_PRD.md)대로 구현했다(0.6). 그 뒤 남은 작은 항목(원격 TAS 셀렉터, 유휴 PING, Watch 표현식의 데이터 BP, 부분 통과 시험 T-04·T-05·T-07·T-10)을 마치고, 리셋 감지 틈과 0x44 오류를 고쳤다(0.6). 이어서 Step Into, 강제 종료 복구, 플래시 쓰기 전 백업을 더했고, 두 번째 칩으로 TC36x(TriBoard TC3X5, 2코어)를 더했다(0.6). TC36x 커밋을 받은 뒤 TC275 ShieldBuddy에서 하드웨어 회귀 시험 전체를 다시 돌려 통과했다(0.2).
 
-- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 28개, 업스트림 PR 없음)
+- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 31개, 업스트림 PR 없음)
 - 빌드: `cargo build -p probe-rs-tools` (MCD 프로브는 `--features mcd`)
 
 ### 0.1 작업 패키지
@@ -48,25 +48,27 @@
 
 플래시 시험은 승인받은 PF1 시험 섹터에서만 했다. 마지막 상태는 PF1에 `demo_flash.elf`, 나머지 섹터는 백업 `C:\work\aurix_flash_backup\2026-10-20_pflash`와 같고, 보드는 리셋돼 앱이 3개 코어에서 돈다.
 
+TC36x 커밋(`a876a99`, `d155494`, `e1f1952`)을 받은 뒤 같은 TC275 보드에서 회귀 시험을 모두 다시 돌렸다(2026-10-23, 플래시에는 쓰지 않음). `hw_smoke`(T-02–T-09), Step Into(플래시·RAM), 동시 정지 2종, DAP 기능, 데이터 BP 2종, 성능 카운터, 지역 변수(T-10), 원격 셀렉터, 리셋 2종, SW BP 3종(일반·동시 정지·리셋), 강제 종료 복구, GDB 2종, 19개 묶음에서 확인 항목 127개가 통과했고 실패는 없다. 칩 자동 감지가 TC275로 잡히는 것도 확인했다. PFLASH 전 섹터는 백업과 같다. 시험 중 같은 보드에 VS Code 디버그 세션이 붙어 있으면 시험이 간섭받는다(SW BP 리셋 시험이 실패했고, 세션을 닫고 다시 돌려 통과했다).
+
 FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했다. 카운터는 약 1 MHz로 세고, SCU\_CHIPID를 카운터 두 번 사이에 약 1,000 tick 안에 읽는다.
 
 ### 0.3 하드웨어 없는 테스트
 
 | 크레이트 | 테스트 | 내용 |
 | --- | --- | --- |
-| `probe-rs` (`tricore`) | 55개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), PSPR BP(빈 트리거 유닛 우선, 유닛이 모자라면 `debug` 명령, 유닛 넘겨주기·되찾기, 심기 · 복원, 읽기 가림, 넘어가기), step 중 인터럽트 막기(IE 판별, 복원), 데이터 BP(단일 · 범위 유닛, 정지 이유, 프로그램 BP와 나눠 쓰기), 성능 카운터 구간, 앱 리셋 감지(BP 복원, 늦은 코드 복사 뒤 다시 심기, 정지, 알림). 가짜 버스는 정렬되지 않은 32·64비트 읽기를 거부한다. 강제 종료된 세션의 `debug` 명령 기록과 복구 |
+| `probe-rs` (`tricore`) | 56개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), PSPR BP(빈 트리거 유닛 우선, 유닛이 모자라면 `debug` 명령, 유닛 넘겨주기·되찾기, 심기 · 복원, 읽기 가림, 넘어가기), step 중 인터럽트 막기(IE 판별, 복원), 데이터 BP(단일 · 범위 유닛, 정지 이유, 프로그램 BP와 나눠 쓰기), 성능 카운터 구간, 앱 리셋 감지(BP 복원, 늦은 코드 복사 뒤 다시 심기, 정지, 알림). 가짜 버스는 정렬되지 않은 32·64비트 읽기를 거부한다. 강제 종료된 세션의 `debug` 명령 기록과 복구, 보드가 둘이면 한 보드의 기록을 다른 보드에서 되돌리지 않음 |
 | `probe-rs-debug` (`tricore`) | 4개 | CSA 체인 언와인드, 한 줄 시퀀스에 함수가 여럿인 GCC 코드의 함수별 프롤로그(데모 ELF) |
-| `probe-rs-infineon` | 60개 (`--features mcd`) | TAS 프레임 · 가짜 서버(셀렉터 목록, 유휴 PING, `DEV_RESET` 재전송), 섹터 맵 54개 · 로더 해시 · 페이지 패치 · 섹터 백업 형식, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
-| `probe-rs-tools` | 197개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
+| `probe-rs-infineon` | 65개 (`--features mcd`, 끄면 56개) | TAS 프레임 · 가짜 서버(셀렉터 목록, 유휴 PING, `DEV_RESET` 재전송, 실패한 블록 읽기는 데이터가 없음), 섹터 맵(TC275 54개, TC36x 2뱅크 16 KiB 섹터) · 칩과 JTAG ID별 플래시 장치 · TC27x·TC3xx 로더 해시 · TC36x JTAG ID 감지 · TC3xx 시스템 타이머 주소 · 페이지 패치 · 섹터 백업 형식, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
+| `probe-rs-tools` | 198개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
 
-`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`, `hw_extra`, `tas_reset_errors`)로 하드웨어를 시험한다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `hw_extra`는 T-04·T-05·T-07을, `tas_reset_errors`는 리셋 뒤 TAS 서버가 다른 클라이언트에 보내는 `DEV_RESET`을 보이고, `tas_info --idle`은 유휴 PING을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
+`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`, `hw_extra`, `tas_reset_errors`, `pflash_usage`, `tc36x_check`)로 하드웨어를 시험한다. `pflash_usage`는 PFLASH 섹터마다 쓰인 페이지 수를 읽기만 해서 보이고, `tc36x_check`는 TC36x 보드를 확인한다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `hw_extra`는 T-04·T-05·T-07을, `tas_reset_errors`는 리셋 뒤 TAS 서버가 다른 클라이언트에 보내는 `DEV_RESET`을 보이고, `tas_info --idle`은 유휴 PING을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
 
 ### 0.4 이 문서와 달라진 점
 
 | 항목 | 문서 | 구현 |
 | --- | --- | --- |
 | `CoreType` (8.2) | `Tc16E`, `Tc16P` | `TriCore` 하나. 1.6E와 1.6P는 디버그 방식이 같다 |
-| 칩 감지 (8.2, 8.3) | `ChipDetectionMethod::Infineon { jtag_id, chip_id, variants }` | 벤더 훅 `try_detect_chip_from_probe`가 JTAG ID(제조사 0x41, 부품 번호 0x01DA)로 `TC275`를 고른다. CHIPID로 변형을 나누지 않는다 |
+| 칩 감지 (8.2, 8.3) | `ChipDetectionMethod::Infineon { jtag_id, chip_id, variants }` | 벤더 훅 `try_detect_chip_from_probe`가 JTAG ID(제조사 0x41)로 칩을 고른다. 부품 번호 0x01DA는 `TC275`, TC36x는 JTAG ID `0x10209083`으로 `TC36x`를 고른다. CHIPID로 변형을 나누지 않는다. 다른 알려진 칩의 보드가 붙은 장치를 세션이 거부한다(TAS 서버 하나에서 보드를 바꾼 경우) |
 | `ArchitectureInterface` (8.2) | `TriCore(Box<dyn TriCoreBusAccess>)` | `TriCore(Probe)`. 버스는 `DebugProbe::try_as_tricore_bus()`로 얻는다 |
 | `BusTransfer` (8.1) | Read / Write enum | 구조체 `{ map, address, kind, data, status: Option<TransferStatus> }`. 프로브는 첫 실패 전송에서 멈춘다 |
 | 오류 (8.5) | `Pl0Status`, `AccessDenied` 등 | `TriCoreError::TransferFailed { map, address, len, code }`(0x8D 포함), `TransferNotExecuted`, `CoreDidNotHalt`, `NotHalted`, `Timeout` 등. 플래시 오류는 플래시 시퀀스가 낸다 |
@@ -79,7 +81,8 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 ### 0.5 남은 것과 알려진 제한
 
-- **WP-9 (TC37x)**: TC37x 보드가 필요하다.
+- **WP-9 (TC37x)**: TC37x 보드가 필요하다. TC36x(TC3xx 계열)는 따로 더했고, 아래 항목처럼 TriBoard TC3X5에서 확인했다(커밋 메시지 기준). 이 PC에는 TC36x 보드가 없어 이 PC에서는 단위 테스트까지만 돌렸다.
+- **TC36x**: 코어 2개, DSPR 192 KiB, PSPR 32 KiB, PFLASH는 PF0 `0x80000000`과 PF1 `0x80300000`(각 2 MiB, 논리 섹터 16 KiB)이고 TC3xx 로더(`m25_flash_loader_tc3xx.bin`, `loader/build.ps1`이 둘을 만든다)로 쓴다. 코어 시작 상태(`SYSCON.BHALT`, 앱이 시작하지 않은 코어)에서는 정지 요청이 시간 초과 대신 `CoreInBootHalt`로 실패하고, 플래시 쓰기는 그 코어를 건드리지 않는다. TC36x의 SVD(TC36XPD)는 빈 `<access />` 요소를 지운 뒤 읽는다. 서버가 비어 있는 PFLASH의 블록 읽기(ECC 오류 0x8D)에 데이터 없이 답하는 것도 처리한다.
 - **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다.
 - **FR-C5 (SW 브레이크포인트, Could)**: 코어 자신의 PSPR에서만 쓰고, 그것도 트리거 유닛이 모자랄 때만 쓴다(0.6). 다른 메모리(PFLASH, LMU, 다른 코어의 PSPR)의 BP는 트리거 유닛 8개를 쓴다. 트리거 유닛은 PC를 그대로 비교하므로, 코드를 로컬 별칭(0xC000\_0000)과 전역 주소에서 함께 실행하는 프로그램은 실행하는 주소에 BP를 걸어야 한다. 세션이 `disconnect` 없이 끝나면(디버거 강제 종료) 그때 있던 `debug` 명령이 RAM에 남지만, 다음 세션이 기록을 보고 원래 명령을 되돌린다(0.6, 같은 PC에서). **FR-V3 (주변장치 뷰, Could)**는 Infineon 레지스터 파일 대신 Infineon PD SVD로 구현했다(0.6).
 - **FR-F5**: 쓰기 전에 섹터를 읽어 같으면 건너뛰고, 이웃 섹터 무변화는 `pflash_check`로 검증한다. 환경 변수 `PROBE_RS_TRICORE_FLASH_BACKUP=<폴더>`를 주면 지우는 섹터마다 지우기 전 내용을 `<폴더>/<UTC 시각>/sector_<주소>.json`에 저장한다(0.6). 되돌리기는 데모 `tools/backup_to_hex.py`로 HEX를 만들어 `probe-rs download`로 한다.
@@ -91,7 +94,7 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 ### 0.6 PRD 이후 추가한 기능
 
-VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. 모두 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
+VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. 마지막 세 행(TC36x)을 뺀 나머지는 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
 
 | 커밋 | 기능 | 실기 확인 |
 | --- | --- | --- |
@@ -112,6 +115,9 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `bf375f0` | Step Into: GCC는 한 섹션의 함수를 모두 한 줄 시퀀스에 넣는데(`-ffunction-sections` 없음), probe-rs가 프롤로그 판정을 시퀀스마다 한 번만 해서 첫 함수 뒤의 함수는 진입점(`{` 줄, 프롤로그)도 정지 위치로 봤다. 그래서 Step Into가 `{` 줄에 멈추고, 다음 Step Into는 첫 호출을 건너뛰었다. 이제 함수마다 프롤로그를 따로 판정한다(C/C++). 모든 행이 한 줄인 함수는 GDB처럼 진입점에 멈춘다. probe-rs 업스트림에도 있는 문제다 | `main → compute → accumulate → scale → square` Step Into가 매번 첫 문장 줄(38, 29, 22, 17)에 멈춤, Step Out 정상. 플래시·RAM 데모 둘 다 7항목 통과. 단위 테스트(데모 ELF)는 수정 전에 실패 |
 | `7049d96` | 강제 종료 대비 `debug` 명령 기록: SW BP가 있는 동안 세션이 주소와 원래 명령을 임시 폴더의 파일에 적고 잠가 둔다(잠금은 프로세스와 함께 풀린다). 다음 세션은 첫 상태 확인이나 BP 변경 때 잠기지 않은 파일을 찾아, 아직 `debug` 명령이 있는 자리에만 원래 명령을 되돌리고 디버그 콘솔에 알린다. 정상 종료하면 파일을 지운다 | RAM 데모 BP 12개(`debug` 4) 상태에서 DAP 서버를 강제 종료 → 다음 세션이 4개를 되돌려 PSPR이 ELF와 같아짐, 콘솔 알림. SW BP 시험 회귀 없음 |
 | `4daf281` | 플래시 쓰기 전 섹터 백업(FR-F5): `PROBE_RS_TRICORE_FLASH_BACKUP=<폴더>`이면 지우는 섹터마다 지우기 전 내용을 `<폴더>/<UTC 시각>/sector_<주소>.json`(`pflash_check` 형식)에 저장한다. 저장에 실패하면 지우지 않고 멈춘다. 이미 같은 섹터는 지우지도 저장하지도 않는다. VS Code는 `launch.json`의 `env`로 준다 | PF1 시험 섹터: 패턴·데모 쓰기마다 백업 폴더 하나, 첫 백업이 데모 내용과 일치, 그 백업으로 만든 HEX(`backup_to_hex.py`)로 섹터를 되돌려 일치. 전체 PFLASH 백업과 일치 |
+| `a876a99` | SVD 읽기: Infineon TC33x–TC39x SVD에 필드마다 빈 `<access />` 요소가 수백 개 있어 `svd_parser`가 거부했고, 그 칩들의 주변장치 뷰가 모두 실패했다. 파싱 전에 지운다(access가 없으면 필드는 레지스터의 access를 따르므로 뜻이 같다) | TC36x(TriBoard TC3X5): 번들 TC36XPD.svd.gz가 읽히고 DAP 변수에 `Peripherals`가 보임 |
+| `d155494` | TAS: 읽기에 실패한 블록(비어 있는 TC36x PFLASH의 ECC 오류 0x8D)에 TasServer V2.0이 데이터 없이 `00 2C 00 8D` 요소로 답하는데, 단어 수 0을 1 KiB 블록으로 읽어 1024 바이트를 기다리다 프레임 전체가 "PL0 read data is too short"로 실패했다. 전체 블록은 읽기가 성공했을 때만 1024 바이트로 센다 | 단위 테스트(TC36x 응답 바이트). TC275: 회귀 시험 통과 |
+| `e1f1952` | TC36x(TriBoard TC3X5) 디버깅과 PFLASH 쓰기. `TC36x.yaml`(코어 2개, PFLASH PF0·PF1, JTAG ID `0x10209083`으로 감지), 칩의 시퀀스가 주는 STM0 주소(TC3xx `0xF0001050`)와 192 KiB 로컬 DSPR 창, 앱이 시작하지 않은 코어의 `CoreInBootHalt`, 플래시 컨트롤러별 `FlashDevice`(TC27x·TC36x: 로더, 워치독 주소, 섹터 맵, AURIX Flasher 장치 파일), TC3xx 로더, 다른 알려진 칩의 장치 거부. `debug` 명령 기록을 장치(TAS 대상 이름)별로 따로 둬 한 보드의 기록을 다른 보드에서 되돌리지 않는다. 예제 `tc36x_check`·`pflash_usage`, `start_in_flash`·`bus_read`·`flash_refusals`는 칩을 감지한다 | TC36x(커밋 메시지 기준): halt, 레지스터, step, HW BP, 리셋. RAM·PFLASH(섹터 `0x80400000`) 데모를 DAP 서버로 디버깅(BP, 콜스택, 지역 변수, liveWatch, Step Over). `download --verify`, 같은 내용의 두 번째 쓰기는 섹터를 건너뜀. `flash_refusals` 4/4. TC275: 이 변경을 받은 뒤 하드웨어 회귀 시험 전체 통과(0.2), 강제 종료 복구는 저널이 `tas-<대상 이름>` 폴더에 쌓임 |
 
 그 밖에 명령어 단위 스텝, 명령어 BP, Memory Inspector, `setVariable`, Restart, `launch`와 플래시 쓰기, GDB 서버를 실기로 확인했다.
 
