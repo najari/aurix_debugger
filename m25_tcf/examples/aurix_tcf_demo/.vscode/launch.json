@@ -11,6 +11,7 @@
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
+      "allStop": true,
       "coreConfigs": [
         {
           "coreIndex": 0,
@@ -28,6 +29,7 @@
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
+      "allStop": true,
       "coreConfigs": [
         {
           "coreIndex": 1,
@@ -45,6 +47,7 @@
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
+      "allStop": true,
       "coreConfigs": [
         {
           "coreIndex": 2,

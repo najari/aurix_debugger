@@ -4,18 +4,18 @@
 
 ## 결론
 
-소스 디버깅의 기본 흐름(브레이크포인트, step, 콜스택, 변수, 디스어셈블리, 주변장치 읽기)은 두 도구가 비슷하다. probe-rs TriCore에 남은 큰 차이는 두 가지다. 하나는 모든 코어를 함께 멈추는 멀티코어 방식이고, 둘째는 지원 칩 범위(TC2x·TC3x·TC4x 전체 vs TC27x)다. Live Watch, 주변장치 레지스터 쓰기, 진입 함수 정지는 구현해 실기로 확인했고, 시험하지 않았던 DAP·GDB 기능 7가지도 모두 실기로 확인했다.
+소스 디버깅의 기본 흐름(브레이크포인트, step, 콜스택, 변수, 디스어셈블리, 주변장치 읽기)은 두 도구가 비슷하다. probe-rs TriCore에 남은 큰 차이는 지원 칩 범위(TC2x·TC3x·TC4x 전체 vs TC27x)다. 모든 코어를 함께 멈추는 동시 정지(`allStop`), Live Watch, 주변장치 레지스터 쓰기, 진입 함수 정지는 구현해 실기로 확인했고, 시험하지 않았던 DAP·GDB 기능 7가지도 모두 실기로 확인했다. 멀티코어는 여전히 코어별 세션 3개를 묶는 방식이다(aurix-tcf는 세션 하나).
 
-- 비교 대상: [ZeZhan/vscode-aurix-tcf-debugger](https://github.com/ZeZhan/vscode-aurix-tcf-debugger) `main`(README, `package.json`, `src/`)과 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `68a5f6a`)
+- 비교 대상: [ZeZhan/vscode-aurix-tcf-debugger](https://github.com/ZeZhan/vscode-aurix-tcf-debugger) `main`(README, `package.json`, `src/`)과 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `84c21eb`)
 - probe-rs 쪽 내용은 TC275 ShieldBuddy 실기 시험 결과 기준이다. aurix-tcf 쪽 내용은 저장소 문서와 코드를 기준으로 했고, 실기로 다시 확인하지는 않았다.
 
 ## 부족한 점
 
-중요도 순서다. 1–3은 디버깅 방식과 지원 범위의 차이고, 4–10은 편의 기능의 차이다. 4·5·6번은 구현을 마쳤다.
+중요도 순서다. 1–3은 디버깅 방식과 지원 범위의 차이고, 4–10은 편의 기능의 차이다. 1번의 동시 정지와 4·5·6번은 구현을 마쳤다.
 
 | # | 항목 | aurix-tcf 확장 | probe-rs TriCore (현재) | 메우는 방법 |
 | --- | --- | --- | --- | --- |
-| 1 | 멀티코어 동작 | 세션 하나에 모든 코어가 스레드로 나옴. 한 코어가 멈추면 모든 코어가 멈춤(all-stop) | 코어별 세션 3개를 compound 설정으로 묶음. 코어마다 따로 멈춤. 모두 멈추게 하는 옵션 없음 | OCDS 정지 신호 브로드캐스트 옵션을 추가하거나, probe-rs DAP에 멀티코어를 구현(업스트림 TODO) |
+| 1 | 멀티코어 동작 | 세션 하나에 모든 코어가 스레드로 나옴. 한 코어가 멈추면 모든 코어가 멈춤(all-stop) | 코어별 세션 3개를 compound 설정으로 묶음. **동시 정지 구현함:** `allStop`을 켜면 OCDS 트리거 스위치로 한 코어가 멈출 때 나머지도 멈추고(이유 `external`), continue하면 함께 돈다. 제한: 자기 BP에 멈춘 코어는 그 세션에서 continue해야 함 | 동시 정지는 완료(`84c21eb`). 세션 하나로 묶으려면 probe-rs DAP의 멀티코어 구현이 필요(업스트림 TODO) |
 | 2 | 지원 칩 | TC2x, TC3x, TC4x 전체 | TC27x(TC275)만 | WP-9: 칩별 타깃 정의, TC3xx 플래시 로더(DMU 방식), CPU5 CSFR 창 처리 |
 | 3 | 플래시 | 모든 칩, PFLASH와 DFLASH, PPU/CDSP HEX | TC27x PFLASH만. DFLASH와 UCB 없음 | 칩 계열별 로더와 DFLASH 시퀀스 |
 | 4 | Live Watch | 실행 중에 전역 변수를 주기적으로 갱신(최소 200 ms, `aurix-tcf/liveWatchEvaluate`) | **구현함.** VS Code `Live Watch` 뷰(확장 `najari.probe-rs-live-watch`)가 DAP `liveWatch` 요청으로 실행 중에 갱신. 코어를 멈추지 않고 읽으며 요청당 약 50 ms | 완료(`2561449`) |
@@ -58,11 +58,10 @@ probe-rs는 백엔드 전체가 공개돼 있고, 디버거 밖에서도 쓸 수
 
 ## 권장 순서
 
-Live Watch(4번), 주변장치 쓰기(5번), 진입 함수 정지(6번), 미시험 기능 확인, GDB 서버 IPv4 대기는 끝났다. 남은 항목은 하드웨어나 승인이 더 필요하다.
+동시 정지(1번), Live Watch(4번), 주변장치 쓰기(5번), 진입 함수 정지(6번), 미시험 기능 확인, GDB 서버 IPv4 대기는 끝났다. 남은 항목은 하드웨어나 승인이 더 필요하다.
 
 1. **실제 진입 함수 확인 (6번)**: 리셋으로 시작하는 `core0_main` 이미지를 PF0에 써서 확인한다. PF0 쓰기 승인이 필요하다.
-2. **동시 정지 (1번)**: OCDS 정지 브로드캐스트 동작을 실기로 먼저 확인해야 한다.
-3. **칩과 플래시 범위 확대 (2·3번)**: TC3xx 등 해당 보드가 있어야 한다.
+2. **칩과 플래시 범위 확대 (2·3번)**: TC3xx 등 해당 보드가 있어야 한다.
 
 7–10번(SW 브레이크포인트, 식 평가, PPU·CDSP·SCR, 설정 UI)은 필요가 생기면 다룬다.
 
