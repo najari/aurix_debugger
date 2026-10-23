@@ -2,6 +2,58 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)",
+      "preLaunchTask": "probe-rs: start demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC275",
+      "probe": "058b:0000",
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "aurix_tcf_demo (probe-rs, TAS, CPU1)",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC275",
+      "probe": "058b:0000",
+      "coreConfigs": [
+        {
+          "coreIndex": 1,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "aurix_tcf_demo (probe-rs, TAS, CPU2)",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC275",
+      "probe": "058b:0000",
+      "coreConfigs": [
+        {
+          "coreIndex": 2,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
       "type": "aurix-tcf",
       "request": "launch",
       "name": "aurix_tcf_demo (RAM, CPU0)",
@@ -47,6 +99,17 @@
       "svdFile": "",
       "enableFlashing": false,
       "enableConsoleLog": true
+    }
+  ],
+  "compounds": [
+    {
+      "name": "aurix_tcf_demo (probe-rs, CPU0 + CPU1 + CPU2)",
+      "configurations": [
+        "aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)",
+        "aurix_tcf_demo (probe-rs, TAS, CPU1)",
+        "aurix_tcf_demo (probe-rs, TAS, CPU2)"
+      ],
+      "stopAll": true
     }
   ]
 }

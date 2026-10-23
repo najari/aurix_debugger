@@ -14,6 +14,29 @@
       "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
     },
     {
+      "label": "probe-rs: flash demo (PF1 0x8021C000)",
+      "detail": "Build demo_flash.elf and write it with probe-rs through the TAS server (PF1 sector 0x8021C000 only; skipped when the sector already holds it)",
+      "dependsOn": "build: demo_flash.elf",
+      "type": "process",
+      "command": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "args": [
+        "download", "--chip", "TC275", "--probe", "058b:0000", "--verify",
+        "${workspaceFolder}\\build\\demo_flash.elf"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "probe-rs: start demo on CPU0",
+      "detail": "Halt CPU0 at main of the flashed demo (PC, stack, A11 = PCXI = 0), for the probe-rs attach configuration",
+      "dependsOn": "probe-rs: flash demo (PF1 0x8021C000)",
+      "type": "process",
+      "command": "C:\\work\\probe-rs\\target\\debug\\examples\\start_in_flash.exe",
+      "args": ["${workspaceFolder}\\build\\demo_flash.elf"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
       "label": "m25: flash demo (PF1 0x8021C000)",
       "detail": "Build demo_flash.elf, write it with the M25 flasher (PF1 sector 0x8021C000 only), reset, run",
       "dependsOn": "build: demo_flash.elf",
