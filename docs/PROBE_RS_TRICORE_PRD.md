@@ -6,7 +6,7 @@
 
 이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6). TRACE32 비교에서 나온 보완 항목(step 중 인터럽트 막기, 데이터 BP, 성능 카운터, 리셋 처리)은 [보완 개발지시서](AURIX_DEBUGGER_IMPROVEMENT_PRD.md)대로 구현했다(0.6). 그 뒤 남은 작은 항목(원격 TAS 셀렉터, 유휴 PING, Watch 표현식의 데이터 BP, 부분 통과 시험 T-04·T-05·T-07·T-10)을 마치고, 리셋 감지 틈과 0x44 오류를 고쳤다(0.6). 이어서 Step Into, 강제 종료 복구, 플래시 쓰기 전 백업을 더했고, 두 번째 칩으로 TC36x(TriBoard TC3X5, 2코어)를 더했다(0.6). TC36x 커밋을 받은 뒤 TC275 ShieldBuddy에서 하드웨어 회귀 시험 전체를 다시 돌려 통과했다(0.2).
 
-- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 31개, 업스트림 PR 없음)
+- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 34개, 업스트림 PR 없음)
 - 빌드: `cargo build -p probe-rs-tools` (MCD 프로브는 `--features mcd`)
 
 ### 0.1 작업 패키지
@@ -60,13 +60,13 @@ TC36x 커밋(`a876a99`, `d155494`, `e1f1952`)을 받은 뒤 같은 TC275 보드�
 | 단일 step | 30.9 ms | p95 32.7 ms |
 | 메모리 읽기·쓰기 | 19.4 KiB/s | 256 B 13.5 ms, 4 KiB 206 ms, 32 KiB 1.65 s. PFLASH 읽기와 PSPR 쓰기(16 KiB, 826 ms)도 같다. 크기와 무관해 어댑터 링크가 한계다. PFLASH 4 MB 전체 읽기는 약 3.5분 |
 | DAP: attach | 약 3.0 s | `initialized` 이벤트까지 |
-| DAP: stepIn / next(소스 줄) / stepOut | 287 / 223 / 214 ms | 요청부터 `stopped` 이벤트까지 |
-| DAP: continue → BP 정지 | 236 ms | |
-| DAP: scopes, variables, evaluate | 3~4 ms | 한 번은 약 110 ms로 튐 |
-| DAP: stackTrace(1프레임) | 3~5 ms에서 약 110 ms | 중앙값 109 ms. 같은 요청이 두 값으로 갈린다 |
-| DAP: readMemory 4 KiB | 238 ms | |
+| DAP: stepIn / next(소스 줄) / stepOut | 176 / 114 / 122 ms | 요청부터 `stopped` 이벤트까지. 개선 전 287 / 223 / 214 ms |
+| DAP: continue → BP 정지 | 131 ms | 개선 전 236 ms. 코어가 도는 동안 상태 확인 주기(50 ms)가 남은 몫 |
+| DAP: scopes, variables, evaluate | 5~6 ms | 개선 전 3~4 ms에 가끔 약 110 ms |
+| DAP: stackTrace(1프레임) | 8 ms | 개선 전 중앙값 109 ms |
+| DAP: readMemory 64 B / 4 KiB | 14 ms / 240 ms | 개선 전 126 ms / 238 ms |
 
-DAP 응답이 약 100 ms 단위로 늘어나는 것은 DAP 서버가 모든 코어가 정지한 동안 요청 사이에 100 ms씩 쉬는 코드(`debugger.rs`의 `no_request_poll`, 업스트림 동작)와 일치한다. 쉬는 동안 도착한 요청이 최대 100 ms 기다린다. 원인으로 확정하지는 않았다. 줄이려면 쉬는 동안 1 ms마다 요청을 확인하게 하면 된다(공통 코드이므로 다른 아키텍처의 동작은 바꾸지 않는 방식으로).
+DAP 응답이 약 100 ms 단위로 늘어난 원인은 DAP 서버가 모든 코어가 정지한 동안 요청 사이에 100 ms씩 쉬는 코드(`debugger.rs`의 `no_request_poll`, 업스트림 동작)였다. 쉬는 동안 도착한 요청이 그 시간이 끝나야 처리됐다. 쉬는 동안 입력이 오면 바로 끝나도록 고쳤다(0.6). 남은 100 ms대 지연은 step 여러 번(단일 step 약 31 ms)의 실제 작업 시간과, 코어가 도는 동안 50 ms마다 하는 상태 확인이다. 그 주기를 줄이면 느린 링크(요청당 1~3 ms)에 폴링 부하가 늘어서 건드리지 않았다.
 
 FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했다. 카운터는 약 1 MHz로 세고, SCU\_CHIPID를 카운터 두 번 사이에 약 1,000 tick 안에 읽는다.
 
@@ -74,10 +74,10 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 | 크레이트 | 테스트 | 내용 |
 | --- | --- | --- |
-| `probe-rs` (`tricore`) | 56개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), PSPR BP(빈 트리거 유닛 우선, 유닛이 모자라면 `debug` 명령, 유닛 넘겨주기·되찾기, 심기 · 복원, 읽기 가림, 넘어가기), step 중 인터럽트 막기(IE 판별, 복원), 데이터 BP(단일 · 범위 유닛, 정지 이유, 프로그램 BP와 나눠 쓰기), 성능 카운터 구간, 앱 리셋 감지(BP 복원, 늦은 코드 복사 뒤 다시 심기, 정지, 알림). 가짜 버스는 정렬되지 않은 32·64비트 읽기를 거부한다. 강제 종료된 세션의 `debug` 명령 기록과 복구, 보드가 둘이면 한 보드의 기록을 다른 보드에서 되돌리지 않음 |
+| `probe-rs` (`tricore`) | 57개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 상태 확인 도중 그룹이 정지해도 함께 실행할 코어를 잊지 않음, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), PSPR BP(빈 트리거 유닛 우선, 유닛이 모자라면 `debug` 명령, 유닛 넘겨주기·되찾기, 심기 · 복원, 읽기 가림, 넘어가기), step 중 인터럽트 막기(IE 판별, 복원), 데이터 BP(단일 · 범위 유닛, 정지 이유, 프로그램 BP와 나눠 쓰기), 성능 카운터 구간, 앱 리셋 감지(BP 복원, 늦은 코드 복사 뒤 다시 심기, 정지, 알림). 가짜 버스는 정렬되지 않은 32·64비트 읽기를 거부한다. 강제 종료된 세션의 `debug` 명령 기록과 복구, 보드가 둘이면 한 보드의 기록을 다른 보드에서 되돌리지 않음 |
 | `probe-rs-debug` (`tricore`) | 4개 | CSA 체인 언와인드, 한 줄 시퀀스에 함수가 여럿인 GCC 코드의 함수별 프롤로그(데모 ELF) |
 | `probe-rs-infineon` | 65개 (`--features mcd`, 끄면 56개) | TAS 프레임 · 가짜 서버(셀렉터 목록, 유휴 PING, `DEV_RESET` 재전송, 실패한 블록 읽기는 데이터가 없음), 섹터 맵(TC275 54개, TC36x 2뱅크 16 KiB 섹터) · 칩과 JTAG ID별 플래시 장치 · TC27x·TC3xx 로더 해시 · TC36x JTAG ID 감지 · TC3xx 시스템 타이머 주소 · 페이지 패치 · 섹터 백업 형식, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
-| `probe-rs-tools` | 198개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
+| `probe-rs-tools` | 202개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색, DAP 대기가 입력에 끝나는지(입력 준비 판별, 읽다 만 메시지는 입력이 아님) 추가 |
 
 `cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`, `hw_extra`, `tas_reset_errors`, `pflash_usage`, `tc36x_check`, `perf_measure`, `eec_probe`)로 하드웨어를 시험한다. `pflash_usage`는 PFLASH 섹터마다 쓰인 페이지 수를 읽기만 해서 보이고, `tc36x_check`는 TC36x 보드를 확인한다. `perf_measure`는 halt, step, 상태 확인의 지연과 메모리 읽기·쓰기 속도를 재고(CPU0의 PSPR을 저장했다가 되돌린다), `eec_probe`는 맵 1(MCDS, EMEM)의 단어를 읽어 어댑터가 무엇을 통과시키는지 보인다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `hw_extra`는 T-04·T-05·T-07을, `tas_reset_errors`는 리셋 뒤 TAS 서버가 다른 클라이언트에 보내는 `DEV_RESET`을 보이고, `tas_info --idle`은 유휴 PING을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
 
