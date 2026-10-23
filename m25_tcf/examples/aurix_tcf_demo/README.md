@@ -92,7 +92,7 @@ through the TAS server (probe `058b:0000`).
 | Configuration | What it does |
 |---|---|
 | `aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)` | `preLaunchTask` writes `demo_flash.elf` with probe-rs (PF1 `0x8021C000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
-| `aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints there are software breakpoints, so there is no limit of 8 |
+| `aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints beyond the 8 trigger units are software breakpoints there, so there is no limit of 8 |
 | `aurix_tcf_demo (probe-rs, TAS, CPU1)`, `... CPU2` | attach to CPU1 / CPU2, which keep running the application |
 | `aurix_tcf_demo (probe-rs, CPU0 + CPU1 + CPU2)` | compound: the three sessions side by side in the call stack view |
 
@@ -118,15 +118,22 @@ own session continues it. Notes:
   session resumes every halted core, and a reset from any session resets the
   whole device. `probe-rs-infineon`'s `bus_read` example reads memory without
   touching the cores.
-- Breakpoints in the PSPR of the core (the RAM demo) are `DEBUG`
-  instructions written over the code; elsewhere (PFLASH) each takes one of the
-  8 hardware trigger units of the core. Reads (memory view, disassembly) show
-  the program, not the `DEBUG` instructions. If a session ends without a
-  disconnect (the debugger is killed), the `DEBUG` instructions stay in RAM:
-  load the program again.
-- Data breakpoints: right-click a variable, **Break on Value Change** (or
-  Break on Value Read / Access). Each takes trigger units shared with the
-  breakpoints in PFLASH: one for a single byte, an even/odd pair for more.
+- Each breakpoint takes one of the 8 hardware trigger units of the core. In
+  the PSPR of the core (the RAM demo) the breakpoints beyond the free units
+  are `DEBUG` instructions written over the code; a breakpoint elsewhere
+  (PFLASH) that finds no free unit takes one from a PSPR breakpoint, which
+  becomes a `DEBUG` instruction. Trigger unit breakpoints stay through a reset
+  and code the program copies into the PSPR; `DEBUG` instructions are planted
+  again after it. Reads (memory view, disassembly) show the program, not the
+  `DEBUG` instructions. If a session ends without a disconnect (the debugger
+  is killed), the `DEBUG` instructions stay in RAM: load the program again.
+- Another TAS server: set `probe` to `058b:0000:<host>[:<port>]/<target>`,
+  for example `058b:0000:192.168.1.10:24817/DAS JTAG AURDUINO 46YPEADW`
+  (`058b:0000:<host>/` takes its first target).
+- Data breakpoints: right-click a variable (in the variables or the watch
+  view, while the core is halted), **Break on Value Change** (or Break on
+  Value Read / Access). Each takes trigger units shared with the
+  breakpoints: one for a single byte, an even/odd pair for more.
   The core stops after the instruction that accessed the variable (stop
   reason `data breakpoint`). Conditions are refused. GDB's `watch`, `rwatch`
   and `awatch` work the same way.
