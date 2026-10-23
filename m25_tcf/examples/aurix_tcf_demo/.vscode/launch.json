@@ -23,6 +23,25 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
+      "name": "aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)",
+      "preLaunchTask": "probe-rs: start RAM demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC275",
+      "probe": "058b:0000",
+      "allStop": true,
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
+      "type": "probe-rs-debug",
+      "request": "attach",
       "name": "aurix_tcf_demo (probe-rs, TAS, CPU1)",
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",

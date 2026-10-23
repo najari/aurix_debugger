@@ -14,6 +14,28 @@
       "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
     },
     {
+      "label": "build: demo.elf",
+      "detail": "Link the demo for the CPU0 PSPR and DSPR (build.ps1)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\build.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "probe-rs: start RAM demo on CPU0",
+      "detail": "Build demo.elf, write it into the CPU0 PSPR and DSPR (no flash write) and halt CPU0 at main, for the probe-rs RAM attach configuration",
+      "dependsOn": "build: demo.elf",
+      "type": "process",
+      "command": "C:\\work\\probe-rs\\target\\debug\\examples\\start_in_flash.exe",
+      "args": ["${workspaceFolder}\\build\\demo.elf"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
       "label": "probe-rs: flash demo (PF1 0x8021C000)",
       "detail": "Build demo_flash.elf and write it with probe-rs through the TAS server (PF1 sector 0x8021C000 only; skipped when the sector already holds it)",
       "dependsOn": "build: demo_flash.elf",

@@ -18,8 +18,8 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `build.ps1` | build with the AURIX GCC (`-O0 -g3`) → `build/demo.elf` |
 | `tools/ram_load.js` | save state, load `demo.elf` into RAM, PC = `main` |
 | `tools/ram_restore.js` | restore the saved registers + RAM |
-| `.vscode/launch.json` | aurix-tcf: RAM configuration (`build/demo.elf`) and two PFLASH configurations (`build/demo_flash.elf`); probe-rs: one configuration per core (CPU0–CPU2) and a compound that starts all three |
-| `.vscode/tasks.json` | build task, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks |
+| `.vscode/launch.json` | aurix-tcf: RAM configuration (`build/demo.elf`) and two PFLASH configurations (`build/demo_flash.elf`); probe-rs: PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, and a compound that starts all three |
+| `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks |
 | `build_flash.ps1`, `demo_flash.ld` | the same program linked for PF1 sector `0x8021C000` |
 | `tools/flash_start.js` | point core0 at `main` of the flashed demo |
 | `agent/tcf-agent.exe` | the AURIX TCF agent (build it from `m25_tcf`, see its README; not tracked) - set `aurix-tcf.agentPath` to this file |
@@ -90,12 +90,15 @@ through the TAS server (probe `058b:0000`).
 | Configuration | What it does |
 |---|---|
 | `aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)` | `preLaunchTask` writes `demo_flash.elf` with probe-rs (PF1 `0x8021C000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
+| `aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints there are software breakpoints, so there is no limit of 8 |
 | `aurix_tcf_demo (probe-rs, TAS, CPU1)`, `... CPU2` | attach to CPU1 / CPU2, which keep running the application |
 | `aurix_tcf_demo (probe-rs, CPU0 + CPU1 + CPU2)` | compound: the three sessions side by side in the call stack view |
 
 The probe-rs debugger handles one core per session, so each core has its own
-session; pausing, stepping or a breakpoint in one session halts only its core.
-Notes:
+session. The configurations set `allStop`: a breakpoint, step or pause in one
+session halts the other cores as well (stop reason `external`), and continuing
+one runs them again. A core halted at its own breakpoint stays there until its
+own session continues it. Notes:
 
 - The peripheral view (`Peripherals` in the variables view) comes from the
   Infineon SVD file that matches the chip (`TC27XDPD`), found automatically;
@@ -111,7 +114,14 @@ Notes:
   `g_result` of the demo.
 - A probe-rs command line tool (`probe-rs read`, `reset`, ...) run during a
   session resumes every halted core, and a reset from any session resets the
-  whole device.
+  whole device. `probe-rs-infineon`'s `bus_read` example reads memory without
+  touching the cores.
+- Breakpoints in the PSPR of the core (the RAM demo) are `DEBUG`
+  instructions written over the code; elsewhere (PFLASH) each takes one of the
+  8 hardware trigger units of the core. Reads (memory view, disassembly) show
+  the program, not the `DEBUG` instructions. If a session ends without a
+  disconnect (the debugger is killed), the `DEBUG` instructions stay in RAM:
+  load the program again.
 
 ### Aurix Flasher on a TC275 C-step ED (ShieldBuddy)
 

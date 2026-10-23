@@ -4,9 +4,9 @@
 
 ## 0. 구현 현황 (2026-10-23)
 
-이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지를 더했다(0.6).
+이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6).
 
-- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 17개, 업스트림 PR 없음)
+- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 18개, 업스트림 PR 없음)
 - 빌드: `cargo build -p probe-rs-tools` (MCD 프로브는 `--features mcd`)
 
 ### 0.1 작업 패키지
@@ -54,12 +54,12 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 | 크레이트 | 테스트 | 내용 |
 | --- | --- | --- |
-| `probe-rs` (`tricore`) | 28개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인) |
+| `probe-rs` (`tricore`) | 40개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), SW 브레이크포인트(`debug` 명령 심기 · 복원, 읽기 가림, 넘어가기, 트리거 유닛과 섞어 쓰기) |
 | `probe-rs-debug` (`tricore`) | 3개 | CSA 체인 언와인드 |
 | `probe-rs-infineon` | 54개 (`--features mcd`) | TAS 프레임 · 가짜 서버, 섹터 맵 54개 · 로더 해시 · 페이지 패치, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
 | `probe-rs-tools` | 197개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
 
-`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`)로 하드웨어를 시험한다. `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
+`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`)로 하드웨어를 시험한다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
 
 ### 0.4 이 문서와 달라진 점
 
@@ -82,14 +82,14 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 - **WP-9 (TC37x)**: TC37x 보드가 필요하다.
 - **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다.
 - **FR-P1 유휴 PING**: `Connection::ping()`은 있지만 유휴 중에 보내지 않는다.
-- **FR-C5 (SW 브레이크포인트, Could)**: 구현하지 않았다. **FR-V3 (주변장치 뷰, Could)**는 Infineon 레지스터 파일 대신 Infineon PD SVD로 구현했다(0.6).
+- **FR-C5 (SW 브레이크포인트, Could)**: 코어 자신의 PSPR에서만 쓴다(0.6). 다른 메모리(PFLASH, LMU, 다른 코어의 PSPR)의 BP는 트리거 유닛 8개를 쓴다. 세션이 `disconnect` 없이 끝나면(디버거 강제 종료) `debug` 명령이 RAM에 남으므로 프로그램을 다시 올려야 한다. **FR-V3 (주변장치 뷰, Could)**는 Infineon 레지스터 파일 대신 Infineon PD SVD로 구현했다(0.6).
 - **FR-F5**: 쓰기 전에 섹터를 읽어 같으면 건너뛰고, 이웃 섹터 무변화는 `pflash_check`로 검증한다. 백업 파일 저장 옵션은 없다.
 - **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. 시험 보드에서 실행하지 말 것.
 - **Step Into**: probe-rs의 GCC 프롤로그 처리 때문에 함수 첫 줄에서 멈춘다.
 - **MCD 프로브**: 서버의 첫 장치 · 첫 코어만 연다. 맵 0만 지원한다(맵 1 · 15는 0x8D로 거부). 원본 Infineon `mcdxdas.dll`로는 시험하지 않았다.
 - **원격 TAS 서버와 DAP**: TAS 목록은 로컬 서버만 나열하므로, DAP · VS Code에서 원격 TAS 셀렉터는 아직 열리지 않는다.
 - **VS Code 설정**: 코어별 `launch.json`(CPU0–CPU2와 compound) · `tasks.json`을 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에 옮겼다(`8e849cc`).
-- **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 멈추지 못한다(pause는 멈춘다). 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
+- **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 하드웨어로 멈추지 못하고, 그 코어의 세션이 정지를 확인할 때(폴링, 수십 ms 안) 멈춘다. 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
 - **진입 함수 실기**: 실제 `core0_main`은 리셋으로 시작하는 이미지를 PF0에 써야 해서 확인하지 않았다. PF0 앱 함수에 심볼만 붙인 시험용 ELF로 확인했다.
 
 ### 0.6 PRD 이후 추가한 기능
@@ -104,6 +104,7 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `d7b3b30` | `Peripherals`의 레지스터·필드 쓰기. 필드는 read-modify-write, 폭 검사 | STM2 `CMCON.MSTART1`·`CMP1` 쓰기와 복원, 폭을 넘는 값 거부 |
 | `68a5f6a` | `entryFunction`: 리셋 뒤 진입 함수까지 실행(이유 `entry`). GDB 서버가 `[::1]`과 `127.0.0.1` 모두에서 대기 | 시험용 ELF로 launch·restart 정지와 BP 제거 확인. GDB 11항목 통과 |
 | `84c21eb` | 동시 정지(DAP `allStop`). OCDS 트리거 스위치의 라인 7에 각 코어의 HALT와 BRKIN을 연결(`CBS_TRCn`, `EXEVT`)해 한 코어가 멈추면 나머지도 하드웨어로 멈춘다(이유 `external`). continue는 그룹이 멈춘 코어를 함께 실행. 다른 세션이 리셋해도 세션이 끊기지 않고 라우팅을 다시 쓴다 | 세션 3개 시나리오 14항목(BP·pause·step·continue, 세션 종료 후 복원)과 리셋 시나리오 6항목 통과. 정지 이벤트는 폴링 때문에 40–60 ms 안에 도착 |
+| `ad00ecc` | SW 브레이크포인트(FR-C5). 코어 자신의 PSPR에 있는 BP는 `debug` 명령(16·32비트)을 심고, 다른 곳은 트리거 유닛을 쓴다. 슬롯은 40개(트리거 8 + SW 32). 읽기는 원래 코드를 보여 주고, continue·step은 원래 명령을 한 번 실행한 뒤 다시 심는다. 동시 정지 보완: 다른 코어를 먼저 실행, 놓친 정지는 세션이 확인할 때 멈춤 | RAM 데모로 BP 12개를 실행 순서대로 적중, 16·32비트 명령에서 step, 메모리·디스어셈블리 표시, 해제·`disconnect` 뒤 코드 복원 13항목. 세션 3개로 SW BP 동시 정지 5항목. 기존 동시 정지 20항목, DAP 10항목, GDB 11항목 회귀 없음 |
 
 그 밖에 명령어 단위 스텝, 명령어 BP, Memory Inspector, `setVariable`, Restart, `launch`와 플래시 쓰기, GDB 서버를 실기로 확인했다.
 
