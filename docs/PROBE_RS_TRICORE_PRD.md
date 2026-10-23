@@ -50,6 +50,24 @@
 
 TC36x 커밋(`a876a99`, `d155494`, `e1f1952`)을 받은 뒤 같은 TC275 보드에서 회귀 시험을 모두 다시 돌렸다(2026-10-23, 플래시에는 쓰지 않음). `hw_smoke`(T-02–T-09), Step Into(플래시·RAM), 동시 정지 2종, DAP 기능, 데이터 BP 2종, 성능 카운터, 지역 변수(T-10), 원격 셀렉터, 리셋 2종, SW BP 3종(일반·동시 정지·리셋), 강제 종료 복구, GDB 2종, 19개 묶음에서 확인 항목 127개가 통과했고 실패는 없다. 칩 자동 감지가 TC275로 잡히는 것도 확인했다. PFLASH 전 섹터는 백업과 같다. 시험 중 같은 보드에 VS Code 디버그 세션이 붙어 있으면 시험이 간섭받는다(SW BP 리셋 시험이 실패했고, 세션을 닫고 다시 돌려 통과했다).
 
+**성능 측정** (2026-10-24, TC275 + DAS JTAG AURDUINO, 로컬 TasServer, 디버그 빌드, 예제 `perf_measure`와 DAP 측정 스크립트). 값은 중앙값이다.
+
+| 항목 | 값 | 비고 |
+| --- | --- | --- |
+| 레지스터 하나 읽기 | 1.0 ms | TAS 요청 한 번의 왕복. 메모리 4 B 읽기도 0.9 ms |
+| 상태 확인(`DBGSR`와 타이머) | 2.6 ms(정지), 2.7 ms(실행) | 폴링 1회 |
+| halt / run | 9.2 ms / 8.1 ms | halt는 요청부터 정지 확인까지 |
+| 단일 step | 30.9 ms | p95 32.7 ms |
+| 메모리 읽기·쓰기 | 19.4 KiB/s | 256 B 13.5 ms, 4 KiB 206 ms, 32 KiB 1.65 s. PFLASH 읽기와 PSPR 쓰기(16 KiB, 826 ms)도 같다. 크기와 무관해 어댑터 링크가 한계다. PFLASH 4 MB 전체 읽기는 약 3.5분 |
+| DAP: attach | 약 3.0 s | `initialized` 이벤트까지 |
+| DAP: stepIn / next(소스 줄) / stepOut | 287 / 223 / 214 ms | 요청부터 `stopped` 이벤트까지 |
+| DAP: continue → BP 정지 | 236 ms | |
+| DAP: scopes, variables, evaluate | 3~4 ms | 한 번은 약 110 ms로 튐 |
+| DAP: stackTrace(1프레임) | 3~5 ms에서 약 110 ms | 중앙값 109 ms. 같은 요청이 두 값으로 갈린다 |
+| DAP: readMemory 4 KiB | 238 ms | |
+
+DAP 응답이 약 100 ms 단위로 늘어나는 것은 DAP 서버가 모든 코어가 정지한 동안 요청 사이에 100 ms씩 쉬는 코드(`debugger.rs`의 `no_request_poll`, 업스트림 동작)와 일치한다. 쉬는 동안 도착한 요청이 최대 100 ms 기다린다. 원인으로 확정하지는 않았다. 줄이려면 쉬는 동안 1 ms마다 요청을 확인하게 하면 된다(공통 코드이므로 다른 아키텍처의 동작은 바꾸지 않는 방식으로).
+
 FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했다. 카운터는 약 1 MHz로 세고, SCU\_CHIPID를 카운터 두 번 사이에 약 1,000 tick 안에 읽는다.
 
 ### 0.3 하드웨어 없는 테스트
@@ -61,7 +79,7 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 | `probe-rs-infineon` | 65개 (`--features mcd`, 끄면 56개) | TAS 프레임 · 가짜 서버(셀렉터 목록, 유휴 PING, `DEV_RESET` 재전송, 실패한 블록 읽기는 데이터가 없음), 섹터 맵(TC275 54개, TC36x 2뱅크 16 KiB 섹터) · 칩과 JTAG ID별 플래시 장치 · TC27x·TC3xx 로더 해시 · TC36x JTAG ID 감지 · TC3xx 시스템 타이머 주소 · 페이지 패치 · 섹터 백업 형식, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
 | `probe-rs-tools` | 198개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
 
-`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`, `hw_extra`, `tas_reset_errors`, `pflash_usage`, `tc36x_check`)로 하드웨어를 시험한다. `pflash_usage`는 PFLASH 섹터마다 쓰인 페이지 수를 읽기만 해서 보이고, `tc36x_check`는 TC36x 보드를 확인한다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `hw_extra`는 T-04·T-05·T-07을, `tas_reset_errors`는 리셋 뒤 TAS 서버가 다른 클라이언트에 보내는 `DEV_RESET`을 보이고, `tas_info --idle`은 유휴 PING을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
+`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`, `hw_extra`, `tas_reset_errors`, `pflash_usage`, `tc36x_check`, `perf_measure`, `eec_probe`)로 하드웨어를 시험한다. `pflash_usage`는 PFLASH 섹터마다 쓰인 페이지 수를 읽기만 해서 보이고, `tc36x_check`는 TC36x 보드를 확인한다. `perf_measure`는 halt, step, 상태 확인의 지연과 메모리 읽기·쓰기 속도를 재고(CPU0의 PSPR을 저장했다가 되돌린다), `eec_probe`는 맵 1(MCDS, EMEM)의 단어를 읽어 어댑터가 무엇을 통과시키는지 보인다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `hw_extra`는 T-04·T-05·T-07을, `tas_reset_errors`는 리셋 뒤 TAS 서버가 다른 클라이언트에 보내는 `DEV_RESET`을 보이고, `tas_info --idle`은 유휴 PING을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
 
 ### 0.4 이 문서와 달라진 점
 
@@ -83,7 +101,7 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 - **WP-9 (TC37x)**: TC37x 보드가 필요하다. TC36x(TC3xx 계열)는 따로 더했고, 아래 항목처럼 TriBoard TC3X5에서 확인했다(커밋 메시지 기준). 이 PC에는 TC36x 보드가 없어 이 PC에서는 단위 테스트까지만 돌렸다.
 - **TC36x**: 코어 2개, DSPR 192 KiB, PSPR 32 KiB, PFLASH는 PF0 `0x80000000`과 PF1 `0x80300000`(각 2 MiB, 논리 섹터 16 KiB)이고 TC3xx 로더(`m25_flash_loader_tc3xx.bin`, `loader/build.ps1`이 둘을 만든다)로 쓴다. 코어 시작 상태(`SYSCON.BHALT`, 앱이 시작하지 않은 코어)에서는 정지 요청이 시간 초과 대신 `CoreInBootHalt`로 실패하고, 플래시 쓰기는 그 코어를 건드리지 않는다. TC36x의 SVD(TC36XPD)는 빈 `<access />` 요소를 지운 뒤 읽는다. 서버가 비어 있는 PFLASH의 블록 읽기(ECC 오류 0x8D)에 데이터 없이 답하는 것도 처리한다.
-- **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다.
+- **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다. Infineon의 MCDS 기록 라이브러리(`mcds_recorder.dll`)도 이 어댑터에서는 맵 1을 읽지 못하고 연속 트레이스 등급이 8(불안정)로 나오므로, 어댑터를 바꾸지 않고는 방법이 없다([DAS 분석](DAS_DLL_ANALYSIS.md)의 부록 D).
 - **FR-C5 (SW 브레이크포인트, Could)**: 코어 자신의 PSPR에서만 쓰고, 그것도 트리거 유닛이 모자랄 때만 쓴다(0.6). 다른 메모리(PFLASH, LMU, 다른 코어의 PSPR)의 BP는 트리거 유닛 8개를 쓴다. 트리거 유닛은 PC를 그대로 비교하므로, 코드를 로컬 별칭(0xC000\_0000)과 전역 주소에서 함께 실행하는 프로그램은 실행하는 주소에 BP를 걸어야 한다. 세션이 `disconnect` 없이 끝나면(디버거 강제 종료) 그때 있던 `debug` 명령이 RAM에 남지만, 다음 세션이 기록을 보고 원래 명령을 되돌린다(0.6, 같은 PC에서). **FR-V3 (주변장치 뷰, Could)**는 Infineon 레지스터 파일 대신 Infineon PD SVD로 구현했다(0.6).
 - **FR-F5**: 쓰기 전에 섹터를 읽어 같으면 건너뛰고, 이웃 섹터 무변화는 `pflash_check`로 검증한다. 환경 변수 `PROBE_RS_TRICORE_FLASH_BACKUP=<폴더>`를 주면 지우는 섹터마다 지우기 전 내용을 `<폴더>/<UTC 시각>/sector_<주소>.json`에 저장한다(0.6). 되돌리기는 데모 `tools/backup_to_hex.py`로 HEX를 만들어 `probe-rs download`로 한다.
 - **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. 시험 보드에서 실행하지 말 것.
@@ -431,9 +449,9 @@ ELF는 보통 캐시 주소(0x8021C000)로 링크되므로, 플래셔는 0x8xxx\
 - [ ] TAS 프로브의 자리표시 VID/PID와 셀렉터 문법 (메인테이너 합의) — WP-0을 하지 않으므로 자리표시 값(`058b:0000` TAS, `058b:0001` MCD)으로 남는다
 - [x] 0x8000\_0000 캐시 별칭을 `is_alias`로 둘지, 플래셔에서 주소를 바꿀지 — 0x8000\_0000이 주 영역, 0xA000\_0000이 `is_alias`. 플래셔가 0xA000\_0000으로 바꿔 쓴다 (0.4절)
 - [x] probe-rs가 쓰는 capstone 버전의 TriCore 지원 여부 — `arch_tricore` 기능(TriCore 1.6.1)으로 DAP 디스어셈블리 동작 (FR-U3)
-- [ ] 성능 목표치 (step 지연, 메모리 처리량): 측정하지 않음. 참고: MCD 경유로 앱 섹터 12개와 PF1 시험 섹터를 ECC 인식 방식으로 읽어 비교하는 데 77초
+- [x] 성능 목표치 (step 지연, 메모리 처리량): 2026-10-24에 측정했다(0.2). 목표치는 따로 정하지 않았다. 참고: MCD 경유로 앱 섹터 12개와 PF1 시험 섹터를 ECC 인식 방식으로 읽어 비교하는 데 77초
 - [x] MCD FFI 타입을 SPRINT 헤더 없이 직접 정의해도 되는지 라이선스 확인 — 헤더는 넣지 않고 `ffi.rs`에 원문 저작권 고지와 변경 고지를 넣었다. 최종 확인은 담당자 몫
-- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보 — 보드는 TC27x ED(EMEM 읽힘)로 확인. 맵 1을 여는 어댑터가 남았다
+- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보 — 보드는 TC27x ED(EMEM 읽힘)로 확인. 맵 1을 여는 어댑터가 남았다(Infineon 공식 라이브러리도 이 어댑터에서는 맵 1을 읽지 못한다)
 - [x] TC37x를 2차에 넣을지 — WP-9로 남기고 TC37x 보드가 생기면 진행
 
 ## 12. 부록

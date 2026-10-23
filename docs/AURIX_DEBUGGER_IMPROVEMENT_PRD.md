@@ -49,7 +49,7 @@ TRACE32와 비교해 모자란 디버깅 기능 가운데, 지금 보드(TC275 S
 | --- | --- | --- |
 | 1차 | 데이터 BP, step 중 인터럽트 막기, 성능 카운터, 리셋 처리 | 지금 보드와 어댑터 |
 | 2차 | MCDS 트레이스 검증과 VS Code 표시 | 맵 1을 여는 어댑터(예: DAP miniWiggler) |
-| 2차 | TC3xx 칩과 플래시(기존 WP-9) | TC3xx 보드 |
+| 2차 | TC3xx 칩과 플래시(기존 WP-9). TC36x는 구현했다(`e1f1952`, TriBoard TC3X5). TC37x 등 나머지와 DFLASH·UCB가 남았다 | 해당 보드 |
 | 2차 | AUTOSAR OS 인식(ORTI) | ORTI를 내는 OS의 앱 |
 | 제외 | 보조 코어(GTM, HSM, SCR, PPU), 커버리지, ISO 26262 도구 인증, 한 세션 멀티코어 | — |
 

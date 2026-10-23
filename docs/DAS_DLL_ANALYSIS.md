@@ -482,3 +482,26 @@ RVA      이름
 `C:\work\tas_server_analysis\das\`의 `das_api_headers.txt`, `das_api_exports.txt`, `das_api_imports.txt`, `das_api_disasm.txt`, `das_api_strings_ascii.txt`, `das_api_strings_utf16.txt`, `das_api_lib_exports.txt`, `mcdxdas_headers.txt`, `mcdxdas_exports.txt`, `mcdxdas_imports.txt`, `mcdxdas_disasm.txt`, `mcdxdas_strings_ascii.txt`, `mcdxdas_strings_utf16.txt`, `mcd_basic_client_imports.txt`, `das_dll_headers.txt`, `das_dll_exports.txt`, `dasHost_headers.txt` 등
 
 > 검증 환경: Windows / Python 3.13 / MSVC 2022 + dumpbin 14.44 / DAS64 설치본 + 실기(TC27x) 세션에서 로드 상태 확인.
+
+---
+
+## 10. 부록 D — MCDS 기록 라이브러리와 연속 트레이스 (2026-10-24 조사)
+
+질문은 "DAS에 트레이스 데이터를 계속 읽어 내는 경로가 있는가"다. TRACE32 비교의 8번(DAP 스트리밍·ARTI)에서 나왔다. 결론은 **프로토콜에는 있고, 이 어댑터에서는 쓸 수 없다**이다.
+
+| 확인한 것 | 내용 | 출처 |
+| --- | --- | --- |
+| 프로토콜 | TAS에 트레이스 전용 채널이 있다. 클라이언트는 `CTasClientTrc`의 `subscribe(chso, prio, trace_type, stream)`로 구독하고 `get_trace(timeout_ms, &trace_data, &length, &trc_state)`로 서버가 보내는 트레이스를 받는다. 기본 형식은 `TAS_TRC_T_MTSC_IFTG` | Infineon `tas_client_api`(Apache-2.0) `src/tas_client/tas_client_trc.h` |
+| 서버 조건 | 연속 트레이스는 `TasClientTrc`를 쓰고 TasServer V2.0 이상이 필요하다(MCDS 기록 라이브러리 V3.2) | `mcds_lib_recorder.h`(DAS64 SDK) |
+| 라이브러리 | DAS64에는 MCDS 기록(`mcds_recorder.dll`), 해독(`mcds_decoder.dll`), 설정(`mcds_configurator.dll`) 라이브러리와 헤더가 있다. `mcdsrl_get_data_from_fifo()`가 연속 트레이스의 FIFO를 읽고, 최소 2 MB를 버퍼링한다 | `include\mcds_libs\` |
+| miniMCDS | "Continuous trace is not supported for miniMCDS." 연속 트레이스는 ED(전체 MCDS) 칩에서만 된다 | `mcds_lib_recorder.h` |
+| 어댑터 등급 | `mcdsrl_device_connected()`가 돌려주는 등급: 트레이스 없음(1), 온칩만(4), 연속 불안정(8, 예: miniWiggler와 Windows PC), 연속 안정(12, DAP 또는 DXCPL 툴 하드웨어) | `mcds_lib_recorder.h` |
+
+**실기 결과** (TC275 ED, `DAS JTAG AURDUINO 46YPEADW`, 로컬 TasServer). 도구는 `m25_tcf/tools/mcdsrl_capability.py`, `mcdsrl_read.py`이고 둘 다 연결과 읽기만 한다.
+
+- Infineon 라이브러리가 장치를 `TC27xED`로 인식했다.
+- 등급은 **8(`CONT_TRACE_UNRELIABLE`)**이고, 연속 트레이스 대역폭은 0 kB/s, 보장된 온칩 트레이스 버퍼는 0 kB로 보고됐다.
+- `mcdsrl_read`로 SCU\_CHIPID(`0xF0036140`)는 읽혔다(`0x47427060`). MCDS 레지스터(OCS `0xF00E6004`, 제어 `0xF00E6000`)와 EMEM(`0x9F000000`)은 "in addr\_map 1 failed"로 실패했다.
+- probe-rs도 같다. `eec_probe` 예제로 맵 1을 읽으면 SCU\_CHIPID까지 모두 0x8D다. 즉 맵 1을 막는 쪽은 probe-rs가 아니라 이 어댑터다. 공식 라이브러리로도 MCDS를 읽을 수 없으므로 TRACE32 비교 5번의 T-15는 이 어댑터에서 검증할 수 없다.
+
+**해석.** 이 어댑터로는 MCDS 트레이스(온칩 기록과 연속 스트리밍 모두)를 쓸 수 없다. 연속 트레이스 경로를 쓰려면 DAP 기반 툴 하드웨어(등급 12)가 필요하고, 그때 probe-rs 쪽 작업은 `TAS_CHL_TGT_TRC` 채널의 트레이스 클라이언트(`subscribe`와 `get_trace`에 해당하는 TAS 요청)를 더하는 것이다. 이 이름과 시그니처는 Infineon 공개 소스에서 확인했고, 와이어 프레임은 아직 확인하지 않았다.

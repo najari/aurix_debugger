@@ -29,7 +29,7 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 
 | 항목 | TRACE32 | aurix_debugger |
 | --- | --- | --- |
-| 지원 칩 | TC1xxx(AUDO), TC2xx, TC3xx, TC4x | TC27x(TC275에서 확인) |
+| 지원 칩 | TC1xxx(AUDO), TC2xx, TC3xx, TC4x | TC27x(TC275에서 확인), TC36x(TriBoard TC3X5에서 확인, 2코어) |
 | 프로브 | Lauterbach 전용: AUTO26 Debug Probe(LA-3203), CombiProbe 2(LA-3081), PowerTrace Serial(LA-3325·3326) | Infineon DAS(TasServer, TCP 24817). 보드의 온보드 DAS로 충분, MCD 라이브러리도 가능 |
 | 접속 | JTAG, DAP, DXCPL, DXCM. ETK·GSI·VX1000과 포트 공유, XCP | DAS가 처리. 세션 여러 개가 TAS 서버를 나눠 씀 |
 | 디버깅 코어 | 모든 TriCore CPU와 PPU, GTM, SCR, HSM, PCP | TriCore CPU0–2 |
@@ -40,7 +40,7 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 | 리셋 | 소프트·하드 리셋과 전원 재인가를 넘어 디버깅. 리셋 뒤 동작 선택(`Halt`, `RestoreGo`, `RunRestore`) | DAP restart, `entryFunction`. 다른 세션의 리셋을 2초까지 버티고 정지 그룹을 다시 연결. 앱이 일으킨 리셋을 감지해 원인을 알리고, BP를 되살려 계속 실행(`restore`) 또는 정지(`halt`) |
 | 트레이스 | MCDS 온칩 트레이스(최대 6코어, TC275TF는 동시 2코어), AGBT·SGBT, DAP 스트리밍(CombiProbe 2), 복합 트리거 언어(CTL) | `probe-rs mcds record`·`timestamp` CLI. 기록은 이 어댑터가 맵 1을 막아 미검증. VS Code 연동 없음 |
 | 성능 측정 | 벤치마크 카운터: CCNT, ICNT, M1–M3CNT, OTGS·MCDS 카운터, BP 사이 구간 측정(A-to-B) | CCNT, ICNT, M1–M3CNT를 레지스터 뷰에 표시, 두 주소 사이 구간 측정(`perfWindow`), 실행 중 읽기. MCDS 타임스탬프 CLI |
-| 플래시 | `FLASH.ReProgram`, 장치별 스크립트, HSM 플래시 | TC27x PFLASH. 같은 섹터는 건너뛰고, 지워진 페이지는 ECC로 판별 |
+| 플래시 | `FLASH.ReProgram`, 장치별 스크립트, HSM 플래시 | TC27x와 TC36x의 PFLASH. 같은 섹터는 건너뛰고, 지워진 페이지는 ECC로 판별. 지우기 전 섹터 백업 옵션 |
 | OS 인식 | AUTOSAR Classic(ORTI)의 태스크·ISR·runnable, ARTI 프로파일링 | 없음 |
 | 캐시·오버레이·MPU | 캐시 라인 보기, 데이터 오버레이(OVC), 코드 오버레이, MPU 디버깅 | 없음 |
 | 커버리지·인증 | 객체 커버리지부터 MC/DC까지, 도구 인정 키트(TQSK, ISO 26262) | 없음 |
@@ -71,10 +71,10 @@ aurix_debugger가 앞서는 점은 비용, VS Code에서의 사용성, 직접 �
 | 2 | step 중 인터럽트 막기 — **완료** `79dd08d` | 검토 때: 옵션 없음. 인터럽트가 켜진 코드에서 step이 ISR로 들어가는지 확인하지 않았다(확인 결과 들어갈 수 있었다) | 먼저 인터럽트가 도는 앱에서 동작을 확인한다. 필요하면 step하는 동안 `ICR.IE`를 끄고 되돌린다(TRACE32 `IMASKASM`·`IMASKHLL`과 같은 옵션) | 소 | 없음 |
 | 3 | 성능 카운터 — **완료** `f0d9b30` | 검토 때: MCDS 타임스탬프 CLI만 | `CCTRL`·`CCNT`·`ICNT`·`M1`–`M3CNT`를 레지스터 뷰나 Live Watch에 보이고, 두 BP 사이 구간을 재는 명령을 더한다 | 소–중 | 없음 |
 | 4 | 앱이 일으킨 리셋 처리 — **완료** `fbf362f` | 검토 때: 다른 세션의 리셋만 버틴다. 워치독·소프트 리셋 뒤에는 동작을 고를 수 없다 | 리셋을 감지(`SCU_RSTSTAT`, 부트 정지 상태)하고, 멈춤 또는 BP 복원 뒤 실행을 고르는 설정을 더한다. 플래시 쓰기 직후 리셋의 0x44 오류도 같이 다룬다 | 중 | 없음 |
-| 5 | MCDS 트레이스 검증과 VS Code 표시 | CLI만 있고 기록(T-15)은 미검증 | 맵 1을 여는 어댑터로 기록을 확인한다. 그다음 프로그램 흐름을 소스 줄로 풀어 VS Code에 보인다 | 대 | DAP miniWiggler 등 맵 1 어댑터 |
-| 6 | 칩·플래시 범위(TC3xx, DFLASH, UCB) | TC27x PFLASH만 | 칩별 타깃 정의, DMU 방식 플래시 로더(WP-9) | 대 | TC3xx 보드 |
+| 5 | MCDS 트레이스 검증과 VS Code 표시 | CLI만 있고 기록(T-15)은 미검증. 2026-10-24에 Infineon의 MCDS 기록 라이브러리로도 이 어댑터에서는 맵 1을 읽지 못함을 확인했다([DAS 분석](DAS_DLL_ANALYSIS.md) 부록 D) | 맵 1을 여는 어댑터로 기록을 확인한다. 그다음 프로그램 흐름을 소스 줄로 풀어 VS Code에 보인다 | 대 | DAP miniWiggler 등 맵 1 어댑터 |
+| 6 | 칩·플래시 범위(TC3xx, DFLASH, UCB) — **TC36x 완료** `e1f1952` | TC27x와 TC36x의 PFLASH. DFLASH, UCB, 다른 TC3xx(TC37x 등)는 없음 | TC36x는 타깃 정의와 TC3xx 플래시 로더로 구현했다. 나머지 TC3xx는 칩별 타깃 정의를 더하고(WP-9), DFLASH·UCB는 따로 만든다 | 대 | TC37x 등 해당 보드(TC36x는 TriBoard에서 확인) |
 | 7 | AUTOSAR OS 인식(ORTI) | 없음 | ORTI 파일을 읽어 태스크·ISR 상태를 변수 뷰에 보인다 | 중–대 | ORTI를 내는 OS의 앱 |
-| 8 | DAP 스트리밍·ARTI | 없음 | miniMCDS 데이터를 DAP로 계속 읽어 내는 경로가 DAS에 있는지부터 조사한다 | 대 | 조사 필요 |
+| 8 | DAP 스트리밍·ARTI — **조사 완료**(2026-10-24) | 없음 | 경로는 있다. TAS의 트레이스 채널(`CTasClientTrc`의 `subscribe`·`get_trace`, TasServer V2.0 이상)로 서버가 트레이스를 보내고, miniMCDS는 연속 트레이스를 지원하지 않는다. 이 어댑터는 연속 트레이스 등급 8(불안정, 대역폭 0 kB/s)이고 맵 1을 막아 쓸 수 없다. 구현하려면 DAP 기반 툴 하드웨어(등급 12)에서 트레이스 클라이언트를 더한다([DAS 분석](DAS_DLL_ANALYSIS.md) 부록 D) | 대 | DAP 기반 어댑터 |
 | 9 | 한 세션 멀티코어(SMP 보기) | 코어별 세션 3개 | probe-rs DAP의 멀티코어 지원(업스트림 TODO) | 대 | 없음 |
 | 10 | 캐시·데이터 오버레이(OVC)·MPU 인식 | 없음 | OVC 설정을 읽어 메모리 읽기를 CPU 주소 기준으로 바로잡는다 | 중 | 오버레이를 쓰는 앱 |
 | 11 | 보조 코어, 커버리지, 도구 인증 | 없음 | GTM·HSM·SCR은 다른 아키텍처다. 커버리지는 트레이스가 있어야 하고, ISO 26262 인증은 범위 밖이다 | 대 | — |
@@ -87,7 +87,7 @@ aurix_debugger가 앞서는 점은 비용, VS Code에서의 사용성, 직접 �
 2. ~~**데이터 BP (1번)**~~ 완료: VS Code의 변수 우클릭 "Break on Value Change"가 동작한다.
 3. ~~**성능 카운터 (3번)**~~ 완료: 레지스터 뷰와 `perfWindow` 구간 측정.
 4. ~~**리셋 처리 (4번)**~~ 완료: 감지·원인 알림·`resetBehavior`.
-5. **하드웨어가 생기면**: MCDS 트레이스(5번)는 맵 1 어댑터, 칩 범위(6번)는 TC3xx 보드가 있을 때 한다. ORTI(7번)는 AUTOSAR 앱이 생기면 한다.
+5. **하드웨어가 생기면**: MCDS 트레이스(5번)와 DAP 스트리밍(8번)은 맵 1을 열고 연속 트레이스를 지원하는 DAP 기반 어댑터, 나머지 칩 범위(6번, TC37x 등)는 해당 보드가 있을 때 한다. ORTI(7번)는 AUTOSAR 앱이 생기면 한다.
 
 트레이스 기반 분석(커버리지, ARTI)과 ISO 26262 인증이 필요한 일에는 TRACE32를 쓰는 편이 현실적이다.
 
