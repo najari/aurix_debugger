@@ -1,0 +1,238 @@
+# 한 세션 멀티코어 개발지시서 (PRD)
+
+2026-10-24 · 원본(구조 그림 포함): [Claude 문서](https://claude.ai/artifact/LaAQhorNNsiccUpDPhAhhZ)
+
+## 1. 개요
+
+VS Code에서 TC275의 코어 3개를 DAP 세션 하나로 디버깅한다. `probe-rs dap-server` 하나, launch 설정 하나로 띄우고, 코어마다 스레드 하나가 호출 스택 뷰에 보인다. 지금은 코어마다 세션을 하나씩 띄워 compound launch로 묶는다.
+
+| 성공 기준 | 확인 방법 |
+| --- | --- |
+| 설정 하나 | `launch.json` 항목 하나(`coreConfigs` 3개)로 CPU0–CPU2를 디버깅한다 |
+| 코어마다 스레드 | 호출 스택 뷰에 스레드 3개(CPU0, CPU1, CPU2)가 보이고, 스레드마다 자기 콜스택과 변수를 보인다 |
+| 동시 정지 | 한 코어가 멈추면 세 스레드가 모두 멈춤으로 바뀌고, continue는 그룹을 함께 실행한다. 지금의 `dap_allstop` 시험 항목과 같은 결과 |
+| 폴링 부하 감소 | 실행 중 상태 확인의 TAS 요청 수가 세션 3개 방식보다 적다(코어 상태를 한 요청에 묶음) |
+| 회귀 없음 | 코어 하나 설정은 지금과 같게 동작한다. TC275 하드웨어 회귀 시험 20묶음 통과, 다른 아키텍처의 단위 테스트 회귀 없음 |
+
+대상 코드는 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(`b667e44`)의 DAP 서버(`probe-rs-tools/src/bin/probe-rs/cmd/dap_server/`)와 데모의 VS Code 설정(`m25_tcf/examples/aurix_tcf_demo/.vscode`)이다. 다른 개발지시서와 같이 업스트림에는 올리지 않는다.
+
+## 2. 현황과 문제
+
+백엔드와 RPC 서버는 이미 코어 인덱스로 동작하고, 막힌 곳은 DAP 계층이다. DAP 서버는 코어를 하나만 고르도록 짜여 있다. `coreConfigs`가 둘 이상이면 attach가 실패한다.
+
+지금 방식(코어마다 DAP 서버 하나)의 한계는 다섯 가지다.
+
+- **설정과 연결:** launch 설정 3개에 compound가 필요하고, TAS 연결 3개가 각자 코어 상태를 확인한다. 링크는 요청당 1~3 ms라 폴링 3배가 반응성에 드러난다.
+- **정지 알림:** 다른 코어의 정지는 각 세션이 폴링으로 알아채서 40~60 ms 늦게 온다.
+- **세션 사이 경쟁:** 세션들이 같은 코어를 서로 다른 시점에 읽는다. `58063ae`에서 고친 동시 정지 버그가 그 예다.
+- **브레이크포인트:** 같은 코드를 여러 코어가 실행하면 세션마다 따로 걸어야 한다.
+- **리셋과 종료:** 한 세션의 리셋을 다른 세션이 따로 알아채야 하고(TAS `DEV_RESET` 재전송 포함), 정리도 세션별로 한다.
+
+DAP 서버 코드의 단일 코어 전제는 아래와 같다(`probe-rs-tools/src/bin/probe-rs/cmd/dap_server/` 기준).
+
+| 위치 | 지금 | 한 세션에 필요한 것 |
+| --- | --- | --- |
+| `server/session_data.rs:1054` | `coreConfigs`가 1개가 아니면 attach 실패 | N개 허용 |
+| `server/debugger.rs:242` | `let core_id = 0;` 모든 요청이 첫 코어로 간다 | `threadId`·`frameId`·`variablesReference`로 코어를 정한다 |
+| `threadId` | continue, pause, next, stepIn, stepOut, stackTrace 어느 것도 읽지 않는다 | 읽어서 코어를 고른다 |
+| `threads` | 스레드 하나(id = 코어 인덱스) | 코어마다 하나 |
+| 정지·실행 이벤트 | stopped는 thread = 코어 인덱스, continued는 `core_data` 위치(지금도 CPU1·CPU2 세션이 thread 0으로 보내는 버그). `allThreadsStopped`는 전역 플래그 | 코어별 상태로 보내고, 그룹 여부는 `allStop`으로 |
+| `all_cores_halted` | 전역 플래그. 폴링 순서에 따라 값이 달라지고, 스택 다시 풀기의 기준이다 | 코어별 이전 상태로 판단 |
+| 디버그 정보 | 세션에 하나(첫 코어의 `programBinary`) | 코어마다(같은 ELF면 공유) |
+| 소스 BP 해석 | 세션 수준 `resolve_source_breakpoints` | ELF별로 해석해 코어마다 건다 |
+| launch·attach·restart | 첫 코어만: 플래시, `entryFunction`, `allStop`, `stepInterrupts`, `resetBehavior`, `perfWindow`, SVD | 코어 전부 |
+| RTT·semihosting | RTT는 첫 RTT 코어만. semihosting 핸들 번호가 코어마다 1024부터 | 코어 구분(TriCore는 RTT·semihosting을 쓰지 않아 1차는 검사만) |
+
+이미 되는 것도 많다.
+
+- 백엔드(`backend/rpc.rs`)는 호출마다 코어 인덱스를 받는다. status, halt, run, step, BP, 레지스터, 변수, 동시 정지, TriCore 설정이 모두 그렇다.
+- RPC 서버의 변수 상태는 코어별(`per_core`)이고, frame id와 `variablesReference`는 프로세스 전역 카운터라 코어끼리 겹치지 않는다.
+- 코어 상태 확인(`poll_cores`)은 이미 모든 코어를 돈다. `CoreData`도 BP와 스택 캐시를 코어별로 갖는다.
+- TriCore 코어 상태(`TriCoreCoreState`)는 코어별이고, 동시 정지는 하드웨어 라인으로 동작한다. 세션이 하나가 되면 트리거 유닛을 누가 맡는지 다투는 일이 없어진다.
+
+## 3. 범위
+
+1차는 DAP 서버 하나가 `coreConfigs`의 코어를 모두 맡는 것까지다. 코어별 세션 방식은 그대로 두고, 새 방식을 더한다.
+
+| 구분 | 항목 |
+| --- | --- |
+| 1차 | 코어마다 스레드 하나. `threadId`·`frameId`·`variablesReference`로 요청을 코어에 나눠 보낸다 |
+| 1차 | 정지·실행 이벤트의 스레드 구분. `allStop`이면 그룹 단위(`allThreadsStopped`, `allThreadsContinued`), 아니면 코어 단위 |
+| 1차 | 브레이크포인트를 코어별로. 소스 BP는 그 소스의 코드를 가진 코어(ELF)마다 건다 |
+| 1차 | 코어 상태 확인을 한 TAS 요청으로 묶음 |
+| 1차 | 리셋, restart, disconnect, 강제 종료 복구를 코어 전부에 |
+| 1차 | 데모의 VS Code 설정(세션 하나로 CPU0–CPU2) |
+| 나중 | TC36x(2코어) 실기 시험. 보드가 있을 때 |
+| 나중 | Live Watch 확장의 코어 선택, 성능 창(`perfWindow`)의 코어별 설정 표시 |
+| 제외 | 업스트림 PR, 코어별 세션 방식 제거, 서로 다른 칩 여러 개를 한 세션에서(보드 여러 개) |
+
+## 4. 기능 요구사항
+
+Must는 1차 완료에 필요한 것, Should는 가능하면 1차에 넣을 것, Could는 나중에 해도 되는 것이다.
+
+| ID | 내용 | 우선순위 |
+| --- | --- | --- |
+| FR-M1 | `coreConfigs`에 코어를 여러 개 준다. 코어 하나 설정은 지금과 같게 동작한다 | Must |
+| FR-M2 | `threads`는 코어마다 스레드 하나를 돌려준다. id는 코어 인덱스, 이름은 `CPU0` 같은 코어 이름이다 | Must |
+| FR-M3 | 요청을 코어에 나눠 보낸다. `threadId`(continue, pause, next, stepIn, stepOut, stackTrace), `frameId`(scopes, evaluate), `variablesReference`(variables, setVariable), 변수에서 나온 `memoryReference`와 `dataId`는 그 코어로 간다 | Must |
+| FR-M4 | 정지·실행 이벤트는 코어마다 그 코어의 스레드로 보낸다. 이유도 코어별이다(BP를 맞은 코어는 `breakpoint`, 그룹이 멈춘 코어는 `external`). continued 이벤트의 스레드 번호 버그(`core_data` 위치를 보냄)도 고친다 | Must |
+| FR-M5 | `allStop`이면 continue가 그룹을 함께 실행하고(`allThreadsContinued: true`), pause는 그룹을 멈춘다. step은 그 코어만 움직이고 나머지는 멈춘 채 둔다(지금과 같음) | Must |
+| FR-M6 | `allStop`이 아니면 코어가 따로 돈다. continue·pause는 그 스레드의 코어만(`allThreadsContinued: false`) | Must |
+| FR-M7 | 디버그 정보를 코어별 `programBinary`로 읽는다. 같은 파일이면 한 번만 읽고 공유한다 | Must |
+| FR-M8 | 소스 BP는 그 줄을 포함하는 ELF의 코어마다 건다. 명령어 BP는 그 주소의 코드를 가진 코어에, 데이터 BP는 `dataId`의 코어에 건다. BP id는 코어가 달라도 겹치지 않는다 | Must |
+| FR-M9 | launch·attach·restart가 코어 전부에 적용된다. 서로 다른 `programBinary`는 한 번씩 플래시하고, `entryFunction`, `stepInterrupts`, `resetBehavior`, `perfWindow`, SVD는 코어별 설정대로 쓴다. `allStop`이면 코어 전부가 그룹에 들어간다 | Must |
+| FR-M10 | TriCore는 코어 상태 확인을 TAS 요청 하나로 묶는다(코어마다 `DBGSR`, STM 타이머는 한 번). 다른 아키텍처는 지금처럼 코어마다 확인한다 | Must |
+| FR-M11 | disconnect와 강제 종료 복구가 코어 전부를 정리한다(동시 정지 라우팅 복원, `debug` 명령 되돌리기) | Must |
+| FR-M12 | 코어 하나 설정과 다른 아키텍처의 동작은 바꾸지 않는다. 기존 단위 테스트와 TC275 회귀 시험이 그대로 통과한다 | Must |
+| FR-M13 | `liveWatch`가 코어를 받는다(없으면 첫 코어). Live Watch 확장에 코어 선택 | Should |
+| FR-M14 | 데모의 VS Code 설정에 세션 하나 구성(`TC275: probe-rs CPU0–CPU2 one session`)을 더한다. compound 구성은 남긴다 | Should |
+| FR-M15 | RTT와 semihosting을 코어별로 구분한다(다른 아키텍처용. TriCore는 쓰지 않음) | Could |
+
+## 5. 설계
+
+DAP 서버 하나가 요청을 코어별로 나눠 보내고, 코어 상태는 한 요청으로 확인한다. 새로 만드는 것은 요청 라우터, 그룹 조정, 상태 확인 묶음 셋이다. 나머지(코어별 `CoreData`, 백엔드, TriCore 코어 상태)는 지금 것을 쓴다.
+
+구조 그림(원본 문서)의 층은 위에서 아래로 다음과 같다.
+
+1. **VS Code (DAP 클라이언트):** 호출 스택 뷰에 스레드 3개(CPU0 · CPU1 · CPU2).
+2. **probe-rs dap-server (세션 하나, launch 설정 하나):**
+   - 새로 만드는 부분은 세 가지다.
+     - 요청 라우터: threadId → 그 코어, frameId·변수 → 발급한 코어, 주소만 있으면 → 포커스 코어.
+     - 그룹 조정(allStop): continue·pause를 그룹에, 멈춘 채 남는 코어는 보고, step은 그 코어만.
+     - 상태 확인 묶음: 코어 3개를 한 TAS 요청으로, 바뀐 코어마다 그 스레드로 stopped·continued.
+   - 지금 것을 쓰는 부분은 `CoreData` CPU0·CPU1·CPU2다. 각각 ELF·디버그 정보, BP·스택 캐시·상태를 갖는다.
+3. **RPC 백엔드 · probe-rs Session (TAS 연결 하나):** 코어 인덱스로 호출(status · run · step · BP · 변수). `TriCoreCoreState` × 3이 트리거 유닛, 동시 정지, 리셋 감지, 저널을 맡는다.
+4. **TasServer → TC275:** CPU0 · CPU1 · CPU2, OCDS 트리거 스위치(동시 정지 라인). 이 층과는 TAS 요청으로 통신하고, 상태 확인은 한 요청에 묶는다.
+
+요청은 위에서 아래로 흐른다. 라우터가 코어를 정하고, 백엔드는 지금처럼 코어 인덱스로 호출하며, TAS 연결은 하나다.
+
+### 5.1 요청 라우팅
+
+| 요청 | 코어를 정하는 방법 |
+| --- | --- |
+| continue, pause, next, stepIn, stepOut, stackTrace | `threadId`. 스레드 id는 코어 인덱스다 |
+| scopes, evaluate(`frameId` 있음) | 그 `frameId`를 내준 코어. stackTrace 응답 때 frame id와 코어를 표에 적어 둔다 |
+| variables, setVariable | 그 `variablesReference`를 내준 코어. scopes·variables 응답 때 적어 둔다 |
+| 변수에서 나온 `memoryReference`, `dataId` | 문자열에 코어를 붙인다(`0x7000a004@1`, `0x7000a004/4@1`) |
+| evaluate(`frameId` 없음: 호버, Watch), `liveWatch`, 주소만 있는 readMemory·writeMemory·disassemble | 포커스 코어: 마지막으로 정지 이벤트를 보낸 코어, 없으면 첫 코어. `liveWatch`는 `core` 인자를 받는다 |
+| setBreakpoints | 그 소스를 포함한 ELF의 코어 전부 |
+| setInstructionBreakpoints | 그 주소의 코드를 가진 ELF의 코어, 없으면 포커스 코어 |
+| threads, configurationDone, restart, disconnect | 코어 전부 |
+
+### 5.2 정지·실행과 이벤트
+
+- **이벤트:** 상태 확인에서 상태가 바뀐 코어마다, 그 코어의 스레드로 stopped(이유는 코어별) 또는 continued를 보낸다. 각 코어의 이유를 보이려고 `allThreadsStopped`는 쓰지 않는다.
+- **continue:** 그 코어를 실행한다. `allStop`이면 TriCore의 run이 그룹이 멈춘 동료를 같은 TAS 요청으로 함께 실행한다(지금 동작). 자기 BP에 멈춘 동료는 남는다. 응답의 `allThreadsContinued`는 코어가 모두 돌 때만 `true`이고, 남은 코어의 스레드는 멈춤으로 둔다.
+- **pause:** 그 코어를 멈춘다. `allStop`이면 하드웨어가 나머지를 멈추고, 상태 확인이 그 스레드들에 stopped(`external`)를 보낸다.
+- **step:** 그 코어만 움직이고 그 스레드에만 stopped(`step`)를 보낸다.
+- **`allStop`이 아닐 때:** continue·pause는 그 코어만 다루고 `allThreadsContinued: false`로 답한다. capability `supportsSingleThreadExecutionRequests`를 켜고 `singleThread` 인자를 따른다.
+- **스택 다시 풀기:** 전역 플래그 대신 그 코어의 이전 상태가 실행에서 정지로 바뀔 때만 한다.
+
+### 5.3 상태 확인 묶음
+
+- 백엔드에 여러 코어의 상태를 한 번에 묻는 호출(`status_many`, RPC `core/status_many`)을 더한다. 기본 구현은 코어마다 `status`를 부르므로 다른 아키텍처는 지금과 같다.
+- TriCore는 이를 TAS 요청 하나로 처리한다. 코어마다 `DBGSR`, STM0 타이머는 한 번 읽는다. 그 값으로 코어별 판단(정지 이유, 리셋 감지, 동시 정지 확인)을 하고, 상태가 바뀐 코어만 추가로 읽는다.
+- 폴링 주기는 그대로다(정지 중 100 ms, 실행 중 50 ms, 입력이 오면 바로 끝남). 목표는 실행 중 폴링 1회에 TAS 요청 1개다. 지금은 세션마다 상태 요청과 그룹 확인 요청을 따로 보낸다.
+
+### 5.4 디버그 정보와 브레이크포인트
+
+- RPC 서버의 디버그 정보를 ELF 경로별로 둔다. 코어는 자기 ELF를 가리키고, 같은 경로면 공유한다. `resolve_source_breakpoints`와 `resolve_source_locations`는 ELF(코어)를 받는다.
+- 소스 BP 하나는 DAP 브레이크포인트 하나로 답하고, 안에서 코어마다 트리거 유닛을 건다. `verified`는 한 코어라도 걸리면 `true`이고, 걸린 코어는 `message`에 적는다. id는 소스와 줄로 만들어 코어가 달라도 겹치지 않는다.
+- 트리거 유닛은 코어마다 8개라서, 세 코어에 걸어도 각 코어에서 하나씩만 쓴다.
+
+### 5.5 launch·attach·restart·disconnect
+
+- 코어 설정마다 `entryFunction`, `stepInterrupts`, `resetBehavior`, `perfWindow`, SVD를 적용한다. `allStop`은 세션 설정이라 코어 전부를 그룹에 넣는다.
+- 플래시는 서로 다른 `programBinary`만 한 번씩 쓴다. 두 ELF가 같은 섹터를 쓰면 쓰기 전에 거부한다.
+- restart는 장치를 한 번 리셋하고, 그 뒤 코어마다 BP, 그룹, 설정을 되살린다.
+- disconnect는 코어마다 BP를 지우고, 그룹에서 빼고(라우팅 복원), 실행 상태를 되돌린다. 강제 종료 복구는 코어별 저널이 이미 맡는다.
+
+### 5.6 TriCore 쪽 변경
+
+- 5.3의 상태 묶음 함수를 더한다.
+- 나머지는 코어별 상태(`TriCoreCoreState`)를 그대로 쓴다. 트리거 소유는 코어마다 첫 BP·step 때 넘겨받는 지금 규칙 그대로이고, 한 세션이 세 코어를 모두 맡게 된다.
+- 동료 재개 규칙(`running_peers`)도 그대로다. 폴링이 하나라서 세션 사이의 경쟁은 없어진다.
+
+### 5.7 호환
+
+- `coreConfigs`가 하나면 지금 경로 그대로 동작한다. `threadId`가 없거나 코어가 하나면 그 코어로 간다.
+- 코어별 세션 방식(compound)도 계속 쓸 수 있다.
+
+## 6. 작업 패키지
+
+일곱 패키지를 WP-M1 → (WP-M2, WP-M3) → WP-M4 → WP-M5 → WP-M6 → WP-M7 순서로 한다. WP-M2와 WP-M3은 WP-M1 뒤에 나란히 할 수 있다. 크기는 다른 개발지시서와 같이 소(며칠), 중(1~2주)로 잡았다.
+
+| WP | 내용 | 선행 | 크기 | 완료 조건 |
+| --- | --- | --- | --- | --- |
+| WP-M1 | 코어 여러 개 설정 허용, `CoreData` 코어별 구성, `threads`, 요청 라우터(threadId·frameId·variablesReference 표, 포커스 코어), continued 스레드 번호 버그 | — | 중 | 가짜 어댑터 테스트: 코어 2개 설정에서 threads, stackTrace, scopes, variables가 맞는 코어로 간다. 코어 하나 설정 테스트 회귀 없음 |
+| WP-M2 | 코어별 이벤트, continue·pause·step의 `allStop` 의미, `singleThread`, 코어별 스택 다시 풀기 | WP-M1 | 중 | 가짜 백엔드 테스트: 그룹 정지에 스레드 3개가 각자 이유로 stopped, 자기 BP에 남은 코어는 continued를 받지 않는다 |
+| WP-M3 | ELF별 디버그 정보(RPC 서버), ELF별 소스 해석, 소스 BP의 코어별 확장과 id | WP-M1 | 중 | 같은 ELF를 쓰는 코어 3개에 소스 BP 하나가 각 코어의 트리거 유닛에 걸리고, DAP 응답은 하나다 |
+| WP-M4 | launch·attach·restart·disconnect를 코어 전부에: 코어별 설정, 플래시 중복 제거와 섹터 겹침 거부, `allStop` 전 코어, 정리 | WP-M1, WP-M3 | 중 | restart 뒤 코어 3개의 BP·그룹·설정이 되살아나고, disconnect 뒤 라우팅과 코드가 복원된다 |
+| WP-M5 | 상태 확인 묶음: 백엔드 `status_many`, RPC `core/status_many`, TriCore 한 요청 구현 | WP-M2 | 중 | 가짜 버스에서 코어 3개 폴링이 요청 1개다. 실기에서 실행 중 폴링의 TAS 요청 수를 세션 3개 방식과 비교한다 |
+| WP-M6 | 데모 VS Code 설정(세션 하나 구성), `liveWatch`의 코어 인자와 Live Watch 확장의 코어 선택 | WP-M2, WP-M4 | 소 | VS Code에서 설정 하나로 CPU0–CPU2 디버깅 |
+| WP-M7 | 회귀 시험과 문서 | 전부 | 소 | 7절의 시험 통과, 구현 현황을 PRD에 반영 |
+
+## 7. 시험 계획
+
+단위 테스트로 라우팅과 이벤트를 확인하고, TC275 ShieldBuddy에서 지금의 `dap_allstop` 시나리오를 세션 하나로 다시 돌린다. 플래시는 승인받은 PF1 시험 섹터만 쓴다.
+
+**단위 테스트**
+
+- 가짜 프로토콜 어댑터와 백엔드로: 코어 2–3개 설정의 threads, threadId·frameId·variablesReference 라우팅, 코어별 이벤트, `allThreadsContinued` 값.
+- 코어 하나 설정의 기존 테스트 회귀 없음(probe-rs-tools 202개).
+- 가짜 TriCore 버스로: 코어 3개 상태 확인이 요청 1개이고, 코어별 판단(정지 이유, 리셋, 동시 정지)이 지금과 같다.
+
+**실기 시험** (TC275, `coreConfigs` 3개, 새 시험 스크립트 `dap_onesession.js`)
+
+| ID | 시험 | 기대 결과 | FR |
+| --- | --- | --- | --- |
+| T-M1 | attach | 스레드 3개, 앱은 계속 돈다 | M1, M2 |
+| T-M2 | CPU0 BP에 정지(`allStop`) | CPU0 `breakpoint`, CPU1·CPU2 `external`. 스레드마다 stackTrace가 자기 코어의 PC를 보인다 | M3, M4 |
+| T-M3 | CPU0에서 continue | 세 코어 실행, continued 3개, `allThreadsContinued: true` | M5 |
+| T-M4 | CPU1에서 pause | 세 코어 정지, CPU1 `pause`, 나머지 `external` | M5 |
+| T-M5 | CPU0 step | CPU0만 움직이고 CPU1·CPU2의 PC는 그대로 | M5 |
+| T-M6 | CPU0이 자기 BP에 멈춘 채 CPU1에서 continue | CPU1·CPU2 실행, CPU0 남음, `allThreadsContinued: false` | M5 |
+| T-M7 | `allStop` 끈 설정 | continue·pause가 그 코어만 | M6 |
+| T-M8 | 세 코어가 같은 코드를 실행할 때 소스 BP 하나 | 코어마다 트리거 유닛 하나, 어느 코어가 맞아도 그 스레드가 `breakpoint` | M7, M8 |
+| T-M9 | CPU1 프레임의 변수·evaluate·setVariable | CPU1의 레지스터와 CSA를 직접 읽은 값과 같다 | M3 |
+| T-M10 | 코어를 붙인 `dataId`의 데이터 BP | 그 코어에서만 정지 | M3, M8 |
+| T-M11 | restart, 앱의 SW 리셋 | 세 코어의 BP와 그룹 유지, 콘솔 알림 | M9 |
+| T-M12 | disconnect, DAP 서버 강제 종료 뒤 다음 세션 | 라우팅 복원, 세 코어 실행, `debug` 명령 되돌림 | M11 |
+| T-M13 | 실행 중 폴링의 TAS 요청 수 | 폴링 1회에 요청 1개. 세션 3개 방식과 비교해 기록 | M10 |
+| T-M14 | 코어 하나 설정의 하드웨어 회귀 시험 20묶음 | 모두 통과 | M12 |
+| T-M15 | VS Code에서 설정 하나로 디버깅 | 호출 스택 뷰에 스레드 3개, BP·step·continue | M14 |
+
+데모에서는 CPU1·CPU2가 PF0의 앱을 실행해 데모 ELF에 그 코드의 기호가 없다. 그래서 T-M2의 CPU1·CPU2 콜스택은 PC 주소로 확인하고, T-M8에는 세 코어가 같은 코드를 실행하는 시험 이미지가 필요하다(9절).
+
+## 8. 위험과 대응
+
+가장 큰 위험은 공통 DAP 코드를 크게 바꾸는 데서 오는 회귀다. 그래서 새 동작은 코어가 둘 이상일 때만 켜지게 한다.
+
+| 위험 | 영향 | 대응 |
+| --- | --- | --- |
+| 공통 DAP 코드 변경이 크다 | 다른 아키텍처와 코어 하나 설정의 동작이 바뀔 수 있다 | 코어 하나면 지금 경로를 그대로 탄다. 기존 단위 테스트와 TC275 회귀 시험을 패키지마다 돌린다 |
+| VS Code가 스레드 여러 개의 이벤트를 예상과 다르게 보인다(포커스 이동, 멈춤 표시) | 화면이 실제 상태와 다르다 | T-M15를 WP-M2 직후에 먼저 해 보고 이벤트 규칙을 맞춘다 |
+| 폴링 묶음이 TriCore 판단의 읽기 순서를 바꾼다 | `58063ae` 같은 동시 정지 경쟁이 다시 생길 수 있다 | 자기 `DBGSR`을 동료 뒤에 읽는 규칙을 지킨다. 가짜 버스 테스트로 요청 사이 정지를 재현한다 |
+| 코어별 ELF가 같은 PFLASH 섹터를 쓴다 | 앞에 쓴 이미지가 지워진다 | 쓰기 전에 섹터 겹침을 검사해 거부한다 |
+| 세션 하나가 끝나면 세 코어의 디버깅이 함께 끝난다 | 한 코어의 오류가 전부에 퍼진다 | 오류는 요청 단위로 답하고 세션을 끝내지 않는다(지금 동작). 코어별 세션 방식을 남겨 둔다 |
+| 업스트림과 갈라진다 | 업스트림을 받을 때 병합 비용이 커진다 | 변경을 라우터와 새 파일에 모으고, 업스트림의 멀티코어 작업(코드의 TODO)을 지켜본다 |
+
+## 9. 결정이 필요한 점
+
+각 항목에 권장안을 적었다. 권장안대로 가면 WP-M1부터 바로 시작할 수 있다.
+
+- [ ] **정지 이벤트 방식:** 코어마다 stopped를 보낼지, 하나에 `allThreadsStopped`를 실을지. 권장은 코어마다다. 각 코어의 이유(`breakpoint`, `external`, `step`)가 화면에 남는다.
+- [ ] **포커스 코어:** 스레드를 알 수 없는 요청(호버, Watch, 주소만 있는 메모리 요청)을 어느 코어로 보낼지. 권장은 마지막으로 정지 이벤트를 보낸 코어다. VS Code도 그 스레드에 포커스를 둔다.
+- [ ] **코어 표시 형식:** `memoryReference`와 `dataId`에 코어를 붙이는 방법. 권장은 `0x7000a004@1`처럼 끝에 `@코어`다. 붙지 않은 값은 포커스 코어로 간다.
+- [ ] **T-M8 시험 이미지:** 세 코어가 같은 코드를 실행하게 하는 방법. 권장은 `start_in_flash` 예제에 코어 선택을 더해 PF1 데모를 CPU1·CPU2에서도 시작하는 것이다(코어마다 자기 DSPR에 스택). 플래시는 쓰지 않고 PF0는 건드리지 않는다.
+- [ ] **다른 아키텍처:** 코어 여러 개 설정을 ARM·RISC-V에도 열지. 권장은 코드상 허용하되 실기 시험은 TriCore만 하고, 그 사실을 문서에 적는 것이다.
+- [ ] **Live Watch 코어 선택(FR-M13):** 1차에 넣을지. 권장은 넣는 것이다. 크기가 작고, 세션이 하나가 되면 Live Watch가 코어를 고를 방법이 따로 없다.
+
+## 10. 참고 자료
+
+- [Debug Adapter Protocol 사양](https://microsoft.github.io/debug-adapter-protocol/specification): StoppedEvent의 `allThreadsStopped`(참이면 클라이언트가 모든 스레드를 펼칠 수 있고, 아니면 `threadId`의 스레드만), ContinuedEvent와 continue 응답의 `allThreadsContinued`(빠지면 모든 스레드 재개), continue·next·stepIn·stepOut의 `singleThread`(capability `supportsSingleThreadExecutionRequests`), `frameId` 없는 evaluate는 전역 범위
+- [probe-rs TriCore · MCD · MCDS 연동 개발지시서 (PRD)](PROBE_RS_TRICORE_PRD.md): 동시 정지(`allStop`), 코어별 세션, `58063ae`와 `b667e44`
+- [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md): aurix-tcf는 세션 하나로 멀티코어를 다룬다
+- [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore) `b667e44`: `probe-rs-tools/src/bin/probe-rs/cmd/dap_server/`(server/debugger.rs, server/session_data.rs, debug_adapter/dap/adapter.rs, backend/rpc.rs), `probe-rs/src/architecture/tricore/mod.rs`
+- 데모 설정: `m25_tcf/examples/aurix_tcf_demo/.vscode/launch.json`(코어별 구성과 compound)
+- 지금의 멀티코어 실기 시험: `dap_allstop.js`(세션 3개, 14항목)
