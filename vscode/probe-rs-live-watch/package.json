@@ -1,0 +1,106 @@
+{
+  "name": "probe-rs-live-watch",
+  "displayName": "probe-rs Live Watch",
+  "description": "Refreshes global variables while the target runs, in probe-rs debug sessions; grouped by session when several cores are debugged.",
+  "version": "0.1.1",
+  "publisher": "najari",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/najari/aurix_debugger"
+  },
+  "engines": {
+    "vscode": "^1.79.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onDebugResolve:probe-rs-debug",
+    "onView:probeRsLiveWatch"
+  ],
+  "contributes": {
+    "views": {
+      "debug": [
+        {
+          "id": "probeRsLiveWatch",
+          "name": "Live Watch",
+          "when": "probeRsLiveWatch.hasSession"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "probeRsLiveWatch.add",
+        "title": "Add Expression",
+        "category": "probe-rs Live Watch",
+        "icon": "$(add)"
+      },
+      {
+        "command": "probeRsLiveWatch.addSelection",
+        "title": "Add to Live Watch (probe-rs)",
+        "category": "probe-rs Live Watch"
+      },
+      {
+        "command": "probeRsLiveWatch.remove",
+        "title": "Remove Expression",
+        "category": "probe-rs Live Watch",
+        "icon": "$(close)"
+      },
+      {
+        "command": "probeRsLiveWatch.clear",
+        "title": "Remove All Expressions",
+        "category": "probe-rs Live Watch",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "probeRsLiveWatch.setInterval",
+        "title": "Set Refresh Interval",
+        "category": "probe-rs Live Watch",
+        "icon": "$(watch)"
+      },
+      {
+        "command": "probeRsLiveWatch.pause",
+        "title": "Pause Refresh",
+        "category": "probe-rs Live Watch",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "probeRsLiveWatch.resume",
+        "title": "Resume Refresh",
+        "category": "probe-rs Live Watch",
+        "icon": "$(play)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "probeRsLiveWatch.add", "when": "view == probeRsLiveWatch", "group": "navigation@1" },
+        { "command": "probeRsLiveWatch.pause", "when": "view == probeRsLiveWatch && !probeRsLiveWatch.paused", "group": "navigation@2" },
+        { "command": "probeRsLiveWatch.resume", "when": "view == probeRsLiveWatch && probeRsLiveWatch.paused", "group": "navigation@2" },
+        { "command": "probeRsLiveWatch.setInterval", "when": "view == probeRsLiveWatch", "group": "navigation@3" },
+        { "command": "probeRsLiveWatch.clear", "when": "view == probeRsLiveWatch", "group": "navigation@4" }
+      ],
+      "view/item/context": [
+        { "command": "probeRsLiveWatch.remove", "when": "view == probeRsLiveWatch && viewItem == expression", "group": "inline" }
+      ],
+      "editor/context": [
+        { "command": "probeRsLiveWatch.addSelection", "when": "probeRsLiveWatch.hasSession && editorHasSelection", "group": "debug" }
+      ],
+      "commandPalette": [
+        { "command": "probeRsLiveWatch.remove", "when": "false" }
+      ]
+    },
+    "configuration": {
+      "title": "probe-rs Live Watch",
+      "properties": {
+        "probeRsLiveWatch.intervalMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "description": "How often the values are read, in milliseconds (at least 100)."
+        }
+      }
+    }
+  }
+}

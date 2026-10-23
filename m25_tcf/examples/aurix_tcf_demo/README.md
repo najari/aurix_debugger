@@ -105,6 +105,10 @@ Notes:
   else from the built-in TC27x map.
 - CPU1 and CPU2 run the application, for which there is no ELF: their call
   stacks show addresses only.
+- Global variables can be watched while the cores run with the **Live Watch**
+  view of the `probe-rs Live Watch` extension
+  (`../../../vscode/probe-rs-live-watch`), for example `g_ticks` and
+  `g_result` of the demo.
 - A probe-rs command line tool (`probe-rs read`, `reset`, ...) run during a
   session resumes every halted core, and a reset from any session resets the
   whole device.
