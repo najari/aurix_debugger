@@ -2,20 +2,8 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build: demo_flash.elf",
-      "detail": "Link the demo for PF1 sector 0x8021C000 (build_flash.ps1)",
-      "type": "process",
-      "command": "pwsh",
-      "args": [
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", "${workspaceFolder}\\build_flash.ps1"
-      ],
-      "problemMatcher": [],
-      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
-    },
-    {
       "label": "build: demo.elf",
-      "detail": "Link the demo for the CPU0 PSPR and DSPR (build.ps1)",
+      "detail": "Link the demo for the CPU0 PSPR and DSPR (build.ps1); the same image runs on the TC275 and the TC36x",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -26,21 +14,34 @@
       "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
     },
     {
-      "label": "probe-rs: start RAM demo on CPU0",
-      "detail": "Build demo.elf, write it into the CPU0 PSPR and DSPR (no flash write) and halt CPU0 at main, for the probe-rs RAM attach configuration",
+      "label": "TC275: build demo_flash.elf",
+      "detail": "Link the demo for TC275 PF1 sector 0x8021C000 (build_flash.ps1)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\build_flash.ps1", "-Board", "tc275"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "TC275: probe-rs start RAM demo on CPU0",
+      "detail": "Build demo.elf, write it into the CPU0 PSPR and DSPR (no flash write) and halt CPU0 at main",
       "dependsOn": "build: demo.elf",
       "type": "process",
-      "command": "C:\\work\\probe-rs\\target\\debug\\examples\\start_in_flash.exe",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\examples\\start_in_flash.exe",
       "args": ["${workspaceFolder}\\build\\demo.elf"],
+      "options": { "env": { "PROBE_RS_CHIP": "TC275" } },
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
     },
     {
-      "label": "probe-rs: flash demo (PF1 0x8021C000)",
+      "label": "TC275: probe-rs flash demo (PF1 0x8021C000)",
       "detail": "Build demo_flash.elf and write it with probe-rs through the TAS server (PF1 sector 0x8021C000 only; skipped when the sector already holds it)",
-      "dependsOn": "build: demo_flash.elf",
+      "dependsOn": "TC275: build demo_flash.elf",
       "type": "process",
-      "command": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
       "args": [
         "download", "--chip", "TC275", "--probe", "058b:0000", "--verify",
         "${workspaceFolder}\\build\\demo_flash.elf"
@@ -49,19 +50,67 @@
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
     },
     {
-      "label": "probe-rs: start demo on CPU0",
-      "detail": "Halt CPU0 at main of the flashed demo (PC, stack, A11 = PCXI = 0), for the probe-rs attach configuration",
-      "dependsOn": "probe-rs: flash demo (PF1 0x8021C000)",
+      "label": "TC275: probe-rs start flash demo on CPU0",
+      "detail": "Flash the demo, then halt CPU0 at main of the flashed demo (PC, stack, A11 = PCXI = 0)",
+      "dependsOn": "TC275: probe-rs flash demo (PF1 0x8021C000)",
       "type": "process",
-      "command": "C:\\work\\probe-rs\\target\\debug\\examples\\start_in_flash.exe",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\examples\\start_in_flash.exe",
       "args": ["${workspaceFolder}\\build\\demo_flash.elf"],
+      "options": { "env": { "PROBE_RS_CHIP": "TC275" } },
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
     },
     {
-      "label": "m25: flash demo (PF1 0x8021C000)",
+      "label": "TC36x: build demo_flash_tc36x.elf",
+      "detail": "Link the demo for TC36x PF1 sector 0x80400000 (build_flash.ps1 -Board tc36x)",
+      "type": "process",
+      "command": "pwsh",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\build_flash.ps1", "-Board", "tc36x"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "TC36x: probe-rs start RAM demo on CPU0",
+      "detail": "Build demo.elf, write it into the CPU0 PSPR and DSPR of the TC36x (no flash write) and halt CPU0 at main",
+      "dependsOn": "build: demo.elf",
+      "type": "process",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\examples\\start_in_flash.exe",
+      "args": ["${workspaceFolder}\\build\\demo.elf"],
+      "options": { "env": { "PROBE_RS_CHIP": "TC36x" } },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "TC36x: probe-rs flash demo (PF1 0x80400000)",
+      "detail": "Build demo_flash_tc36x.elf and write it with probe-rs through the TAS server (PF1 sector 0x80400000 only; skipped when the sector already holds it)",
+      "dependsOn": "TC36x: build demo_flash_tc36x.elf",
+      "type": "process",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
+      "args": [
+        "download", "--chip", "TC36x", "--probe", "058b:0000", "--verify",
+        "${workspaceFolder}\\build\\demo_flash_tc36x.elf"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "TC36x: probe-rs start flash demo on CPU0",
+      "detail": "Flash the demo, then halt CPU0 at main of the flashed demo (PC, stack, A11 = PCXI = 0)",
+      "dependsOn": "TC36x: probe-rs flash demo (PF1 0x80400000)",
+      "type": "process",
+      "command": "D:\\work\\claude\\probe-rs\\target\\release\\examples\\start_in_flash.exe",
+      "args": ["${workspaceFolder}\\build\\demo_flash_tc36x.elf"],
+      "options": { "env": { "PROBE_RS_CHIP": "TC36x" } },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "TC275: m25 flash demo (PF1 0x8021C000)",
       "detail": "Build demo_flash.elf, write it with the M25 flasher (PF1 sector 0x8021C000 only), reset, run",
-      "dependsOn": "build: demo_flash.elf",
+      "dependsOn": "TC275: build demo_flash.elf",
       "type": "process",
       "command": "pwsh",
       "args": [
@@ -76,7 +125,7 @@
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
     },
     {
-      "label": "m25: flash PF1 test image",
+      "label": "TC275: m25 flash PF1 test image",
       "detail": "M25 flasher: write m25_flashtest_tc27x.elf (PF1 sector 0xA021C000 only), reset, run",
       "type": "process",
       "command": "pwsh",
@@ -92,7 +141,7 @@
       "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
     },
     {
-      "label": "m25: restore PF1 test sector",
+      "label": "TC275: m25 restore PF1 test sector",
       "detail": "M25 flasher: put the sectors written by the last flash back from .m25_flash_backup",
       "type": "process",
       "command": "pwsh",

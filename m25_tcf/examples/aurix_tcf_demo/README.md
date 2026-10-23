@@ -18,11 +18,12 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `build.ps1` | build with the AURIX GCC (`-O0 -g3`) → `build/demo.elf` |
 | `tools/ram_load.js` | save state, load `demo.elf` into RAM, PC = `main` |
 | `tools/ram_restore.js` | restore the saved registers + RAM |
-| `.vscode/launch.json` | aurix-tcf: RAM configuration (`build/demo.elf`) and two PFLASH configurations (`build/demo_flash.elf`); probe-rs: PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, and a compound that starts all three |
+| `.vscode/launch.json` | one set of configurations per board, named `TC275: ...` and `TC36x: ...`. TC275: aurix-tcf RAM and two PFLASH configurations; probe-rs PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, and a compound that starts all three. TC36x: probe-rs PFLASH and RAM configurations for CPU0 |
 | `src/reset_start.S`, `src/reset_demo.c`, `reset_demo.ld`, `build_reset.ps1` | the reset image with `core0_main` (see below; needs a PF0 change) |
 | `tools/pf0_jump_hex.py` | HEX files that point the PF0 reset jump at the reset image, and put it back |
-| `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks |
-| `build_flash.ps1`, `demo_flash.ld` | the same program linked for PF1 sector `0x8021C000` |
+| `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks, per board |
+| `build_flash.ps1`, `demo_flash.ld` | the same program linked for PF1 sector `0x8021C000` (TC275) |
+| `build_flash.ps1 -Board tc36x`, `demo_flash_tc36x.ld` | the same program linked for PF1 sector `0x80400000` (TC36x) → `build/demo_flash_tc36x.elf` |
 | `tools/flash_start.js` | point core0 at `main` of the flashed demo |
 | `agent/tcf-agent.exe` | the AURIX TCF agent (build it from `m25_tcf`, see its README; not tracked) - set `aurix-tcf.agentPath` to this file |
 
@@ -62,8 +63,8 @@ Two launch configurations write the ELF before the session starts:
 
 | Configuration | Flasher | Notes |
 |---|---|---|
-| `aurix_tcf_demo (PFLASH, CPU0)` | the extension's Aurix Flasher (`enableFlashing: true`) | needs the TC27x C-step ED device entry (below); `preLaunchTask` only builds |
-| `aurix_tcf_demo (PFLASH, CPU0, M25 flasher)` | M25 flasher (`tools/m25_flash_task.ps1`, `preLaunchTask`) | backs up the sector first, skips the write when flash already matches, resets and runs the target |
+| `TC275: aurix-tcf PFLASH CPU0` | the extension's Aurix Flasher (`enableFlashing: true`) | needs the TC27x C-step ED device entry (below); `preLaunchTask` only builds |
+| `TC275: aurix-tcf PFLASH CPU0 (M25 flasher)` | M25 flasher (`tools/m25_flash_task.ps1`, `preLaunchTask`) | backs up the sector first, skips the write when flash already matches, resets and runs the target |
 
 After the session starts:
 
@@ -74,27 +75,50 @@ After the session starts:
 3. When done: stop the session and reset the board (the application in flash
    was never touched; core0's context was abandoned by `flash_start.js`).
 
-Tasks: "m25: flash PF1 test image" / "m25: restore PF1 test sector" write and
-undo the flasher self-test image (`../../flasher/m25_flashtest_tc27x.elf`,
-same sector); "m25: flash demo (PF1 0x8021C000)" writes the demo with the M25
+Tasks: "TC275: m25 flash PF1 test image" / "TC275: m25 restore PF1 test sector"
+write and undo the flasher self-test image (`../../flasher/m25_flashtest_tc27x.elf`,
+same sector); "TC275: m25 flash demo (PF1 0x8021C000)" writes the demo with the M25
 flasher.  Sector backups go to `.m25_flash_backup` (not tracked).
 
 ## Debugging with probe-rs (TAS, multi-core)
 
 The probe-rs configurations use the probe-rs TriCore port
 ([najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)),
-built at `C:\work\probe-rs` (`cargo build -p probe-rs-tools` and
-`cargo build -p probe-rs-infineon --example start_in_flash`; change the
+built at `D:\work\claude\probe-rs` (`cargo build --release -p probe-rs-tools` and
+`cargo build --release -p probe-rs-infineon --example start_in_flash`; change the
 `runtimeExecutable` and task paths for another location), and the probe-rs
 extension for VS Code (`probe-rs.probe-rs-debugger`). They reach the board
 through the TAS server (probe `058b:0000`).
 
+The boards are connected one at a time to the same TAS server, so every
+configuration uses the first TAS target (`058b:0000`). Pick the configurations
+of the board that is connected: a session of the other board's chip stops at
+once (`the target is TC275, but the connected device (JTAG ID 0x10209083) is a
+TC36x: use the TC36x configuration`).
+
 | Configuration | What it does |
 |---|---|
-| `aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)` | `preLaunchTask` writes `demo_flash.elf` with probe-rs (PF1 `0x8021C000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
-| `aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints beyond the 8 trigger units are software breakpoints there, so there is no limit of 8 |
-| `aurix_tcf_demo (probe-rs, TAS, CPU1)`, `... CPU2` | attach to CPU1 / CPU2, which keep running the application |
-| `aurix_tcf_demo (probe-rs, CPU0 + CPU1 + CPU2)` | compound: the three sessions side by side in the call stack view |
+| `TC275: probe-rs PFLASH CPU0` | `preLaunchTask` writes `demo_flash.elf` with probe-rs (PF1 `0x8021C000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
+| `TC275: probe-rs RAM CPU0` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints beyond the 8 trigger units are software breakpoints there, so there is no limit of 8 |
+| `TC275: probe-rs CPU1`, `... CPU2` | attach to CPU1 / CPU2, which keep running the application |
+| `TC275: probe-rs CPU0 + CPU1 + CPU2` | compound: the three sessions side by side in the call stack view |
+| `TC36x: probe-rs PFLASH CPU0` | `preLaunchTask` writes `demo_flash_tc36x.elf` with probe-rs (PF1 `0x80400000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
+| `TC36x: probe-rs RAM CPU0` | the same `demo.elf` as on the TC275 (its PSPR and DSPR addresses exist on the TC36x CPU0), written into RAM, CPU0 halted at `main` |
+
+On the TC36x (TriBoard TC3X5; JTAG ID `0x10209083`, detected as `TC36x`; 2
+cores, DSPR 192 KiB and PSPR 32 KiB each, PFLASH PF0 `0x80000000` and PF1
+`0x80300000`, 2 MiB each, 16 KiB sectors):
+
+- probe-rs writes the PFLASH with the TC3xx build of the flash loader
+  (`probe-rs-infineon/loader/m25_flash_loader_tc3xx.bin`). The demo sector
+  `0x80400000` is in the part of PF1 (`0xA0400000..0xA04FFFFF`) that was erased
+  on the test board; `pflash_usage` (probe-rs-infineon example) shows which
+  sectors hold data.
+- CPU1 stays in boot halt (`SYSCON.BHALT`) until the application starts it. A
+  halt of such a core fails with `Core 1 is in boot halt`, so the TC36x
+  configurations do not set `allStop` and have no CPU1 configuration; flashing
+  leaves such a core alone.
+- The peripheral view uses the bundled `TC36XPD` SVD file.
 
 The probe-rs debugger handles one core per session, so each core has its own
 session. The configurations set `allStop`: a breakpoint, step or pause in one
@@ -127,8 +151,9 @@ own session continues it. Notes:
   again after it. Reads (memory view, disassembly) show the program, not the
   `DEBUG` instructions. If a session ends without a disconnect (the debugger
   is killed), its `DEBUG` instructions stay in RAM until the next session on
-  that core (on this PC): it puts the code back from the record the killed
-  session kept, and says so in the debug console.
+  that core of the same board (on this PC; the record is kept per TAS target,
+  so a session on the other board does not touch it): it puts the code back
+  from the record the killed session kept, and says so in the debug console.
 - Flash backups: with the environment variable
   `PROBE_RS_TRICORE_FLASH_BACKUP` set to a folder (in VS Code:
   `"env": { "PROBE_RS_TRICORE_FLASH_BACKUP": "C:\\flash_backups" }` in the
@@ -136,7 +161,8 @@ own session continues it. Notes:
   was, in `<folder>/<UTC time>/sector_<address>.json`. A sector that already
   holds the image is not erased and not saved. To put sectors back:
   `python tools/backup_to_hex.py <backup folder> restore.hex`, then
-  `probe-rs download --chip TC275 --binary-format hex restore.hex`.
+  `probe-rs download --chip TC275 --binary-format hex restore.hex`
+  (`--chip TC36x` on the TC36x).
   `probe-rs-infineon`'s `pflash_check` example compares the flash with a
   backup.
 - Another TAS server: set `probe` to `058b:0000:<host>[:<port>]/<target>`,

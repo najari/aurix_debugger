@@ -4,10 +4,10 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
-      "name": "aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)",
-      "preLaunchTask": "probe-rs: start demo on CPU0",
+      "name": "TC275: probe-rs PFLASH CPU0",
+      "preLaunchTask": "TC275: probe-rs start flash demo on CPU0",
       "cwd": "${workspaceFolder}",
-      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
@@ -23,10 +23,10 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
-      "name": "aurix_tcf_demo (probe-rs, TAS, RAM, CPU0)",
-      "preLaunchTask": "probe-rs: start RAM demo on CPU0",
+      "name": "TC275: probe-rs RAM CPU0",
+      "preLaunchTask": "TC275: probe-rs start RAM demo on CPU0",
       "cwd": "${workspaceFolder}",
-      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
@@ -42,9 +42,9 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
-      "name": "aurix_tcf_demo (probe-rs, TAS, CPU1)",
+      "name": "TC275: probe-rs CPU1",
       "cwd": "${workspaceFolder}",
-      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
@@ -60,9 +60,9 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
-      "name": "aurix_tcf_demo (probe-rs, TAS, CPU2)",
+      "name": "TC275: probe-rs CPU2",
       "cwd": "${workspaceFolder}",
-      "runtimeExecutable": "C:\\work\\probe-rs\\target\\debug\\probe-rs.exe",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
       "runtimeArgs": ["dap-server"],
       "chip": "TC275",
       "probe": "058b:0000",
@@ -76,9 +76,45 @@
       "consoleLogLevel": "Console"
     },
     {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "TC36x: probe-rs PFLASH CPU0",
+      "preLaunchTask": "TC36x: probe-rs start flash demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC36x",
+      "probe": "058b:0000",
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash_tc36x.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "TC36x: probe-rs RAM CPU0",
+      "preLaunchTask": "TC36x: probe-rs start RAM demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC36x",
+      "probe": "058b:0000",
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
       "type": "aurix-tcf",
       "request": "launch",
-      "name": "aurix_tcf_demo (RAM, CPU0)",
+      "name": "TC275: aurix-tcf RAM CPU0",
       "host": "127.0.0.1",
       "port": 1534,
       "autoStartAgent": true,
@@ -93,8 +129,8 @@
     {
       "type": "aurix-tcf",
       "request": "launch",
-      "name": "aurix_tcf_demo (PFLASH, CPU0)",
-      "preLaunchTask": "build: demo_flash.elf",
+      "name": "TC275: aurix-tcf PFLASH CPU0",
+      "preLaunchTask": "TC275: build demo_flash.elf",
       "host": "127.0.0.1",
       "port": 1534,
       "autoStartAgent": true,
@@ -109,8 +145,8 @@
     {
       "type": "aurix-tcf",
       "request": "launch",
-      "name": "aurix_tcf_demo (PFLASH, CPU0, M25 flasher)",
-      "preLaunchTask": "m25: flash demo (PF1 0x8021C000)",
+      "name": "TC275: aurix-tcf PFLASH CPU0 (M25 flasher)",
+      "preLaunchTask": "TC275: m25 flash demo (PF1 0x8021C000)",
       "host": "127.0.0.1",
       "port": 1534,
       "autoStartAgent": true,
@@ -125,11 +161,11 @@
   ],
   "compounds": [
     {
-      "name": "aurix_tcf_demo (probe-rs, CPU0 + CPU1 + CPU2)",
+      "name": "TC275: probe-rs CPU0 + CPU1 + CPU2",
       "configurations": [
-        "aurix_tcf_demo (probe-rs, TAS, PFLASH, CPU0)",
-        "aurix_tcf_demo (probe-rs, TAS, CPU1)",
-        "aurix_tcf_demo (probe-rs, TAS, CPU2)"
+        "TC275: probe-rs PFLASH CPU0",
+        "TC275: probe-rs CPU1",
+        "TC275: probe-rs CPU2"
       ],
       "stopAll": true
     }

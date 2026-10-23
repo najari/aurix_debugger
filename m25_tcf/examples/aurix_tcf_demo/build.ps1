@@ -1,7 +1,10 @@
 # Build demo.elf (TriCore, AURIX GCC from the AURIX Configuration Studio).
 # -O0 -g: every function keeps its own frame and full debug information.
 $ErrorActionPreference = 'Stop'
-$tc = 'C:\Infineon\AURIX-Configuration-Studio-1.0.24\eclipse\tricore-gcc11\bin'
+$tc = @('C:\Infineon\AURIX-Configuration-Studio-1.0.24\eclipse\tricore-gcc11\bin',
+         'C:\Infineon\AURIX-Studio-1.10.40\tools\Compilers\tricore-gcc11\bin') |
+    Where-Object { Test-Path "$_\tricore-elf-gcc.exe" } | Select-Object -First 1
+if (-not $tc) { throw 'AURIX GCC (tricore-gcc11) not found' }
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Force build | Out-Null

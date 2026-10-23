@@ -1,7 +1,10 @@
 # Build reset_demo.elf (TriCore, AURIX GCC): an image the reset starts, entry function core0_main.
 # Code in the PF1 test sector 0x8021C000; PF0 needs the jump at 0x80000020 to reach it.
 $ErrorActionPreference = 'Stop'
-$tc = 'C:\Infineon\AURIX-Configuration-Studio-1.0.24\eclipse\tricore-gcc11\bin'
+$tc = @('C:\Infineon\AURIX-Configuration-Studio-1.0.24\eclipse\tricore-gcc11\bin',
+         'C:\Infineon\AURIX-Studio-1.10.40\tools\Compilers\tricore-gcc11\bin') |
+    Where-Object { Test-Path "$_\tricore-elf-gcc.exe" } | Select-Object -First 1
+if (-not $tc) { throw 'AURIX GCC (tricore-gcc11) not found' }
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Force build | Out-Null
