@@ -4,9 +4,9 @@
 
 ## 0. 구현 현황 (2026-10-23)
 
-이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6).
+이 보드(ShieldBuddy TC275, DAS JTAG AURDUINO)로 검증할 수 있는 작업은 모두 끝났다. 남은 것은 TC37x 보드가 있어야 하는 WP-9와, 맵 1을 여는 어댑터가 있어야 하는 T-15뿐이다. WP-0(업스트림 설계 제안)은 하지 않기로 했다. PRD 범위 밖으로 코어별 세션, SVD·장치 파일 매칭, Live Watch, 주변장치 쓰기, 진입 함수 정지, GDB 서버 수정, 동시 정지, SW 브레이크포인트를 더했다(0.6). TRACE32 비교에서 나온 보완 항목(step 중 인터럽트 막기, 데이터 BP, 성능 카운터, 리셋 처리)은 [보완 개발지시서](AURIX_DEBUGGER_IMPROVEMENT_PRD.md)대로 구현했다(0.6).
 
-- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 18개, 업스트림 PR 없음)
+- 코드: [najari/probe-rs `tricore` 브랜치](https://github.com/najari/probe-rs/tree/tricore) (probe-rs/probe-rs master `f4d1902` 기반, 커밋 22개, 업스트림 PR 없음)
 - 빌드: `cargo build -p probe-rs-tools` (MCD 프로브는 `--features mcd`)
 
 ### 0.1 작업 패키지
@@ -54,12 +54,12 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 | 크레이트 | 테스트 | 내용 |
 | --- | --- | --- |
-| `probe-rs` (`tricore`) | 40개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), SW 브레이크포인트(`debug` 명령 심기 · 복원, 읽기 가림, 넘어가기, 트리거 유닛과 섞어 쓰기) |
+| `probe-rs` (`tricore`) | 52개 | 전송 분할, 레지스터 표, 가짜 CSFR로 halt · run · step · BP · 정지 이유, 코어별 세션의 트리거 소유와 묶음 요청, 정지 그룹(라우팅 · 복원, 함께 실행, 리셋 뒤 재설정, 재부팅 중 상태 확인, 놓친 정지 보완), SW 브레이크포인트(`debug` 명령 심기 · 복원, 읽기 가림, 넘어가기, 트리거 유닛과 섞어 쓰기), step 중 인터럽트 막기(IE 판별, 복원), 데이터 BP(단일 · 범위 유닛, 정지 이유, 프로그램 BP와 나눠 쓰기), 성능 카운터 구간, 앱 리셋 감지(BP 복원, 정지, 알림) |
 | `probe-rs-debug` (`tricore`) | 3개 | CSA 체인 언와인드 |
 | `probe-rs-infineon` | 54개 (`--features mcd`) | TAS 프레임 · 가짜 서버, 섹터 맵 54개 · 로더 해시 · 페이지 패치, MCD 프로브(가짜 MCD 함수 · 구조체 레이아웃), MCDS 기록 · 타임스탬프(TC27x ED 버스 모델), SVD · AURIX Flasher 장치 파일 매칭 |
 | `probe-rs-tools` | 197개 | 기존 테스트 회귀 없음. SVD `.svd.gz` 파싱, SVD 값 파싱 · 필드 병합, 진입 함수 심볼 검색 추가 |
 
-`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`)로 하드웨어를 시험한다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
+`cargo fmt`, `cargo clippy -D warnings`가 `mcd` 기능을 켠 상태와 끈 상태 모두에서 통과한다. probe-rs `smoke-tester`의 TriCore 케이스는 만들지 않았고, 대신 `probe-rs-infineon/examples/`(`hw_smoke`, `pflash_check`, `flash_refusals`, `start_in_flash`, `tas_info`, `trigger_switch`, `bus_read`, `step_interrupts`, `perf_counters`, `sw_reset`)로 하드웨어를 시험한다. `step_interrupts`는 step이 끝난 곳과 `ICR`을, `perf_counters`는 실행 중 카운터와 구간 측정을, `sw_reset`은 앱처럼 SW 리셋을 요청해 남는 디버그 설정을 보인다. `start_in_flash`는 RAM 세그먼트를 써 넣어 RAM 데모도 시작하고, `bus_read`는 코어를 멈추거나 다시 실행시키지 않고 메모리를 읽는다(`probe-rs read`는 끝날 때 모든 코어를 다시 실행시킨다). `PROBE_RS_PROBE`로 프로브를 바꿀 수 있다.
 
 ### 0.4 이 문서와 달라진 점
 
@@ -90,6 +90,8 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 - **원격 TAS 서버와 DAP**: TAS 목록은 로컬 서버만 나열하므로, DAP · VS Code에서 원격 TAS 셀렉터는 아직 열리지 않는다.
 - **VS Code 설정**: 코어별 `launch.json`(CPU0–CPU2와 compound) · `tasks.json`을 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에 옮겼다(`8e849cc`).
 - **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 하드웨어로 멈추지 못하고, 그 코어의 세션이 정지를 확인할 때(폴링, 수십 ms 안) 멈춘다. 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
+- **보완 기능 제한**: 데이터 BP는 주소만 비교한다(DAP `condition`은 거부). Watch 표현식에서는 데이터 BP를 걸 수 없고, 변수 뷰나 주소로 건다. 성능 카운터는 DAP 레지스터 뷰에서 읽기만 되고, 쓰기는 GDB나 probe-rs API로 한다. 리셋은 상태를 확인할 때(폴링) STM0 타이머가 줄어든 것으로 감지하므로, 리셋 직후 확인 전에 시작 코드가 BP 자리를 지나가면 그 BP는 놓친다(PFLASH의 트리거 유닛은 리셋에도 남아 놓치지 않는다). 플래시 쓰기 직후 리셋의 0x44 오류는 PF0에 리셋 이미지가 없으면 재현되지 않아 재시도로만 막았다.
+
 ### 0.6 PRD 이후 추가한 기능
 
 VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. 모두 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
@@ -103,6 +105,10 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `68a5f6a` | `entryFunction`: 리셋 뒤 진입 함수까지 실행(이유 `entry`). GDB 서버가 `[::1]`과 `127.0.0.1` 모두에서 대기 | 시험용 ELF로 launch·restart 정지와 BP 제거 확인. GDB 11항목 통과. 리셋으로 시작하는 `core0_main` 이미지(`reset_demo.elf`, PF0의 리셋 점프를 잠시 바꿈)로 launch·restart 정지 9항목 통과, PF0는 백업으로 되돌려 전 섹터 일치 확인 |
 | `84c21eb` | 동시 정지(DAP `allStop`). OCDS 트리거 스위치의 라인 7에 각 코어의 HALT와 BRKIN을 연결(`CBS_TRCn`, `EXEVT`)해 한 코어가 멈추면 나머지도 하드웨어로 멈춘다(이유 `external`). continue는 그룹이 멈춘 코어를 함께 실행. 다른 세션이 리셋해도 세션이 끊기지 않고 라우팅을 다시 쓴다 | 세션 3개 시나리오 14항목(BP·pause·step·continue, 세션 종료 후 복원)과 리셋 시나리오 6항목 통과. 정지 이벤트는 폴링 때문에 40–60 ms 안에 도착 |
 | `ad00ecc` | SW 브레이크포인트(FR-C5). 코어 자신의 PSPR에 있는 BP는 `debug` 명령(16·32비트)을 심고, 다른 곳은 트리거 유닛을 쓴다. 슬롯은 40개(트리거 8 + SW 32). 읽기는 원래 코드를 보여 주고, continue·step은 원래 명령을 한 번 실행한 뒤 다시 심는다. 동시 정지 보완: 다른 코어를 먼저 실행, 놓친 정지는 세션이 확인할 때 멈춤 | RAM 데모로 BP 12개를 실행 순서대로 적중, 16·32비트 명령에서 step, 메모리·디스어셈블리 표시, 해제·`disconnect` 뒤 코드 복원 13항목. 세션 3개로 SW BP 동시 정지 5항목. 기존 동시 정지 20항목, DAP 10항목, GDB 11항목 회귀 없음 |
+| `79dd08d` | step 중 인터럽트 막기(FR-I). step하는 동안 `ICR.IE`를 끄고 되돌린다. IE를 바꾸는 명령(`enable`, `disable`, `bisr`, `rfe`, `rfm`, `ICR`에 쓰는 `mtcr`)에서는 막지 않는다. DAP 코어 설정 `stepInterrupts`(`maskInstruction` 기본, `allow`) | T-20: 앱만으로는 step 50·200회 동안 ISR 진입 0회. T-21: SRPN 60을 매 step 대기시키면 `allow`는 10/10 ISR, 기본값은 0회이고 IE 복원. T-22: IE를 바꾸는 명령에서 IE 0, 1, 1, 0, 0 |
+| `6826341` | 데이터 BP(FR-D). 트리거 유닛을 데이터 주소용으로 쓴다(읽기·쓰기·둘 다, 1바이트는 유닛 하나, 그 이상은 짝수·홀수 유닛 범위). 정지 이유 `data breakpoint`. 코어 API `set_watchpoint`·`clear_watchpoint`, RPC `core/watchpoint`, DAP `dataBreakpointInfo`·`setDataBreakpoints`, GDB `Z2`–`Z4` | T-23–T-28: `g_result` 쓰기 BP가 `st.w` 다음에서 6회 정지, `g_ticks` 읽기 BP, 해제 뒤 정지 없음, 유닛 부족 거부, `allStop`, GDB `watch`·`rwatch`·`awatch` |
+| `f0d9b30` | 성능 카운터(FR-P). `CCTRL`·`CCNT`·`ICNT`·`M1CNT`–`M3CNT`를 레지스터 뷰 "Performance"에 보이고, 두 주소 사이 구간만 센다(DAP 코어 설정 `perfWindow {start, stop}`, 남는 유닛 2개 사용) | T-29: `compute` 실행 동안 `ICNT` +24(정확). T-30: `square` 창에서 `compute` 1회당 24.0 명령(30만 회 평균). T-31: 실행 중 읽기 |
+| `fbf362f` | 앱 리셋 처리(FR-R). 상태 확인 때 STM0 타이머가 줄면 리셋으로 보고 원인(`SCU_RSTSTAT`)을 DAP 콘솔에 알린다(RPC `core/notices`). 트리거 유닛·SW BP를 다시 쓰고, DAP 코어 설정 `resetBehavior`(`restore` 기본, `halt`)대로 계속 실행하거나 멈춘다. 리셋 직후 실패하는 접근은 재시도한다 | T-32: SW 리셋은 디버그 설정을 그대로 둔다. T-33–T-35: 콘솔 알림, 시작 코드 BP 유지·적중, `halt` 정지. T-36: PF1 재기록+리셋 10회 오류 0 |
 
 그 밖에 명령어 단위 스텝, 명령어 BP, Memory Inspector, `setVariable`, Restart, `launch`와 플래시 쓰기, GDB 서버를 실기로 확인했다.
 

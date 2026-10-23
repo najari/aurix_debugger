@@ -124,6 +124,26 @@ own session continues it. Notes:
   the program, not the `DEBUG` instructions. If a session ends without a
   disconnect (the debugger is killed), the `DEBUG` instructions stay in RAM:
   load the program again.
+- Data breakpoints: right-click a variable, **Break on Value Change** (or
+  Break on Value Read / Access). Each takes trigger units shared with the
+  breakpoints in PFLASH: one for a single byte, an even/odd pair for more.
+  The core stops after the instruction that accessed the variable (stop
+  reason `data breakpoint`). Conditions are refused. GDB's `watch`, `rwatch`
+  and `awatch` work the same way.
+- Options of a core configuration (`coreConfigs[]`):
+  - `"stepInterrupts": "maskInstruction"` (the default) keeps interrupts
+    off while an instruction is stepped (`ICR.IE` restored afterwards; an
+    instruction that changes `IE` itself is stepped as it is); `"allow"`
+    lets a pending interrupt be taken during the step.
+  - `"perfWindow": { "start": "square", "stop": "0x8021c0a0" }` counts only
+    between two functions or addresses (two free trigger units). The
+    counters `ccnt`, `icnt`, `m1cnt`–`m3cnt` and `cctrl` are in the
+    registers view under **Performance** (read-only there).
+  - `"resetBehavior": "restore"` (the default) puts breakpoints, data
+    breakpoints and the halt group back after a reset started by the
+    application (watchdog, software reset) and lets it run; `"halt"` halts
+    the core after the reset. The reset and its cause (`SCU_RSTSTAT`) are
+    printed in the debug console either way.
 
 ### Reset image with `core0_main` (writes PF0)
 

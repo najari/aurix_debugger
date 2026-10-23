@@ -15,10 +15,12 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 
 이 보드에서 바로 메울 수 있는 것은 데이터 브레이크포인트, step 중 인터럽트 막기, 성능 카운터 표시, 소프트 리셋 처리다. 트레이스와 칩 범위는 다른 어댑터나 보드가 있어야 한다.
 
+> **2026-10-23 갱신**: 이 네 가지는 [보완 개발지시서](AURIX_DEBUGGER_IMPROVEMENT_PRD.md)대로 구현해 실기로 확인했다(probe-rs `79dd08d`, `6826341`, `f0d9b30`, `fbf362f`). 아래 표의 aurix_debugger 열은 갱신한 내용이고, 3번 차이 가운데 남은 것은 없다.
+
 ## 비교 대상과 기준
 
 - **TRACE32**: Lauterbach의 TriCore 디버거와 트레이스다. 공개 문서를 기준으로 했다. [TriCore Debugger and Trace](https://www2.lauterbach.com/pdf/debugger_tricore.pdf) Release 02.2026, [TriCore 제품 페이지](https://www.lauterbach.com/tricore), 보도자료, 지원 문서를 봤다. TRACE32 하드웨어가 없어 실기로 확인하지는 않았다.
-- **aurix_debugger**: [najari/aurix_debugger](https://github.com/najari/aurix_debugger)와 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `ad00ecc`)다. probe-rs TriCore 포트, VS Code 설정, Live Watch 확장으로 이루어져 있다. TC275 ShieldBuddy(C-step ED, DAS JTAG AURDUINO)에서 확인한 결과를 기준으로 했다.
+- **aurix_debugger**: [najari/aurix_debugger](https://github.com/najari/aurix_debugger)와 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `ad00ecc`, 보완 뒤 `fbf362f`)다. probe-rs TriCore 포트, VS Code 설정, Live Watch 확장으로 이루어져 있다. TC275 ShieldBuddy(C-step ED, DAS JTAG AURDUINO)에서 확인한 결과를 기준으로 했다.
 - 가격은 TRACE32가 공개하지 않아 비교하지 않았다. 하드웨어와 아키텍처별 라이선스를 따로 산다.
 
 ## 기능 비교
@@ -33,11 +35,11 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 | 디버깅 코어 | 모든 TriCore CPU와 PPU, GTM, SCR, HSM, PCP | TriCore CPU0–2 |
 | 멀티코어 | SMP(한 GUI, 자동 동기), AMP(GUI별, `SYnch`로 동기), iAMP(한 GUI, 코어별 심볼) | 코어별 DAP 세션(AMP와 비슷). `allStop`을 켜면 OCDS 트리거 스위치로 함께 정지·실행 |
 | 프로그램 BP | 온칩 8개. RAM에는 SW BP, 플래시 SW BP는 `FLASH.AUTO`로 가능하나 수명 때문에 비권장 | HW 8개, 코어 자신의 PSPR에 SW 32개 |
-| 데이터 BP | 읽기·쓰기 8개(단일 주소) 또는 4개(범위) | 없음 |
-| step | 온칩 BP 범위로 예외를 감지. step 중 인터럽트 막기 옵션(`IMASKASM`, `IMASKHLL`) | Infineon 참조 디버거의 step trap 순서. 인터럽트 막기 옵션 없음 |
-| 리셋 | 소프트·하드 리셋과 전원 재인가를 넘어 디버깅. 리셋 뒤 동작 선택(`Halt`, `RestoreGo`, `RunRestore`) | DAP restart, `entryFunction`. 다른 세션의 리셋을 2초까지 버티고 정지 그룹을 다시 연결. 앱이 일으킨 리셋 뒤 동작 선택은 없음 |
+| 데이터 BP | 읽기·쓰기 8개(단일 주소) 또는 4개(범위) | 읽기·쓰기·둘 다, 트리거 유닛을 프로그램 BP와 나눠 씀(1바이트는 1개, 범위는 2개). VS Code "Break on Value Change"와 GDB `watch`·`rwatch`·`awatch`. 값 조건은 없음 |
+| step | 온칩 BP 범위로 예외를 감지. step 중 인터럽트 막기 옵션(`IMASKASM`, `IMASKHLL`) | Infineon 참조 디버거의 step trap 순서. 명령 step 동안 `ICR.IE`를 막음(`stepInterrupts`, 기본 `maskInstruction`, `allow`) |
+| 리셋 | 소프트·하드 리셋과 전원 재인가를 넘어 디버깅. 리셋 뒤 동작 선택(`Halt`, `RestoreGo`, `RunRestore`) | DAP restart, `entryFunction`. 다른 세션의 리셋을 2초까지 버티고 정지 그룹을 다시 연결. 앱이 일으킨 리셋을 감지해 원인을 알리고, BP를 되살려 계속 실행(`restore`) 또는 정지(`halt`) |
 | 트레이스 | MCDS 온칩 트레이스(최대 6코어, TC275TF는 동시 2코어), AGBT·SGBT, DAP 스트리밍(CombiProbe 2), 복합 트리거 언어(CTL) | `probe-rs mcds record`·`timestamp` CLI. 기록은 이 어댑터가 맵 1을 막아 미검증. VS Code 연동 없음 |
-| 성능 측정 | 벤치마크 카운터: CCNT, ICNT, M1–M3CNT, OTGS·MCDS 카운터, BP 사이 구간 측정(A-to-B) | MCDS 타임스탬프 CLI만 |
+| 성능 측정 | 벤치마크 카운터: CCNT, ICNT, M1–M3CNT, OTGS·MCDS 카운터, BP 사이 구간 측정(A-to-B) | CCNT, ICNT, M1–M3CNT를 레지스터 뷰에 표시, 두 주소 사이 구간 측정(`perfWindow`), 실행 중 읽기. MCDS 타임스탬프 CLI |
 | 플래시 | `FLASH.ReProgram`, 장치별 스크립트, HSM 플래시 | TC27x PFLASH. 같은 섹터는 건너뛰고, 지워진 페이지는 ECC로 판별 |
 | OS 인식 | AUTOSAR Classic(ORTI)의 태스크·ISR·runnable, ARTI 프로파일링 | 없음 |
 | 캐시·오버레이·MPU | 캐시 라인 보기, 데이터 오버레이(OVC), 코드 오버레이, MPU 디버깅 | 없음 |
@@ -61,14 +63,14 @@ aurix_debugger가 앞서는 점은 비용, VS Code에서의 사용성, 직접 �
 
 ## 보완 가능한 점
 
-1–4번은 이 보드와 어댑터로 바로 할 수 있고, 5–8번은 하드웨어나 시험 대상 앱이 더 필요하다. 9–11번은 범위가 커서 필요할 때 다룬다. 크기는 소(며칠), 중(1–2주), 대(그 이상)로 잡았다.
+1–4번은 2026-10-23에 구현했다(맨 오른쪽 열은 처음 검토할 때의 조건이다). 5–8번은 하드웨어나 시험 대상 앱이 더 필요하다. 9–11번은 범위가 커서 필요할 때 다룬다. 크기는 소(며칠), 중(1–2주), 대(그 이상)로 잡았다.
 
 | # | 항목 | 지금 | 메우는 방법 | 크기 | 조건 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 데이터 BP(읽기·쓰기 감시) | 없음. probe-rs DAP와 GDB 서버 모두 데이터 BP를 받지 않는다 | 트리거 유닛을 데이터 주소용으로 쓴다(`TRnEVT`의 `ALD`·`AST`, 범위는 `RNG`). DAP `dataBreakpointInfo`·`setDataBreakpoints`와 GDB `Z2`–`Z4`를 더한다. 프로그램 BP와 유닛 8개를 나눠 쓴다 | 중 | 없음 |
-| 2 | step 중 인터럽트 막기 | 옵션 없음. 인터럽트가 켜진 코드에서 step이 ISR로 들어가는지 확인하지 않았다 | 먼저 인터럽트가 도는 앱에서 동작을 확인한다. 필요하면 step하는 동안 `ICR.IE`를 끄고 되돌린다(TRACE32 `IMASKASM`·`IMASKHLL`과 같은 옵션) | 소 | 없음 |
-| 3 | 성능 카운터 | MCDS 타임스탬프 CLI만 | `CCTRL`·`CCNT`·`ICNT`·`M1`–`M3CNT`를 레지스터 뷰나 Live Watch에 보이고, 두 BP 사이 구간을 재는 명령을 더한다 | 소–중 | 없음 |
-| 4 | 앱이 일으킨 리셋 처리 | 다른 세션의 리셋만 버틴다. 워치독·소프트 리셋 뒤에는 동작을 고를 수 없다 | 리셋을 감지(`SCU_RSTSTAT`, 부트 정지 상태)하고, 멈춤 또는 BP 복원 뒤 실행을 고르는 설정을 더한다. 플래시 쓰기 직후 리셋의 0x44 오류도 같이 다룬다 | 중 | 없음 |
+| 1 | 데이터 BP(읽기·쓰기 감시) — **완료** `6826341` | 검토 때: 없음. probe-rs DAP와 GDB 서버 모두 데이터 BP를 받지 않았다 | 트리거 유닛을 데이터 주소용으로 쓴다(`TRnEVT`의 `ALD`·`AST`, 범위는 `RNG`). DAP `dataBreakpointInfo`·`setDataBreakpoints`와 GDB `Z2`–`Z4`를 더한다. 프로그램 BP와 유닛 8개를 나눠 쓴다 | 중 | 없음 |
+| 2 | step 중 인터럽트 막기 — **완료** `79dd08d` | 검토 때: 옵션 없음. 인터럽트가 켜진 코드에서 step이 ISR로 들어가는지 확인하지 않았다(확인 결과 들어갈 수 있었다) | 먼저 인터럽트가 도는 앱에서 동작을 확인한다. 필요하면 step하는 동안 `ICR.IE`를 끄고 되돌린다(TRACE32 `IMASKASM`·`IMASKHLL`과 같은 옵션) | 소 | 없음 |
+| 3 | 성능 카운터 — **완료** `f0d9b30` | 검토 때: MCDS 타임스탬프 CLI만 | `CCTRL`·`CCNT`·`ICNT`·`M1`–`M3CNT`를 레지스터 뷰나 Live Watch에 보이고, 두 BP 사이 구간을 재는 명령을 더한다 | 소–중 | 없음 |
+| 4 | 앱이 일으킨 리셋 처리 — **완료** `fbf362f` | 검토 때: 다른 세션의 리셋만 버틴다. 워치독·소프트 리셋 뒤에는 동작을 고를 수 없다 | 리셋을 감지(`SCU_RSTSTAT`, 부트 정지 상태)하고, 멈춤 또는 BP 복원 뒤 실행을 고르는 설정을 더한다. 플래시 쓰기 직후 리셋의 0x44 오류도 같이 다룬다 | 중 | 없음 |
 | 5 | MCDS 트레이스 검증과 VS Code 표시 | CLI만 있고 기록(T-15)은 미검증 | 맵 1을 여는 어댑터로 기록을 확인한다. 그다음 프로그램 흐름을 소스 줄로 풀어 VS Code에 보인다 | 대 | DAP miniWiggler 등 맵 1 어댑터 |
 | 6 | 칩·플래시 범위(TC3xx, DFLASH, UCB) | TC27x PFLASH만 | 칩별 타깃 정의, DMU 방식 플래시 로더(WP-9) | 대 | TC3xx 보드 |
 | 7 | AUTOSAR OS 인식(ORTI) | 없음 | ORTI 파일을 읽어 태스크·ISR 상태를 변수 뷰에 보인다 | 중–대 | ORTI를 내는 OS의 앱 |
@@ -79,12 +81,12 @@ aurix_debugger가 앞서는 점은 비용, VS Code에서의 사용성, 직접 �
 
 ## 권장 순서
 
-지금 장비로 할 수 있고 일상 디버깅에 바로 쓰이는 것부터 한다.
+지금 장비로 할 수 있고 일상 디버깅에 바로 쓰이는 것부터 한다. 1–4는 이 순서대로 끝냈다(2026-10-23).
 
-1. **step 중 인터럽트 확인 (2번)**: 인터럽트가 도는 CPU1·CPU2 앱에서 step이 ISR로 빠지는지부터 본다. 문제가 있으면 옵션을 더한다.
-2. **데이터 BP (1번)**: 변수를 누가 바꾸는지 찾는 데 가장 자주 쓰는 기능이다. VS Code의 변수 우클릭 "Break on Value Change"가 동작하게 된다.
-3. **성능 카운터 (3번)**: 레지스터만 보이면 돼서 작다.
-4. **리셋 처리 (4번)**: 워치독을 쓰는 앱을 디버깅할 때 필요하다.
+1. ~~**step 중 인터럽트 확인 (2번)**~~ 완료: 인터럽트를 대기시키면 step이 ISR로 빠졌고, 기본값으로 막는다.
+2. ~~**데이터 BP (1번)**~~ 완료: VS Code의 변수 우클릭 "Break on Value Change"가 동작한다.
+3. ~~**성능 카운터 (3번)**~~ 완료: 레지스터 뷰와 `perfWindow` 구간 측정.
+4. ~~**리셋 처리 (4번)**~~ 완료: 감지·원인 알림·`resetBehavior`.
 5. **하드웨어가 생기면**: MCDS 트레이스(5번)는 맵 1 어댑터, 칩 범위(6번)는 TC3xx 보드가 있을 때 한다. ORTI(7번)는 AUTOSAR 앱이 생기면 한다.
 
 트레이스 기반 분석(커버리지, ARTI)과 ISO 26262 인증이 필요한 일에는 TRACE32를 쓰는 편이 현실적이다.
