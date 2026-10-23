@@ -78,6 +78,33 @@
     {
       "type": "probe-rs-debug",
       "request": "attach",
+      "name": "TC275: probe-rs CPU0–CPU2 one session",
+      "preLaunchTask": "TC275: probe-rs start flash demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC275",
+      "probe": "058b:0000",
+      "allStop": true,
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        },
+        {
+          "coreIndex": 1,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        },
+        {
+          "coreIndex": 2,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
+      "type": "probe-rs-debug",
+      "request": "attach",
       "name": "TC36x: probe-rs PFLASH CPU0",
       "preLaunchTask": "TC36x: probe-rs start flash demo on CPU0",
       "cwd": "${workspaceFolder}",

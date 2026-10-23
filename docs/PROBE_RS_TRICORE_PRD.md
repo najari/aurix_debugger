@@ -107,12 +107,12 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 - **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. 시험 보드에서 실행하지 말 것.
 - **MCD 프로브**: 서버의 첫 장치 · 첫 코어만 연다. 맵 0만 지원한다(맵 1 · 15는 0x8D로 거부). 원본 Infineon `mcdxdas.dll`로는 시험하지 않았다.
 - **VS Code 설정**: 코어별 `launch.json`(CPU0–CPU2와 compound) · `tasks.json`을 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에 옮겼다(`8e849cc`).
-- **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 하드웨어로 멈추지 못하고, 그 코어의 세션이 정지를 확인할 때(폴링, 수십 ms 안) 멈춘다. 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
+- **동시 정지 제한**: 그룹에 코어가 둘 이상이면 앱 리셋(SW 리셋, 워치독) 뒤 장치가 잠긴다(TAS `DEVICE_CONNECT` 0x46). 라우팅이 리셋 뒤에도 남고, 부트 정지 상태의 CPU1이 그룹 라인으로 시작 소프트웨어를 돌던 CPU0을 멈추기 때문이다. 세션이 하는 리셋(restart)은 괜찮다. 복구는 `probe-rs reset --chip TC275 --connect-under-reset`(`63d721a`). `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어의 세션에서 continue). 그룹 코어 하나가 멈춘 채 남아 있으면 다른 코어의 BP는 나머지를 하드웨어로 멈추지 못하고, 그 코어의 세션이 정지를 확인할 때(폴링, 수십 ms 안) 멈춘다. 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다.
 - **보완 기능 제한**: 데이터 BP는 주소만 비교한다(DAP `condition`은 거부). Watch 표현식의 데이터 BP는 변수 이름일 때 되고, 코어가 멈춰 있어야 한다. 성능 카운터는 DAP 레지스터 뷰에서 읽기만 되고, 쓰기는 GDB나 probe-rs API로 한다. 리셋은 상태를 확인할 때(폴링) STM0 타이머가 줄어든 것으로 감지한다. 트리거 유닛의 BP는 리셋에도 남아 놓치지 않는다. 유닛이 모자라 `debug` 명령이 된 BP만, 시작 코드가 PSPR에 코드를 복사한 직후 세션이 알아채기 전(수십 ms)에 그 자리를 지나가면 놓친다. 이 틈은 하드웨어로 막을 수 없다: 리셋 시작에서 멈출 트리거 유닛이 남아 있지 않고(유닛이 모자란 경우이므로), 리셋 직후 정지(`OSTATE.HARR`)는 접근 하드웨어가 JTAG으로 요청하며, 시작에서 멈춰도 코드 복사는 그 뒤에 일어난다. 중요한 BP는 먼저 걸어 유닛을 쓰게 하면 된다.
 
 ### 0.6 PRD 이후 추가한 기능
 
-VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. 마지막 세 행(TC36x)을 뺀 나머지는 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
+VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다. TC36x 세 행(`a876a99`, `d155494`, `e1f1952`)을 뺀 나머지는 TC275 ShieldBuddy에서 확인했고, 비교는 [probe-rs TriCore vs aurix-tcf 확장 기능 비교](PROBE_RS_VS_AURIX_TCF.md)에 있다.
 
 | 커밋 | 기능 | 실기 확인 |
 | --- | --- | --- |
@@ -138,6 +138,8 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `e1f1952` | TC36x(TriBoard TC3X5) 디버깅과 PFLASH 쓰기. `TC36x.yaml`(코어 2개, PFLASH PF0·PF1, JTAG ID `0x10209083`으로 감지), 칩의 시퀀스가 주는 STM0 주소(TC3xx `0xF0001050`)와 192 KiB 로컬 DSPR 창, 앱이 시작하지 않은 코어의 `CoreInBootHalt`, 플래시 컨트롤러별 `FlashDevice`(TC27x·TC36x: 로더, 워치독 주소, 섹터 맵, AURIX Flasher 장치 파일), TC3xx 로더, 다른 알려진 칩의 장치 거부. `debug` 명령 기록을 장치(TAS 대상 이름)별로 따로 둬 한 보드의 기록을 다른 보드에서 되돌리지 않는다. 예제 `tc36x_check`·`pflash_usage`, `start_in_flash`·`bus_read`·`flash_refusals`는 칩을 감지한다 | TC36x(커밋 메시지 기준): halt, 레지스터, step, HW BP, 리셋. RAM·PFLASH(섹터 `0x80400000`) 데모를 DAP 서버로 디버깅(BP, 콜스택, 지역 변수, liveWatch, Step Over). `download --verify`, 같은 내용의 두 번째 쓰기는 섹터를 건너뜀. `flash_refusals` 4/4. TC275: 이 변경을 받은 뒤 하드웨어 회귀 시험 전체 통과(0.2), 강제 종료 복구는 저널이 `tas-<대상 이름>` 폴더에 쌓임 |
 | `58063ae` | 동시 정지 버그: 코어의 상태 확인은 자기 `DBGSR`을 읽고 이어서 그룹 상태(동료)를 읽는데, 그 사이에 다른 세션의 pause로 그룹이 정지하면 자기 코어는 실행 중, 동료는 정지로 읽혀 "함께 실행할 코어" 목록이 빈 목록으로 덮어써졌다. 그 뒤 이 코어에서 continue해도 정지했던 동료가 재개되지 않았다. 그룹 상태를 읽는 요청의 마지막에 자기 `DBGSR`을 읽고, 그때도 실행 중일 때만 목록을 갱신한다 | 가짜 버스 테스트로 재현(고치기 전 실패). `dap_allstop`(세션 3개): 고치기 전 4~6번 중 1~2번 실패, 고친 뒤 16번 모두 통과 |
 | `b667e44` | DAP 응답 지연: 모든 코어가 정지한 동안 DAP 서버가 요청 사이에 100 ms씩 쉬어서(코어가 돌 때는 50 ms), 쉬는 동안 온 요청이 그 시간 뒤에야 처리됐다. 쉬는 동안 입력이 오면 바로 끝낸다(`ProtocolAdapter::input_ready`, 기본값 `false`라서 CLI 등 다른 어댑터는 이전과 같다). 읽다 만 메시지와 입력의 끝은 입력으로 세지 않아 폴링이 쉬지 않고 도는 일은 없다 | 정지 중 요청 응답: stackTrace 109 → 8 ms, readMemory 64 B 126 → 14 ms, next 223 → 114 ms, stepOut 214 → 122 ms, continue → BP 236 → 131 ms. 전체 하드웨어 회귀 시험 20묶음 127항목 통과 |
+| `763c12a` `cb0e00d` `2e8d3a9` `879e4f9` | 한 세션 멀티코어([개발지시서](ONE_SESSION_MULTICORE_PRD.md)): `coreConfigs` 여러 개, 코어마다 DAP 스레드, 요청 라우터(`threadId`·`frameId`·`variablesReference`·`@코어`), 코어별 정지 이벤트, 소스 BP 하나를 코어마다, 코어별 디버그 정보, 바이너리별 플래시와 restart, 코어 상태를 TAS 요청 하나로 확인(`Session::status_many`). 두 확인 사이에 다시 멈춘 코어의 새 정지 감지 | 한 세션 시험 T-M1–T-M14 통과(T-M15 VS Code 화면은 남음). 폴링 1회 6요청 24.8 ms → 1요청 11.5 ms. 세 코어가 같은 코드를 돌 때 BP 하나에 세 코어 모두 `breakpoint`. 회귀 20묶음 통과 |
+| `63d721a` | `--connect-under-reset`가 칩을 지정한 TriCore attach에서 무시되던 문제. 이제 TAS 프로브가 리셋과 함께 연결한다. 핫 어태치를 거부하는 장치(앞 절의 그룹 잠김)를 이것으로 살린다. `sw_reset --group N` 예제 | 그룹 2코어 + 앱 리셋으로 잠근 장치를 `probe-rs reset --connect-under-reset`로 복구 |
 
 그 밖에 명령어 단위 스텝, 명령어 BP, Memory Inspector, `setVariable`, Restart, `launch`와 플래시 쓰기, GDB 서버를 실기로 확인했다.
 

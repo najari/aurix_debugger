@@ -1,8 +1,8 @@
 {
   "name": "probe-rs-live-watch",
   "displayName": "probe-rs Live Watch",
-  "description": "Refreshes global variables while the target runs, in probe-rs debug sessions; grouped by session when several cores are debugged.",
-  "version": "0.1.1",
+  "description": "Refreshes global variables while the target runs, in probe-rs debug sessions; grouped by session and core when several cores are debugged, with a choice of the cores to read.",
+  "version": "0.2.0",
   "publisher": "najari",
   "license": "MIT",
   "repository": {
@@ -55,6 +55,12 @@
         "icon": "$(clear-all)"
       },
       {
+        "command": "probeRsLiveWatch.selectCores",
+        "title": "Select Cores",
+        "category": "probe-rs Live Watch",
+        "icon": "$(circuit-board)"
+      },
+      {
         "command": "probeRsLiveWatch.setInterval",
         "title": "Set Refresh Interval",
         "category": "probe-rs Live Watch",
@@ -78,6 +84,7 @@
         { "command": "probeRsLiveWatch.add", "when": "view == probeRsLiveWatch", "group": "navigation@1" },
         { "command": "probeRsLiveWatch.pause", "when": "view == probeRsLiveWatch && !probeRsLiveWatch.paused", "group": "navigation@2" },
         { "command": "probeRsLiveWatch.resume", "when": "view == probeRsLiveWatch && probeRsLiveWatch.paused", "group": "navigation@2" },
+        { "command": "probeRsLiveWatch.selectCores", "when": "view == probeRsLiveWatch && probeRsLiveWatch.multiCore", "group": "navigation@3" },
         { "command": "probeRsLiveWatch.setInterval", "when": "view == probeRsLiveWatch", "group": "navigation@3" },
         { "command": "probeRsLiveWatch.clear", "when": "view == probeRsLiveWatch", "group": "navigation@4" }
       ],

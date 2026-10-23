@@ -18,7 +18,7 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `build.ps1` | build with the AURIX GCC (`-O0 -g3`) → `build/demo.elf` |
 | `tools/ram_load.js` | save state, load `demo.elf` into RAM, PC = `main` |
 | `tools/ram_restore.js` | restore the saved registers + RAM |
-| `.vscode/launch.json` | one set of configurations per board, named `TC275: ...` and `TC36x: ...`. TC275: aurix-tcf RAM and two PFLASH configurations; probe-rs PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, and a compound that starts all three. TC36x: probe-rs PFLASH and RAM configurations for CPU0 |
+| `.vscode/launch.json` | one set of configurations per board, named `TC275: ...` and `TC36x: ...`. TC275: aurix-tcf RAM and two PFLASH configurations; probe-rs PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, a compound that starts all three, and one session for all three. TC36x: probe-rs PFLASH and RAM configurations for CPU0 |
 | `src/reset_start.S`, `src/reset_demo.c`, `reset_demo.ld`, `build_reset.ps1` | the reset image with `core0_main` (see below; needs a PF0 change) |
 | `tools/pf0_jump_hex.py` | HEX files that point the PF0 reset jump at the reset image, and put it back |
 | `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks, per board |
@@ -102,6 +102,7 @@ TC36x: use the TC36x configuration`).
 | `TC275: probe-rs RAM CPU0` | `preLaunchTask` builds `demo.elf`, writes it into the CPU0 PSPR and DSPR (no flash write) and halts CPU0 at `main`; then attaches to CPU0. Breakpoints beyond the 8 trigger units are software breakpoints there, so there is no limit of 8 |
 | `TC275: probe-rs CPU1`, `... CPU2` | attach to CPU1 / CPU2, which keep running the application |
 | `TC275: probe-rs CPU0 + CPU1 + CPU2` | compound: the three sessions side by side in the call stack view |
+| `TC275: probe-rs CPU0–CPU2 one session` | one session for the three cores (`preLaunchTask` as `PFLASH CPU0`): a thread per core in the call stack view, one breakpoint list for all three, one probe connection and one status request per poll |
 | `TC36x: probe-rs PFLASH CPU0` | `preLaunchTask` writes `demo_flash_tc36x.elf` with probe-rs (PF1 `0x80400000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
 | `TC36x: probe-rs RAM CPU0` | the same `demo.elf` as on the TC275 (its PSPR and DSPR addresses exist on the TC36x CPU0), written into RAM, CPU0 halted at `main` |
 
@@ -120,11 +121,12 @@ cores, DSPR 192 KiB and PSPR 32 KiB each, PFLASH PF0 `0x80000000` and PF1
   leaves such a core alone.
 - The peripheral view uses the bundled `TC36XPD` SVD file.
 
-The probe-rs debugger handles one core per session, so each core has its own
-session. The configurations set `allStop`: a breakpoint, step or pause in one
-session halts the other cores as well (stop reason `external`), and continuing
-one runs them again. A core halted at its own breakpoint stays there until its
-own session continues it. Notes:
+A probe-rs session debugs the cores of its `coreConfigs`: one core (a session
+per core, the compound) or several (a thread per core, `one session`). The
+configurations set `allStop`: a breakpoint, step or pause in one core halts
+the other cores as well (stop reason `external`), and continuing
+one runs them again. A core halted at its own breakpoint stays there until it
+is continued itself. Notes:
 
 - The peripheral view (`Peripherals` in the variables view) comes from the
   Infineon SVD file that matches the chip (`TC27XDPD`), found automatically;
@@ -137,7 +139,8 @@ own session continues it. Notes:
 - Global variables can be watched while the cores run with the **Live Watch**
   view of the `probe-rs Live Watch` extension
   (`../../../vscode/probe-rs-live-watch`), for example `g_ticks` and
-  `g_result` of the demo.
+  `g_result` of the demo. In the one-session configuration it reads them on
+  each core; **Select Cores** picks the cores.
 - A probe-rs command line tool (`probe-rs read`, `reset`, ...) run during a
   session resumes every halted core, and a reset from any session resets the
   whole device. `probe-rs-infineon`'s `bus_read` example reads memory without

@@ -2,6 +2,66 @@
 
 2026-10-24 · 원본(구조 그림 포함): [Claude 문서](https://claude.ai/artifact/LaAQhorNNsiccUpDPhAhhZ)
 
+## 0. 구현 현황 (2026-10-24)
+
+WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS Code 화면)만 남았다. 커밋은 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)에 있다.
+
+| 커밋 | WP | 내용 |
+| --- | --- | --- |
+| `763c12a` | WP-M1, WP-M2 | `coreConfigs` 여러 개 허용, 코어마다 스레드, 요청 라우터(`core_routing.rs`: `threadId`·`frameId`·`variablesReference`·`@코어`·`core` 인자, 나머지는 포커스 코어), 코어 전부에 보내고 응답을 합치는 요청(setBreakpoints, setInstructionBreakpoints, setDataBreakpoints, configurationDone, disconnect), 코어별 정지 이벤트(`allThreadsStopped: false`), continued 스레드 번호 버그 |
+| `cb0e00d` | WP-M5 | `Session::status_many`: TriCore는 코어 전부의 `DBGSR`·`CBS_TRCn`·`EXEVT`·PC, 다시 `DBGSR`, STM을 TAS 요청 하나로 읽고 코어별 판단에 쓴다. 두 확인 사이에 실행됐다가 다시 멈춘 코어(정지→정지, `DBGSR`이나 PC가 다름)를 새 정지로 보고한다 |
+| `2e8d3a9` | WP-M3, WP-M4, WP-M5 | 코어별 디버그 정보(`LoadDebugInfoRequest.core`), 소스 BP·위치를 코어의 디버그 정보로 해석, 서로 다른 바이너리를 한 번씩 플래시, restart가 코어 전부의 BP를 다시 계산하고 바뀐 바이너리를 다시 씀, 폴링이 `status_many`를 한 번 부름, 정지→정지로 바뀐 코어의 스택 다시 풀기 |
+| `879e4f9` | 시험 도구 | `poll_cost`(폴링 요청 수·시간), `start_in_flash --core N` |
+| `63d721a` | 복구 | `--connect-under-reset`가 TAS 프로브에 전달되게 고침, `sw_reset --group N` |
+
+데모와 확장(이 저장소): `TC275: probe-rs CPU0–CPU2 one session` 설정(`m25_tcf/examples/aurix_tcf_demo/.vscode/launch.json`), Live Watch 확장 0.2.0(`vscode/probe-rs-live-watch`: 코어마다 읽기, **Select Cores**).
+
+**시험 결과** (TC275 ShieldBuddy, `dap_onesession.js` 모드 default·`noallstop`·`samecode`·`restart`·`reset`, `dap_kill.js` `CORES=3`)
+
+| ID | 결과 | 내용 |
+| --- | --- | --- |
+| T-M1 | 통과 | 스레드 3개(`0-TC275`…), configurationDone 뒤 세 코어 실행 |
+| T-M2 | 통과 | CPU0 `breakpoint`, CPU1·CPU2 `external`, 스레드마다 자기 PC(DBGSR로 읽은 PC와 같음), `allThreadsStopped: false` |
+| T-M3 | 통과 | CPU0 continue에 CPU1·CPU2도 continued. 응답의 `allThreadsContinued`는 `false`(아래 차이점) |
+| T-M4 | 통과 | CPU1 `pause`, 나머지 `external` |
+| T-M5 | 통과 | CPU0 step, CPU1·CPU2 PC 그대로 |
+| T-M6 | 통과 | CPU0이 자기 BP에 남고 CPU1·CPU2 실행, `allThreadsContinued: false` |
+| T-M7 | 통과 | `allStop` 없이 BP·continue·pause가 그 코어만 |
+| T-M8 | 통과 | 세 코어가 PF1 데모를 함께 돌 때 소스 BP 하나가 코어마다 트리거 유닛 하나, 세 코어 모두 `breakpoint`로 정지(2회 반복) |
+| T-M9 | 통과 | 프레임마다 그 코어의 레지스터, CPU0 프레임의 evaluate. setVariable은 시험하지 않음 |
+| T-M10 | 통과 | `dataId` `0x7000a004/4@0`, CPU0에서 `data breakpoint` |
+| T-M11 | 통과 | restart: 세 코어 라우팅과 BP가 되살아나고 pause·continue 정상. 앱 SW 리셋(`allStop` 끔): BP가 세 코어에 남고 CPU0이 시작 코드에서 정지, 콘솔 알림. `allStop`을 켠 앱 리셋은 장치가 잠긴다(아래 제한) |
+| T-M12 | 통과 | 강제 종료 뒤 다음 세션이 `debug` 명령 4개를 되돌리고 그룹에서 뺀다. 트리거 유닛은 남는다(아래 제한) |
+| T-M13 | 통과 | 실행 중 폴링 1회: 코어별 6요청 24.8 ms → 묶음 1요청 11.5 ms(`poll_cost`) |
+| T-M14 | 통과 | 코어 하나 설정 회귀 20묶음 통과 |
+| T-M15 | 남음 | VS Code 화면 조작은 승인 뒤에 한다 |
+| FR-M13 | 통과 | `liveWatch` `core` 0·1·2·없음, 코어 계속 실행. 확장 로직은 가짜 `vscode` 모듈로 9항목 |
+
+단위 테스트: probe-rs 557(TriCore 62), probe-rs-tools 212, probe-rs-debug 113, probe-rs-infineon 56(mcd 65). clippy 경고 없음.
+
+**시험 중 찾아 고친 것**
+
+- T-M8 첫 시도에서 CPU0만 `breakpoint`였다. 그룹 run이 풀어 준 동료가 다음 폴링 전에 자기 BP에 다시 멈춰, 정지→정지로 보여 이벤트도 스택 갱신도 없었다. 마지막 정지의 (`DBGSR`, PC)를 기억해 달라지면 새 정지로 본다(`cb0e00d`).
+- 그 감지가 늦게 본 정지에서도 그룹 멤버를 멈춰, 세션 3개 SW BP 시험(`dap_swbp allstop`)이 10번 중 4번 실패했다. 그 사이 새 run으로 다시 돌던 코어를 멈췄기 때문이다. 늦게 본 정지에서는 멤버를 멈추지 않는다(`cb0e00d`, 고친 뒤 10/10).
+- `--connect-under-reset`가 TAS 프로브에 전달되지 않았다(`63d721a`).
+
+**설계와 다른 점**
+
+- continue 응답과 continued 이벤트의 `allThreadsContinued`는 코어가 여럿이면 늘 `false`다. 실행된 코어마다 continued 이벤트가 따로 간다.
+- setInstructionBreakpoints는 코어 전부에 건다(5.1의 "그 주소의 코드를 가진 ELF의 코어"가 아님). 트리거 유닛은 코어마다 하나씩 쓴다.
+- 상태 묶음은 새 RPC `core/status_many` 대신 기존 `cores/status`가 `Session::status_many`를 쓴다.
+- 디버그 정보는 ELF 경로별이 아니라 코어별이다. 첫 코어와 같은 파일이면 세션 것을 쓰고, 다른 파일이면 코어마다 읽는다.
+- 일부 소스 위치 조회(`source_location`)는 첫 코어의 디버그 정보를 쓴다.
+- 구현하지 않은 것: `singleThread`(`supportsSingleThreadExecutionRequests`), 두 ELF의 PFLASH 섹터 겹침 거부, FR-M15(RTT·semihosting 코어 구분).
+- 다른 아키텍처도 코드상 코어 여러 개를 받지만 실기 시험은 TriCore만 했다.
+
+**알려진 제한**
+
+- halt group에 코어가 둘 이상이면 앱 리셋(SW 리셋, 워치독) 뒤 장치가 잠긴다(TAS `DEVICE_CONNECT` 0x46, 20초 넘게 접근 불가). 라우팅이 리셋 뒤에도 남고, 부트 정지 상태의 CPU1이 그룹 라인으로 시작 소프트웨어를 돌던 CPU0을 멈춘다. DAP 없이 `sw_reset --group 2`로도 재현되고 세션 3개 방식도 같다. 세션이 하는 리셋(restart)은 괜찮다. 복구: `probe-rs reset --chip TC275 --connect-under-reset`.
+- 강제 종료된 세션의 트리거 유닛은 저널에 없어서, 그 코어에 BP를 거는 세션이 나올 때까지 남는다(코어 하나 세션도 같다).
+
+**남은 작업**: T-M15, `singleThread`, 섹터 겹침 거부, 트리거 유닛 저널, 그룹 잠김 회피(펄스 라우팅 조사), T-M9 setVariable, TC36x(2코어) 실기.
+
 ## 1. 개요
 
 VS Code에서 TC275의 코어 3개를 DAP 세션 하나로 디버깅한다. `probe-rs dap-server` 하나, launch 설정 하나로 띄우고, 코어마다 스레드 하나가 호출 스택 뷰에 보인다. 지금은 코어마다 세션을 하나씩 띄워 compound launch로 묶는다.
@@ -219,14 +279,14 @@ DAP 서버 하나가 요청을 코어별로 나눠 보내고, 코어 상태는 �
 
 ## 9. 결정이 필요한 점
 
-각 항목에 권장안을 적었다. 권장안대로 가면 WP-M1부터 바로 시작할 수 있다.
+각 항목에 권장안을 적었다. 권장안대로 가면 WP-M1부터 바로 시작할 수 있다. 2026-10-24에 모두 권장안으로 정해 구현했다(0절).
 
-- [ ] **정지 이벤트 방식:** 코어마다 stopped를 보낼지, 하나에 `allThreadsStopped`를 실을지. 권장은 코어마다다. 각 코어의 이유(`breakpoint`, `external`, `step`)가 화면에 남는다.
-- [ ] **포커스 코어:** 스레드를 알 수 없는 요청(호버, Watch, 주소만 있는 메모리 요청)을 어느 코어로 보낼지. 권장은 마지막으로 정지 이벤트를 보낸 코어다. VS Code도 그 스레드에 포커스를 둔다.
-- [ ] **코어 표시 형식:** `memoryReference`와 `dataId`에 코어를 붙이는 방법. 권장은 `0x7000a004@1`처럼 끝에 `@코어`다. 붙지 않은 값은 포커스 코어로 간다.
-- [ ] **T-M8 시험 이미지:** 세 코어가 같은 코드를 실행하게 하는 방법. 권장은 `start_in_flash` 예제에 코어 선택을 더해 PF1 데모를 CPU1·CPU2에서도 시작하는 것이다(코어마다 자기 DSPR에 스택). 플래시는 쓰지 않고 PF0는 건드리지 않는다.
-- [ ] **다른 아키텍처:** 코어 여러 개 설정을 ARM·RISC-V에도 열지. 권장은 코드상 허용하되 실기 시험은 TriCore만 하고, 그 사실을 문서에 적는 것이다.
-- [ ] **Live Watch 코어 선택(FR-M13):** 1차에 넣을지. 권장은 넣는 것이다. 크기가 작고, 세션이 하나가 되면 Live Watch가 코어를 고를 방법이 따로 없다.
+- [x] **정지 이벤트 방식:** 코어마다 stopped를 보낼지, 하나에 `allThreadsStopped`를 실을지. 권장은 코어마다다. 각 코어의 이유(`breakpoint`, `external`, `step`)가 화면에 남는다.
+- [x] **포커스 코어:** 스레드를 알 수 없는 요청(호버, Watch, 주소만 있는 메모리 요청)을 어느 코어로 보낼지. 권장은 마지막으로 정지 이벤트를 보낸 코어다. VS Code도 그 스레드에 포커스를 둔다.
+- [x] **코어 표시 형식:** `memoryReference`와 `dataId`에 코어를 붙이는 방법. 권장은 `0x7000a004@1`처럼 끝에 `@코어`다. 붙지 않은 값은 포커스 코어로 간다.
+- [x] **T-M8 시험 이미지:** 세 코어가 같은 코드를 실행하게 하는 방법. 권장은 `start_in_flash` 예제에 코어 선택을 더해 PF1 데모를 CPU1·CPU2에서도 시작하는 것이다(코어마다 자기 DSPR에 스택). 플래시는 쓰지 않고 PF0는 건드리지 않는다.
+- [x] **다른 아키텍처:** 코어 여러 개 설정을 ARM·RISC-V에도 열지. 권장은 코드상 허용하되 실기 시험은 TriCore만 하고, 그 사실을 문서에 적는 것이다.
+- [x] **Live Watch 코어 선택(FR-M13):** 1차에 넣을지. 권장은 넣는 것이다. 크기가 작고, 세션이 하나가 되면 Live Watch가 코어를 고를 방법이 따로 없다.
 
 ## 10. 참고 자료
 
