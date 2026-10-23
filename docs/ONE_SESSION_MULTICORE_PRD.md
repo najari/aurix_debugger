@@ -4,7 +4,7 @@
 
 ## 0. 구현 현황 (2026-10-24)
 
-WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS Code 화면)만 남았다. 커밋은 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)에 있다.
+WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M15를 모두 통과했다. 커밋은 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)에 있다.
 
 | 커밋 | WP | 내용 |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS
 | `2e8d3a9` | WP-M3, WP-M4, WP-M5 | 코어별 디버그 정보(`LoadDebugInfoRequest.core`), 소스 BP·위치를 코어의 디버그 정보로 해석, 서로 다른 바이너리를 한 번씩 플래시, restart가 코어 전부의 BP를 다시 계산하고 바뀐 바이너리를 다시 씀, 폴링이 `status_many`를 한 번 부름, 정지→정지로 바뀐 코어의 스택 다시 풀기 |
 | `879e4f9` | 시험 도구 | `poll_cost`(폴링 요청 수·시간), `start_in_flash --core N` |
 | `63d721a` | 복구 | `--connect-under-reset`가 TAS 프로브에 전달되게 고침, `sw_reset --group N` |
+| `0e7761c` | WP-M6 | 그룹이 멈춘 코어(`external`)의 정지 이벤트에 `preserveFocusHint`, 포커스 코어는 그대로 |
 
 데모와 확장(이 저장소): `TC275: probe-rs CPU0–CPU2 one session` 설정(`m25_tcf/examples/aurix_tcf_demo/.vscode/launch.json`), Live Watch 확장 0.2.0(`vscode/probe-rs-live-watch`: 코어마다 읽기, **Select Cores**).
 
@@ -34,7 +35,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS
 | T-M12 | 통과 | 강제 종료 뒤 다음 세션이 `debug` 명령 4개를 되돌리고 그룹에서 뺀다. 트리거 유닛은 남는다(아래 제한) |
 | T-M13 | 통과 | 실행 중 폴링 1회: 코어별 6요청 24.8 ms → 묶음 1요청 11.5 ms(`poll_cost`) |
 | T-M14 | 통과 | 코어 하나 설정 회귀 20묶음 통과 |
-| T-M15 | 남음 | VS Code 화면 조작은 승인 뒤에 한다 |
+| T-M15 | 통과 | VS Code에서 설정 하나로: 호출 스택에 스레드 3개(`0-TC275`…`2-TC275`), 17행 BP에 CPU0 정지와 콜스택·변수, CPU1·CPU2 `external`, F10 step은 CPU0만, continue 뒤 BP 재적중, 스레드 행의 continue·pause가 그 코어(CPU0은 BP에 남음), Live Watch 코어별 묶음과 Select Cores |
 | FR-M13 | 통과 | `liveWatch` `core` 0·1·2·없음, 코어 계속 실행. 확장 로직은 가짜 `vscode` 모듈로 9항목 |
 
 단위 테스트: probe-rs 557(TriCore 62), probe-rs-tools 212, probe-rs-debug 113, probe-rs-infineon 56(mcd 65). clippy 경고 없음.
@@ -44,6 +45,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS
 - T-M8 첫 시도에서 CPU0만 `breakpoint`였다. 그룹 run이 풀어 준 동료가 다음 폴링 전에 자기 BP에 다시 멈춰, 정지→정지로 보여 이벤트도 스택 갱신도 없었다. 마지막 정지의 (`DBGSR`, PC)를 기억해 달라지면 새 정지로 본다(`cb0e00d`).
 - 그 감지가 늦게 본 정지에서도 그룹 멤버를 멈춰, 세션 3개 SW BP 시험(`dap_swbp allstop`)이 10번 중 4번 실패했다. 그 사이 새 run으로 다시 돌던 코어를 멈췄기 때문이다. 늦게 본 정지에서는 멤버를 멈추지 않는다(`cb0e00d`, 고친 뒤 10/10).
 - `--connect-under-reset`가 TAS 프로브에 전달되지 않았다(`63d721a`).
+- T-M15에서 F10이 CPU0이 아니라 CPU2를 step했다. VS Code는 정지 이벤트마다 그 스레드로 포커스를 옮기는데, BP 정지 뒤에 그룹 정지(`external`) 이벤트가 왔기 때문이다. 그 이벤트에 `preserveFocusHint`를 실었다(`0e7761c`).
 
 **설계와 다른 점**
 
@@ -59,8 +61,9 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했다. 실기 시험은 T-M15(VS
 
 - halt group에 코어가 둘 이상이면 앱 리셋(SW 리셋, 워치독) 뒤 장치가 잠긴다(TAS `DEVICE_CONNECT` 0x46, 20초 넘게 접근 불가). 라우팅이 리셋 뒤에도 남고, 부트 정지 상태의 CPU1이 그룹 라인으로 시작 소프트웨어를 돌던 CPU0을 멈춘다. DAP 없이 `sw_reset --group 2`로도 재현되고 세션 3개 방식도 같다. 세션이 하는 리셋(restart)은 괜찮다. 복구: `probe-rs reset --chip TC275 --connect-under-reset`.
 - 강제 종료된 세션의 트리거 유닛은 저널에 없어서, 그 코어에 BP를 거는 세션이 나올 때까지 남는다(코어 하나 세션도 같다).
+- VS Code의 Stop(disconnect)은 멈춰 있던 코어를 멈춘 채 둔다(업스트림과 코어 하나 세션도 같다). 끝내기 전에 continue한다.
 
-**남은 작업**: T-M15, `singleThread`, 섹터 겹침 거부, 트리거 유닛 저널, 그룹 잠김 회피(펄스 라우팅 조사), T-M9 setVariable, TC36x(2코어) 실기.
+**남은 작업**: `singleThread`, 섹터 겹침 거부, 트리거 유닛 저널, 그룹 잠김 회피(펄스 라우팅 조사), T-M9 setVariable, TC36x(2코어) 실기.
 
 ## 1. 개요
 
