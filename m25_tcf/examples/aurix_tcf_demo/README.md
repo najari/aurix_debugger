@@ -126,7 +126,19 @@ own session continues it. Notes:
   and code the program copies into the PSPR; `DEBUG` instructions are planted
   again after it. Reads (memory view, disassembly) show the program, not the
   `DEBUG` instructions. If a session ends without a disconnect (the debugger
-  is killed), the `DEBUG` instructions stay in RAM: load the program again.
+  is killed), its `DEBUG` instructions stay in RAM until the next session on
+  that core (on this PC): it puts the code back from the record the killed
+  session kept, and says so in the debug console.
+- Flash backups: with the environment variable
+  `PROBE_RS_TRICORE_FLASH_BACKUP` set to a folder (in VS Code:
+  `"env": { "PROBE_RS_TRICORE_FLASH_BACKUP": "C:\\flash_backups" }` in the
+  configuration), every download saves each PFLASH sector it erases, as it
+  was, in `<folder>/<UTC time>/sector_<address>.json`. A sector that already
+  holds the image is not erased and not saved. To put sectors back:
+  `python tools/backup_to_hex.py <backup folder> restore.hex`, then
+  `probe-rs download --chip TC275 --binary-format hex restore.hex`.
+  `probe-rs-infineon`'s `pflash_check` example compares the flash with a
+  backup.
 - Another TAS server: set `probe` to `058b:0000:<host>[:<port>]/<target>`,
   for example `058b:0000:192.168.1.10:24817/DAS JTAG AURDUINO 46YPEADW`
   (`058b:0000:<host>/` takes its first target).
