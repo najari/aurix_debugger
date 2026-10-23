@@ -4,14 +4,14 @@
 
 ## 결론
 
-소스 디버깅의 기본 흐름(브레이크포인트, step, 콜스택, 변수, 디스어셈블리, 주변장치 읽기)은 두 도구가 비슷하다. probe-rs TriCore에 남은 큰 차이는 두 가지다. 하나는 모든 코어를 함께 멈추는 멀티코어 방식이고, 둘째는 지원 칩 범위(TC2x·TC3x·TC4x 전체 vs TC27x)다. Live Watch와 주변장치 레지스터 쓰기는 구현해 실기로 확인했고, 시험하지 않았던 DAP·GDB 기능 7가지도 모두 실기로 확인했다.
+소스 디버깅의 기본 흐름(브레이크포인트, step, 콜스택, 변수, 디스어셈블리, 주변장치 읽기)은 두 도구가 비슷하다. probe-rs TriCore에 남은 큰 차이는 두 가지다. 하나는 모든 코어를 함께 멈추는 멀티코어 방식이고, 둘째는 지원 칩 범위(TC2x·TC3x·TC4x 전체 vs TC27x)다. Live Watch, 주변장치 레지스터 쓰기, 진입 함수 정지는 구현해 실기로 확인했고, 시험하지 않았던 DAP·GDB 기능 7가지도 모두 실기로 확인했다.
 
-- 비교 대상: [ZeZhan/vscode-aurix-tcf-debugger](https://github.com/ZeZhan/vscode-aurix-tcf-debugger) `main`(README, `package.json`, `src/`)과 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `d7b3b30`)
+- 비교 대상: [ZeZhan/vscode-aurix-tcf-debugger](https://github.com/ZeZhan/vscode-aurix-tcf-debugger) `main`(README, `package.json`, `src/`)과 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `68a5f6a`)
 - probe-rs 쪽 내용은 TC275 ShieldBuddy 실기 시험 결과 기준이다. aurix-tcf 쪽 내용은 저장소 문서와 코드를 기준으로 했고, 실기로 다시 확인하지는 않았다.
 
 ## 부족한 점
 
-중요도 순서다. 1–3은 디버깅 방식과 지원 범위의 차이고, 4–10은 편의 기능의 차이다. 4·5번은 구현을 마쳤다.
+중요도 순서다. 1–3은 디버깅 방식과 지원 범위의 차이고, 4–10은 편의 기능의 차이다. 4·5·6번은 구현을 마쳤다.
 
 | # | 항목 | aurix-tcf 확장 | probe-rs TriCore (현재) | 메우는 방법 |
 | --- | --- | --- | --- | --- |
@@ -20,7 +20,7 @@
 | 3 | 플래시 | 모든 칩, PFLASH와 DFLASH, PPU/CDSP HEX | TC27x PFLASH만. DFLASH와 UCB 없음 | 칩 계열별 로더와 DFLASH 시퀀스 |
 | 4 | Live Watch | 실행 중에 전역 변수를 주기적으로 갱신(최소 200 ms, `aurix-tcf/liveWatchEvaluate`) | **구현함.** VS Code `Live Watch` 뷰(확장 `najari.probe-rs-live-watch`)가 DAP `liveWatch` 요청으로 실행 중에 갱신. 코어를 멈추지 않고 읽으며 요청당 약 50 ms | 완료(`2561449`) |
 | 5 | 주변장치 레지스터 쓰기 | Peripheral Viewer 확장(`mcu-debug.peripheral-viewer`)으로 읽기와 쓰기 | **구현함.** `Peripherals`에서 레지스터는 통째로, 필드는 read-modify-write로 씀. 값은 0x/0b/10진수, 폭을 넘으면 거부. 읽으면 값이 바뀌는 레지스터의 필드는 거부. 실기: STM2 `CMCON.MSTART1`, `CMP1` | 완료(`d7b3b30`) |
-| 6 | 리셋 후 진입 함수에서 정지 | `entryFunction`(예: `core0_main`)까지 실행해 멈춤. 리셋 뒤 모든 코어 정지 | `launch`의 리셋 후 정지(`haltAfterReset`)는 실기로 확인. 진입 함수까지 실행해 멈추는 기능은 없음 | 진입 함수 임시 브레이크포인트. 실기 확인에는 리셋으로 시작하는 이미지가 필요(PF0 쓰기 승인) |
+| 6 | 리셋 후 진입 함수에서 정지 | `entryFunction`(예: `core0_main`)까지 실행해 멈춤. 리셋 뒤 모든 코어 정지 | **구현함.** 코어 설정 `entryFunction`으로 리셋 뒤(`launch`·`restart`) 진입 함수까지 실행해 멈춤(이유 `entry`). 임시 브레이크포인트는 멈추면 지움. 멈추는 것은 해당 코어뿐. 실기: PF0 앱 함수에 심볼만 붙인 시험용 ELF로 확인 | 완료(`68a5f6a`). 실제 `core0_main` ELF 확인에는 리셋으로 시작하는 이미지의 PF0 쓰기 승인이 필요 |
 | 7 | 브레이크포인트 개수 | TCF 에이전트가 관리(RAM 코드에는 SW 브레이크포인트) | 코어당 HW 8개. SW 브레이크포인트 없음(FR-C5) | RAM 코드에 `debug` 명령을 넣는 SW 브레이크포인트 |
 | 8 | 식 평가 | TCF Expressions 서비스(C 식) | probe-rs 평가기(변수 이름 위주, 연산 제한) | probe-rs 업스트림 기능에 의존 |
 | 9 | PPU, CDSP, SCR 코어 | ELF를 붙여 디버깅 | 없음 | TriCore가 아닌 아키텍처라 범위가 큼 |
@@ -40,7 +40,7 @@ probe-rs DAP 서버가 지원한다고 알리지만 TriCore에서 돌려 보지 
 | `launch`와 `flashingEnabled` 조합 | 통과 | 9.3 s. PF1 시험 섹터만 대상, 끝난 뒤 PF1 내용이 데모 이미지와 같음. 리셋 후 `0xA0000020`에서 정지, 이어서 실행 |
 | GDB 서버(`probe-rs gdb`) | 통과(11항목) | `qSupported`, `target.xml`(레지스터 40개, `pc` = 32번), 코어 3개가 스레드로 나옴, `g`·`m` 읽기, `Z1` HW 브레이크포인트와 `hwbreak` 정지, `s` 스텝, 인터럽트(0x03), detach |
 
-GDB 서버는 `[::1]:1337`(IPv6)에서만 대기한다(업스트림 동작). `127.0.0.1:1337`로는 연결이 거부되므로 `localhost:1337`이나 `[::1]:1337`로 접속한다.
+GDB 서버는 처음에 `[::1]:1337`(IPv6)에서만 대기했다(업스트림 동작). 주소마다 리스너를 열도록 고쳐(`68a5f6a`) 이제 `127.0.0.1:1337`로도 접속되고, 같은 11항목이 통과했다.
 
 ## probe-rs 쪽이 나은 점
 
@@ -58,12 +58,11 @@ probe-rs는 백엔드 전체가 공개돼 있고, 디버거 밖에서도 쓸 수
 
 ## 권장 순서
 
-Live Watch(4번), 주변장치 쓰기(5번), 미시험 기능 확인은 끝났다. 남은 항목은 하드웨어나 승인이 더 필요하다.
+Live Watch(4번), 주변장치 쓰기(5번), 진입 함수 정지(6번), 미시험 기능 확인, GDB 서버 IPv4 대기는 끝났다. 남은 항목은 하드웨어나 승인이 더 필요하다.
 
-1. **진입 함수에서 정지 (6번)**: 임시 브레이크포인트를 구현한다. 실기 확인에는 리셋으로 시작하는 이미지가 필요해 PF0 쓰기 승인을 받아야 한다.
+1. **실제 진입 함수 확인 (6번)**: 리셋으로 시작하는 `core0_main` 이미지를 PF0에 써서 확인한다. PF0 쓰기 승인이 필요하다.
 2. **동시 정지 (1번)**: OCDS 정지 브로드캐스트 동작을 실기로 먼저 확인해야 한다.
 3. **칩과 플래시 범위 확대 (2·3번)**: TC3xx 등 해당 보드가 있어야 한다.
-4. **GDB 서버 IPv4 대기 (선택)**: `127.0.0.1`에서도 접속되도록 두 주소 모두에서 대기한다.
 
 7–10번(SW 브레이크포인트, 식 평가, PPU·CDSP·SCR, 설정 UI)은 필요가 생기면 다룬다.
 
