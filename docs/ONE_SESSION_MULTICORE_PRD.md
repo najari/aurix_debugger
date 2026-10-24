@@ -4,7 +4,7 @@
 
 ## 0. 구현 현황 (2026-10-24)
 
-WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M15를 모두 통과했다. 그 뒤 남은 작업(`singleThread`, 섹터 겹침 거부, 트리거 유닛 저널, 앱 리셋 뒤 그룹 잠김)도 마쳤다. 커밋은 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)에 있다.
+WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M15를 모두 통과했다. 그 뒤 남은 작업(`singleThread`, 섹터 겹침 거부, 트리거 유닛 저널, 앱 리셋 뒤 그룹 잠김)과 TC36x(2코어) 실기 시험도 마쳤다. 커밋은 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)에 있다.
 
 | 커밋 | WP | 내용 |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 | `7036cc3` | 시험 도구 | `trigger_switch mask`·`brkout`, `sw_reset --trc` |
 | `ca86354` | 동시 정지 | 데이터 watchpoint 정지도 펄스로 전파(`TRnEVT` 0x22: `BOD` 0, `SUSP` 유지), `SWEVT` 0x2A로 복귀. 동료가 자기 watchpoint에 멈춘 것은 `SUSP` 흔적과 걸린 watchpoint가 함께 있을 때만으로 판단 |
 | `eb4f09c` | 5.5 | `perfWindow` 실패 메시지에 코어 번호 |
+| `bf53965` | TC36x | 앱이 시작하지 않은 코어(부트 정지, TC36x 시험 보드의 CPU1)를 잠든 코어로 보인다. 이 코어가 `coreConfigs`에 있어도 attach가 실패하지 않고, 스레드는 잠든 상태, pause는 거절된다. 데모 설정 `TC36x: probe-rs CPU0–CPU1 one session`(aurix_debugger `e56c310`) |
 
 데모와 확장(이 저장소): `TC275: probe-rs CPU0–CPU2 one session` 설정(`m25_tcf/examples/aurix_tcf_demo/.vscode/launch.json`), Live Watch 확장 0.2.0(`vscode/probe-rs-live-watch`: 코어마다 읽기, **Select Cores**).
 
@@ -78,7 +79,9 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 - 이전 버전이 남긴 레벨 라우팅(`CBS_TRCn` 0x700007)이 세션 없는 코어에 남아 있으면 엉뚱한 external 정지가 날 수 있다. 버전을 바꾼 뒤 한 번 `probe-rs reset`한다.
 - VS Code의 Stop(disconnect)은 멈춰 있던 코어를 멈춘 채 둔다(업스트림과 코어 하나 세션도 같다). 끝내기 전에 continue한다.
 
-**남은 작업**: TC36x(2코어) 실기, FR-M15(다른 아키텍처용 RTT·semihosting 코어 구분).
+**TC36x 실기** (TriBoard TC3X5, `bf53965` 커밋 메시지 기준): CPU0–CPU1 한 세션을 `allStop` 켜고 끈 두 경우로, 플래시 BP·콜스택·liveWatch·pause·다른 BP까지 continue를 CPU0에서 확인했다. 시험 보드의 CPU1은 앱이 시작하지 않아 부트 정지 상태라 잠든 스레드로 보이고 pause가 거절된다. 이 변경 뒤 TC275에서도 회귀 20묶음과 한 세션 시험 7모드가 통과했다.
+
+**남은 작업**: FR-M15(다른 아키텍처용 RTT·semihosting 코어 구분). TC36x에서 두 코어가 모두 도는 앱으로 동시 정지를 보는 시험은 그런 시험 이미지가 있을 때 한다.
 
 ## 1. 개요
 
@@ -140,7 +143,7 @@ DAP 서버 코드의 단일 코어 전제는 아래와 같다(`probe-rs-tools/sr
 | 1차 | 코어 상태 확인을 한 TAS 요청으로 묶음 |
 | 1차 | 리셋, restart, disconnect, 강제 종료 복구를 코어 전부에 |
 | 1차 | 데모의 VS Code 설정(세션 하나로 CPU0–CPU2) |
-| 나중 | TC36x(2코어) 실기 시험. 보드가 있을 때 |
+| 나중 | TC36x(2코어) 실기 시험. 보드가 있을 때 (2026-10-24 `bf53965`로 함) |
 | 나중 | Live Watch 확장의 코어 선택, 성능 창(`perfWindow`)의 코어별 설정 표시 |
 | 제외 | 업스트림 PR, 코어별 세션 방식 제거, 서로 다른 칩 여러 개를 한 세션에서(보드 여러 개) |
 
