@@ -117,7 +117,9 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 | Zed 명령 BP(코어 없음) | `0x8021C02C`가 코어 0·1·2에 설정, 해제 |
 | DAP 스크립트: `0x8021c028@0` + `offset: 8` | `0x8021c030`이 코어 0에만 설정(`cores 0`), CPU0이 그 주소에서 정지 |
 
-단위 테스트: probe-rs dap_server 113개(새 2개), Zed `parse_address` 1개. clippy `-D warnings`는 mcd 켬·끔 모두 통과. VS Code 디스어셈블리 뷰로는 아직 확인하지 않았다.
+단위 테스트: probe-rs dap_server 113개(새 2개), Zed `parse_address` 1개. clippy `-D warnings`는 mcd 켬·끔 모두 통과.
+
+VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "Open Disassembly View"를 열면 `@0` 참조로도 PC 줄(`0x8021C008`)이 표시됐다. `0x8021C030 mul d2, d3` 줄에 BP를 걸자 BP 목록에 `0x8021c030`이 생겼고, continue 뒤 `0x8021c030`(23번 줄)에서 멈췄다. 수정 전이었다면 VS Code가 보낸 "기준 참조 + 오프셋" 중 기준 주소(`0x8021C008`)에 걸렸을 것이다.
 
 ## 그 밖의 관찰
 
@@ -128,7 +130,7 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 ## 다음 단계
 
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
-2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`). VS Code 디스어셈블리 뷰 재확인은 남음
+2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`), VS Code 디스어셈블리 뷰 재확인
 3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
