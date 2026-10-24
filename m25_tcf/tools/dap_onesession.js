@@ -52,7 +52,7 @@ class Dap {
         return new Promise((resolve) => { const w = { name, thread, resolve: (e) => { clearTimeout(t); resolve(e); } }; const t = setTimeout(() => { const i = this.waiters.indexOf(w); if (i >= 0) this.waiters.splice(i, 1); resolve(null); }, ms); this.waiters.push(w); });
     }
     async attach(allStop) {
-        await this.send('initialize', { adapterID: 'probe-rs-debug', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path' });
+        this.capabilities = (await this.send('initialize', { adapterID: 'probe-rs-debug', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path' })).body;
         const initialized = this.event('initialized', undefined, 60000);
         const r = await this.send('attach', {
             cwd: DEMO, chip: 'TC275', probe: '058b:0000', allStop,
@@ -123,6 +123,14 @@ async function allStop() {
     check('T-M9 the register scope of each frame reads its own core', pc0 && pc1 && Number(pc0.value) === tops[0].pc && Number(pc1.value) === tops[1].pc, `CPU0 PC ${pc0 && pc0.value}, CPU1 PC ${pc1 && pc1.value}`);
     const ev = await s.send('evaluate', { expression: 'g_result', frameId: tops[0].id, context: 'watch' });
     check('T-M9 evaluate in a CPU0 frame', ev.success && /^\d+$/.test(ev.body.result), ev.success ? ev.body.result : JSON.stringify(ev.body));
+    // T-M9: setVariable of a CPU1 register (variablesReference of CPU1) writes CPU1's D0 only.
+    const rawD0 = (base) => { const b = execFileSync('C:\\work\\probe-rs\\target\\debug\\examples\\bus_read.exe', [hex(base + 0xFF00), '4']).toString().trim().split(/\s+/).map((x) => parseInt(x, 16)); return (b[0] | b[1] << 8 | b[2] << 16 | b[3] << 24) >>> 0; };
+    const d0v = vars1.body.variables.find((v) => /^d0$/i.test(v.name));
+    const cpu0Before = rawD0(0xF8810000), cpu1Before = rawD0(0xF8830000);
+    const setv = d0v && await s.send('setVariable', { variablesReference: regs1.variablesReference, name: d0v.name, value: '0x12345678' });
+    const cpu1After = rawD0(0xF8830000), cpu0After = rawD0(0xF8810000);
+    const back = d0v && await s.send('setVariable', { variablesReference: regs1.variablesReference, name: d0v.name, value: hex(cpu1Before) });
+    check('T-M9 setVariable of a CPU1 register writes CPU1 only (and back)', setv && setv.success && cpu1After === 0x12345678 && cpu0After === cpu0Before && back.success && rawD0(0xF8830000) === cpu1Before, `CPU1 D0 ${hex(cpu1Before)} -> ${hex(cpu1After)} -> ${hex(rawD0(0xF8830000))}, CPU0 D0 ${hex(cpu0Before)} -> ${hex(cpu0After)}${setv && !setv.success ? ' ' + JSON.stringify(setv.body) : ''}`);
 
     // T-M3: continue on CPU0 (breakpoint removed) runs all three.
     await s.send('setBreakpoints', { source: { path: SRC }, breakpoints: [] });
@@ -146,6 +154,19 @@ async function allStop() {
     await sleep(300);
     const after = cpus(dump());
     check('T-M5 a step on CPU0 moves CPU0 only', sv && sv.reason === 'step' && after[1].pc === before[1].pc && after[2].pc === before[2].pc && halted(after[1]) && halted(after[2]), `${sv && sv.reason}, CPU0 ${hex(before[0].pc)} -> ${hex(after[0].pc)}, CPU1 ${hex(after[1].pc)}, CPU2 ${hex(after[2].pc)}`);
+
+    // singleThread: a continue of CPU0 alone leaves CPU1 and CPU2 halted; a normal continue of
+    // CPU1 then runs CPU1 and CPU2.
+    const capabilities = s.capabilities || {};
+    const one = await s.send('continue', { threadId: 0, singleThread: true });
+    await sleep(400);
+    const da = cpus(dump());
+    check('singleThread continue runs CPU0 only', one.success && one.body.allThreadsContinued === false && !halted(da[0]) && halted(da[1]) && halted(da[2]) && capabilities.supportsSingleThreadExecutionRequests === true, `capability ${capabilities.supportsSingleThreadExecutionRequests}, ${states(dump())}`);
+    const back12 = [1, 2].map((t) => s.event('continued', t, 5000));
+    await s.send('continue', { threadId: 1 });
+    await Promise.all(back12);
+    await sleep(300);
+    check('a normal continue of CPU1 then runs CPU1 and CPU2', cpus(dump()).every((c) => !halted(c)), states(dump()));
 
     // T-M6: CPU0 stays at its breakpoint when CPU1 continues.
     conts = [0, 1, 2].map((t) => s.event('continued', t, 5000));
@@ -281,9 +302,9 @@ async function resetApp() {
     s.onData = (c) => { const t = c.toString(); if (/reset/i.test(t)) said.push(t); onData(c); };
     s.p.stdout.removeAllListeners('data');
     s.p.stdout.on('data', (c) => s.onData(c));
-    // allStop off: a halt group of two or more cores locks the device on an application reset (the
-    // routing survives it and CPU1, in boot halt, halts CPU0 in its start-up software).
-    const allStopOn = process.env.ALLSTOP === '1';
+    // allStop on (ALLSTOP=0: off). With the halt state routing of earlier versions, a halt group of
+    // two or more cores locked the device on an application reset; the break-out routing does not.
+    const allStopOn = process.env.ALLSTOP !== '0';
     await s.attach(allStopOn);
     await sleep(1000);
     const bp = await s.send('setInstructionBreakpoints', { breakpoints: process.env.NOBP ? [] : [{ instructionReference: hex(START) }] });
@@ -355,7 +376,7 @@ async function restart() {
     await sleep(3000);
     const d = dump();
     console.log('  after the restart:', trcs(d), '|', states(d));
-    check('T-M11 the three cores are routed again', trcs(d) === '0x00700007 0x00700007 0x00700007', trcs(d));
+    check('T-M11 the three cores are routed again', trcs(d) === '0x00700070 0x00700070 0x00700070', trcs(d));
     check('T-M11 the three cores run the application', cpus(d).every((c) => !halted(c)), states(d));
     const units = triggerUnits();
     check('T-M11 the breakpoint is set again on the three cores', units.every((u) => u.includes(0x8021c008)), units.map((u, i) => `CPU${i} ${u.map(hex).join(',') || '-'}`).join(' | '));

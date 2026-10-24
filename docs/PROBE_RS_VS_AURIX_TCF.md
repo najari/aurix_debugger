@@ -15,7 +15,7 @@
 
 | # | 항목 | aurix-tcf 확장 | probe-rs TriCore (현재) | 메우는 방법 |
 | --- | --- | --- | --- | --- |
-| 1 | 멀티코어 동작 | 세션 하나에 모든 코어가 스레드로 나옴. 한 코어가 멈추면 모든 코어가 멈춤(all-stop) | **세션 하나 구현함:** `coreConfigs`에 코어 3개를 주면 DAP 서버 하나가 코어마다 스레드 하나로 보이고, 요청을 스레드·프레임·변수로 그 코어에 보낸다. 소스 BP 하나가 세 코어에 걸리고, 상태 확인은 TAS 요청 하나. 코어별 세션 3개(compound)도 그대로 된다. **동시 정지:** `allStop`을 켜면 OCDS 트리거 스위치로 한 코어가 멈출 때 나머지도 멈추고(이유 `external`), continue하면 함께 돈다. 제한: 자기 BP에 멈춘 코어는 그 코어에서 continue해야 함. 그룹에 코어가 둘 이상이면 앱 리셋 뒤 장치가 잠긴다(`--connect-under-reset`로 복구) | 완료: 동시 정지 `84c21eb`, 세션 하나 `763c12a`–`0e7761c`([한 세션 멀티코어 PRD](ONE_SESSION_MULTICORE_PRD.md)), VS Code에서 확인 |
+| 1 | 멀티코어 동작 | 세션 하나에 모든 코어가 스레드로 나옴. 한 코어가 멈추면 모든 코어가 멈춤(all-stop) | **세션 하나 구현함:** `coreConfigs`에 코어 3개를 주면 DAP 서버 하나가 코어마다 스레드 하나로 보이고, 요청을 스레드·프레임·변수로 그 코어에 보낸다. 소스 BP 하나가 세 코어에 걸리고, 상태 확인은 TAS 요청 하나. 코어별 세션 3개(compound)도 그대로 된다. **동시 정지:** `allStop`을 켜면 OCDS 트리거 스위치로 한 코어가 멈출 때 나머지도 멈추고(이유 `external`), continue하면 함께 돈다. 제한: 자기 BP에 멈춘 코어는 그 코어에서 continue해야 함. 데이터 watchpoint의 정지는 소프트웨어로 전파(수십 ms) | 완료: 동시 정지 `84c21eb`(펄스 라우팅 `d7d32e7`), 세션 하나 `763c12a`–`84a45aa`([한 세션 멀티코어 PRD](ONE_SESSION_MULTICORE_PRD.md)), VS Code에서 확인 |
 | 2 | 지원 칩 | TC2x, TC3x, TC4x 전체 | TC27x(TC275)와 TC36x(2코어, TriBoard TC3X5에서 확인) | 나머지 TC3xx(TC37x 등): 칩별 타깃 정의(WP-9), CPU5 CSFR 창 처리 |
 | 3 | 플래시 | 모든 칩, PFLASH와 DFLASH, PPU/CDSP HEX | TC27x와 TC36x의 PFLASH(TC3xx 로더는 `e1f1952`). DFLASH와 UCB 없음 | 칩 계열별 로더와 DFLASH 시퀀스 |
 | 4 | Live Watch | 실행 중에 전역 변수를 주기적으로 갱신(최소 200 ms, `aurix-tcf/liveWatchEvaluate`) | **구현함.** VS Code `Live Watch` 뷰(확장 `najari.probe-rs-live-watch`)가 DAP `liveWatch` 요청으로 실행 중에 갱신. 코어를 멈추지 않고 읽으며 요청당 약 50 ms. 세션 하나로 여러 코어를 볼 때는 코어마다 읽고 **Select Cores**로 고른다(확장 0.2.0, `liveWatch`의 `core` 인자) | 완료(`2561449`, 코어 선택은 확장 0.2.0) |
