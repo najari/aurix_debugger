@@ -56,10 +56,12 @@ Zed 확장은 Rust를 WASM으로 컴파일한 것이고 언어, 디버거 어댑
 | --- | --- | --- | --- |
 | 출력 이벤트의 `group: "probe-rs-debug"` (DAP는 `start`·`startCollapsed`·`end`만 허용) | Zed가 이벤트를 버려 Console이 빔 | 서버 | `group`을 뺌 (`ea6d0df`) |
 | `pause` 응답의 문자열 본문 | Zed 로그 `invalid type: string ..., expected unit` | 서버 | 본문 없이 응답 (`ea6d0df`) |
-| 동시 정지에서 모든 `stopped` 이벤트가 `allThreadsStopped:false` | Zed는 `stopped`마다 상태를 새로 시작해 마지막 코어만 정지로 남김. BP에 멈춘 CPU0가 실행 중으로 보이고 콜스택 요청이 없음 | 서버 (한 세션 라우팅) | 라우팅이 코어별 정지를 기억하고, 모든 코어가 멈춘 이벤트에 `true` (`ea6d0df`) |
+| 동시 정지에서 모든 `stopped` 이벤트가 `allThreadsStopped:false` | Zed는 `stopped`마다 상태를 새로 시작해 마지막 코어만 정지로 남김. BP에 멈춘 CPU0가 실행 중으로 보이고 콜스택 요청이 없음 | 서버 (한 세션 라우팅) | 라우팅이 코어별 정지를 기억한다. 그룹이 멈춘 마지막 코어의 이벤트로 모든 코어가 멈추면, 스스로 멈춘 코어(CPU0)의 정지를 `allThreadsStopped:true`로 한 번 더 보낸다 (`ea6d0df`, `7b97cbb`) |
 | 확장이 요청을 항상 `launch`로 보냄 | `attach` 설정인데 probe-rs가 칩을 리셋 | 확장 `src/lib.rs` | 설정의 `request`를 따르도록 수정 ([zed/probe-rs-extension](../zed/probe-rs-extension/README.md)) |
 
-VS Code는 위 세 서버 문제를 그냥 넘어갔다. 이제 VS Code도 동시 정지의 마지막 이벤트에서 `allThreadsStopped:true`를 받는다. 규격에 맞는 값이지만 VS Code 화면은 아직 다시 확인하지 않았다.
+VS Code는 위 세 서버 문제를 그냥 넘어갔다. 처음 수정(`ea6d0df`)은 그룹이 멈춘 마지막 코어(CPU2, 초점 유지 표시)의 이벤트에 `true`를 넣었는데, VS Code는 이 값을 받으면 모든 콜스택을 비우고 그 이벤트의 스레드만 다시 읽는다. 그래서 VS Code에서 CPU0의 현재 줄이 사라졌다. `7b97cbb`부터는 그 이벤트는 `false`로 두고 CPU0의 정지를 `true`로 다시 보낸다.
+
+2026-10-24 재확인(`7b97cbb`): VS Code 1.143은 CPU0 `paused on breakpoint`(콜스택 `square → scale → accumulate → compute`, 17번 줄 강조, `x = 2`), CPU1·2 `paused on external`, continue 뒤 `x = 3`에서도 초점 유지. Zed 1.25.3은 CPU0가 `demo.c:23`에 정지, 콜스택 표시.
 
 ## 그 밖의 관찰
 
@@ -69,8 +71,8 @@ VS Code는 위 세 서버 문제를 그냥 넘어갔다. 이제 VS Code도 동�
 
 ## 다음 단계
 
-1. VS Code 회귀 확인 (한 세션 동시 정지에서 스레드 표시와 초점)
-2. A1: Zed 포크에 디스어셈블리 패널 시제품
+1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
+2. A1: Zed 포크에 디스어셈블리 패널 시제품 (`C:\work\zed`, v1.25.3)
 3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
