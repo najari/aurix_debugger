@@ -69,7 +69,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 - 상태 묶음은 새 RPC `core/status_many` 대신 기존 `cores/status`가 `Session::status_many`를 쓴다.
 - 디버그 정보는 ELF 경로별이 아니라 코어별이다. 첫 코어와 같은 파일이면 세션 것을 쓰고, 다른 파일이면 코어마다 읽는다.
 - 일부 소스 위치 조회(`source_location`)는 첫 코어의 디버그 정보를 쓴다.
-- 구현하지 않은 것: FR-M15(RTT·semihosting 코어 구분).
+- FR-M15(RTT·semihosting 코어 구분)는 `5ba7cc6`에서 마쳤다. RTT 연결과 읽기는 이미 코어별이었고, launch가 "첫 RTT 코어"만 보던 세 곳(옛 RTT 제어 블록 지우기, 이미지 검사, 플래시 때 RTT 클라이언트)을 고쳤다. 이제 RTT를 켠 코어 전부에 대해 지우고 검사하며, 플래시는 그 이미지를 실행하는 코어의 클라이언트를 쓴다(맞는 코어가 없으면 첫 RTT 코어). semihosting 핸들은 서버가 코어별 상태로 들고 있어 겹치지 않는다. TriCore는 RTT를 쓰지 않아 실기로는 회귀 없음만 확인했고(한 세션 시험·dap_stepin·dap_reset), 코어를 고르는 부분은 단위 테스트 2개로 확인했다.
 - 다른 아키텍처도 코드상 코어 여러 개를 받지만 실기 시험은 TriCore만 했다.
 
 **알려진 제한**
@@ -81,7 +81,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 
 **TC36x 실기** (TriBoard TC3X5, `bf53965` 커밋 메시지 기준): CPU0–CPU1 한 세션을 `allStop` 켜고 끈 두 경우로, 플래시 BP·콜스택·liveWatch·pause·다른 BP까지 continue를 CPU0에서 확인했다. 시험 보드의 CPU1은 앱이 시작하지 않아 부트 정지 상태라 잠든 스레드로 보이고 pause가 거절된다. 이 변경 뒤 TC275에서도 회귀 20묶음과 한 세션 시험 7모드가 통과했다.
 
-**남은 작업**: FR-M15(다른 아키텍처용 RTT·semihosting 코어 구분). TC36x에서 두 코어가 모두 도는 앱으로 동시 정지를 보는 시험은 그런 시험 이미지가 있을 때 한다.
+**남은 작업**: RTT를 쓰는 다른 아키텍처(ARM, RISC-V) 보드에서 코어 둘의 RTT를 동시에 확인하는 실기 시험. TC36x에서 두 코어가 모두 도는 앱으로 동시 정지를 보는 시험은 그런 시험 이미지가 있을 때 한다.
 
 ## 1. 개요
 
@@ -122,7 +122,7 @@ DAP 서버 코드의 단일 코어 전제는 아래와 같다(`probe-rs-tools/sr
 | 디버그 정보 | 세션에 하나(첫 코어의 `programBinary`) | 코어마다(같은 ELF면 공유) |
 | 소스 BP 해석 | 세션 수준 `resolve_source_breakpoints` | ELF별로 해석해 코어마다 건다 |
 | launch·attach·restart | 첫 코어만: 플래시, `entryFunction`, `allStop`, `stepInterrupts`, `resetBehavior`, `perfWindow`, SVD | 코어 전부 |
-| RTT·semihosting | RTT는 첫 RTT 코어만. semihosting 핸들 번호가 코어마다 1024부터 | 코어 구분(TriCore는 RTT·semihosting을 쓰지 않아 1차는 검사만) |
+| RTT·semihosting | RTT는 첫 RTT 코어만(launch의 제어 블록 지우기·이미지 검사·플래시). semihosting 핸들 번호가 코어마다 1024부터 | 코어 구분(TriCore는 RTT·semihosting을 쓰지 않아 1차는 검사만). 마침: `5ba7cc6` |
 
 이미 되는 것도 많다.
 
