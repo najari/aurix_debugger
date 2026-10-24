@@ -4,9 +4,6 @@
 //
 //   node dap_onesession.js            allStop: true (T-M1..T-M6, T-M9, T-M10)
 //   node dap_onesession.js noallstop  allStop: false (T-M7)
-//   node dap_onesession.js samecode   T-M8 (start_in_flash --core 0/1/2 before, probe-rs reset after)
-//   node dap_onesession.js restart    T-M11 restart; reset: T-M11 application reset (sw_reset)
-//   node dap_onesession.js kill       T-M12 with the PF1 demo (dap_kill.js CORES=3 for the RAM demo)
 'use strict';
 const { spawn, execFileSync } = require('child_process');
 const DEMO = 'C:\\work\\aurix_tcf_demo';
@@ -23,7 +20,7 @@ const now = () => `${String(Date.now() - t0).padStart(6)} ms`;
 class Dap {
     constructor() {
         this.p = spawn(PROBE_RS, ['dap-server'], { stdio: ['pipe', 'pipe', 'inherit'] });
-        this.seq = 1; this.buf = Buffer.alloc(0); this.pending = new Map(); this.waiters = []; this.log = [];
+        this.seq = 1; this.buf = Buffer.alloc(0); this.pending = new Map(); this.waiters = []; this.log = []; this.out = [];
         this.p.stdout.on('data', (c) => this.onData(c));
     }
     onData(c) {
@@ -36,6 +33,7 @@ class Dap {
             if (m.type === 'response') { const r = this.pending.get(m.request_seq); this.pending.delete(m.request_seq); if (r) r(m); continue; }
             if (m.type !== 'event') continue;
             if (m.event === 'output') {
+                this.out.push(m.body.output);
                 if (/rror|All-stop/.test(m.body.output)) console.log(`  [output] ${m.body.output.trim().slice(0, 200)}`);
             } else if (m.event === 'stopped' || m.event === 'continued') {
                 this.log.push({ event: m.event, thread: m.body.threadId, reason: m.body.reason, body: m.body, at: Date.now() });
@@ -51,12 +49,12 @@ class Dap {
     event(name, thread, ms) {
         return new Promise((resolve) => { const w = { name, thread, resolve: (e) => { clearTimeout(t); resolve(e); } }; const t = setTimeout(() => { const i = this.waiters.indexOf(w); if (i >= 0) this.waiters.splice(i, 1); resolve(null); }, ms); this.waiters.push(w); });
     }
-    async attach(allStop) {
+    async attach(allStop, extra = {}) {
         this.capabilities = (await this.send('initialize', { adapterID: 'probe-rs-debug', linesStartAt1: true, columnsStartAt1: true, pathFormat: 'path' })).body;
         const initialized = this.event('initialized', undefined, 60000);
         const r = await this.send('attach', {
             cwd: DEMO, chip: 'TC275', probe: '058b:0000', allStop,
-            coreConfigs: [0, 1, 2].map((coreIndex) => ({ coreIndex, programBinary: ELF })),
+            coreConfigs: [0, 1, 2].map((coreIndex) => ({ coreIndex, programBinary: ELF, ...(extra[coreIndex] || {}) })),
             consoleLogLevel: 'Console',
         });
         if (!r.success) throw new Error(`attach: ${r.message} ${JSON.stringify(r.body)}`);
@@ -396,6 +394,50 @@ async function restart() {
     check('T-M11 routing put back after disconnect', trcs(e) === DEFAULT_TRC, trcs(e));
 }
 
-({ noallstop: noAllStop, samecode: sameCode, reset: resetApp, restart, kill: killed }[process.argv[2]] || allStop)()
+// perfWindow per core in one session: CPU0 counts from square to the return in scale (24
+// instructions per compute call, as dap_perf.js), CPU2 has a window that cannot be resolved.
+async function perf() {
+    const COMPUTE = 0x8021c07e;
+    const s = new Dap();
+    await s.attach(true, { 0: { perfWindow: { start: 'square', stop: '0x8021c024' } }, 2: { perfWindow: { start: 'nosuchfunction', stop: 'square' } } });
+    await sleep(1000);
+    const said = s.out.filter((o) => /perfWindow|Performance counters/.test(o)).map((o) => o.trim());
+    check('perfWindow messages name their core', said.some((o) => /Performance counters of core 0 count from square/.test(o)) && said.some((o) => /perfWindow` of core 2 is ignored/.test(o)) && !said.some((o) => /core 1/.test(o)), said.join(' | ').slice(0, 300));
+    const counters = async (thread) => {
+        const top = await s.top(thread);
+        const sc = await s.send('scopes', { frameId: top.id });
+        const regs = sc.body.scopes.find((x) => /egister/.test(x.name));
+        const vars = await s.send('variables', { variablesReference: regs.variablesReference });
+        let all = vars.body.variables;
+        // The counters may be in a group of their own (Performance).
+        for (const v of vars.body.variables.filter((x) => x.variablesReference && /erform/.test(x.name))) {
+            all = all.concat((await s.send('variables', { variablesReference: v.variablesReference })).body.variables);
+        }
+        const value = (name) => { const v = all.find((x) => x.name.toLowerCase() === name); return v ? Number(v.value) : undefined; };
+        return { icnt: value('icnt'), cctrl: value('cctrl'), ccnt: value('ccnt') };
+    };
+    let stops = s.stops([0, 1, 2]);
+    await s.send('setInstructionBreakpoints', { breakpoints: [{ instructionReference: hex(COMPUTE) }] });
+    await stops;
+    const i0 = (await counters(0)).icnt;
+    const c1 = await counters(1);
+    const runs = [];
+    for (let k = 0; k < 2; k++) {
+        stops = s.stops([0, 1, 2]);
+        await s.send('continue', { threadId: 0 });
+        await stops;
+        runs.push((await counters(0)).icnt);
+    }
+    check('CPU0 counts 24 instructions per compute call in its window', runs[0] - i0 === 24 && runs[1] - runs[0] === 24, `icnt ${i0} -> ${runs.join(' -> ')}`);
+    check('CPU1 frames show the counters of CPU1', c1.icnt !== undefined && c1.cctrl !== undefined, JSON.stringify(c1));
+    await s.send('setInstructionBreakpoints', { breakpoints: [] });
+    for (const t of [0, 1, 2]) await s.send('continue', { threadId: t });
+    await sleep(500);
+    await s.send('disconnect', { terminateDebuggee: false });
+    await sleep(1000);
+    check('all cores run after disconnect', cpus(dump()).every((c) => !halted(c)), states(dump()));
+}
+
+({ noallstop: noAllStop, samecode: sameCode, reset: resetApp, restart, kill: killed, perf }[process.argv[2]] || allStop)()
     .then(() => { console.log(`${results.filter((x) => !x).length} check(s) failed`); setTimeout(() => process.exit(0), 300); })
     .catch((e) => { console.log(`ERROR: ${e.stack}`); console.log(`${results.filter((x) => !x).length} check(s) failed`); process.exit(2); });

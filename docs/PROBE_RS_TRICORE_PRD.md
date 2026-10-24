@@ -107,7 +107,7 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 - **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. 시험 보드에서 실행하지 말 것.
 - **MCD 프로브**: 서버의 첫 장치 · 첫 코어만 연다. 맵 0만 지원한다(맵 1 · 15는 0x8D로 거부). 원본 Infineon `mcdxdas.dll`로는 시험하지 않았다.
 - **VS Code 설정**: 코어별 `launch.json`(CPU0–CPU2와 compound) · `tasks.json`을 이 저장소의 `m25_tcf/examples/aurix_tcf_demo`에 옮겼다(`8e849cc`).
-- **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 그룹 라인은 break-out 펄스를 싣는다(`d7d32e7`). BP·`debug` 명령은 하드웨어로 나머지를 바로 멈추고, pause와 데이터 watchpoint의 정지는 펄스가 없어 세션이 나머지를 소프트웨어로 멈춘다(pause는 같은 요청 안, watchpoint는 정지를 확인할 때 수십 ms 안). 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어에서 continue). 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다. 이전 버전의 레벨 라우팅은 그룹 코어가 둘 이상일 때 앱 리셋 뒤 장치를 잠갔다(부트 정지 상태의 CPU1이 라인을 잡아 CPU0을 시작 소프트웨어에서 멈춤). 잠긴 장치는 `probe-rs reset --chip TC275 --connect-under-reset`로 살린다(`63d721a`).
+- **동시 정지 제한**: `allStop`(0.6)을 켠 코어끼리만 함께 멈춘다. 그룹 라인은 break-out 펄스를 싣는다(`d7d32e7`). BP·`debug` 명령·데이터 watchpoint는 하드웨어로 나머지를 바로 멈추고(`ca86354`), pause(정지 요청)는 펄스가 없어 세션이 같은 요청 안에서 나머지를 소프트웨어로 멈춘다. 자기 BP에 멈춘 코어는 다른 코어를 continue해도 남는다(그 코어에서 continue). 세션이 attach하는 동안 이미 돌던 그룹 코어가 잠깐 멈췄다가 다시 돈다. 이전 버전의 레벨 라우팅은 그룹 코어가 둘 이상일 때 앱 리셋 뒤 장치를 잠갔다(부트 정지 상태의 CPU1이 라인을 잡아 CPU0을 시작 소프트웨어에서 멈춤). 잠긴 장치는 `probe-rs reset --chip TC275 --connect-under-reset`로 살린다(`63d721a`).
 - **보완 기능 제한**: 데이터 BP는 주소만 비교한다(DAP `condition`은 거부). Watch 표현식의 데이터 BP는 변수 이름일 때 되고, 코어가 멈춰 있어야 한다. 성능 카운터는 DAP 레지스터 뷰에서 읽기만 되고, 쓰기는 GDB나 probe-rs API로 한다. 리셋은 상태를 확인할 때(폴링) STM0 타이머가 줄어든 것으로 감지한다. 트리거 유닛의 BP는 리셋에도 남아 놓치지 않는다. 유닛이 모자라 `debug` 명령이 된 BP만, 시작 코드가 PSPR에 코드를 복사한 직후 세션이 알아채기 전(수십 ms)에 그 자리를 지나가면 놓친다. 이 틈은 하드웨어로 막을 수 없다: 리셋 시작에서 멈출 트리거 유닛이 남아 있지 않고(유닛이 모자란 경우이므로), 리셋 직후 정지(`OSTATE.HARR`)는 접근 하드웨어가 JTAG으로 요청하며, 시작에서 멈춰도 코드 복사는 그 뒤에 일어난다. 중요한 BP는 먼저 걸어 유닛을 쓰게 하면 된다.
 
 ### 0.6 PRD 이후 추가한 기능
@@ -143,6 +143,7 @@ VS Code 디버깅을 aurix-tcf 확장 수준에 맞추려고 더한 기능이다
 | `9e035fc` `9e23c7a` | DAP `singleThread` continue(그 코어만 실행, RPC `core/run_alone`). 플래시가 켜진 launch에서 두 ELF가 같은 바이트나 같은 PFLASH 섹터를 쓰면 쓰기 전에 거부 | `singleThread`로 CPU0만 실행, CPU1·CPU2 멈춘 채. 같은 섹터 ELF 두 개의 launch 거부, 코어 그대로 |
 | `84a45aa` | 강제 종료 대비 기록에 트리거 유닛(`TRnEVT`)과 그룹 라우팅(`CBS_TRCn`, `EXEVT`)도 넣음(항목: 주소, 원래 값, 쓴 값). 다음 세션이 값이 그대로인 곳만 되돌림. 이전 형식 기록도 읽음 | DAP 서버 강제 종료 뒤 다음 세션: 트리거 유닛 0개, TRC0 0x2로 복원, `debug` 명령 4개 복원, 세 코어 실행(코어 하나·세 코어 세션) |
 | `d7d32e7` `7036cc3` | 동시 정지 라인에 정지 상태 대신 break-out 펄스(`CBS_TRCn` BRKOUT 7:4 + BRKIN 23:20, 실측: 0–8·20–27 비트 쓰기 가능, 7:4 경로는 펄스, `SUSP` 이벤트는 펄스 없음, break-in은 에지). BP `TRnEVT` 0x100A, `SWEVT` 0x0A. 정지 요청은 펄스가 없어 그룹 가입 시 도는 멤버를 소프트웨어로 멈추고, 함께 돈 동료 목록을 run마다 누적 | 그룹 3코어 + 앱 리셋: 잠기지 않음(3 ms, 이전 라우팅은 20초 넘게 잠김). T-M11 `allStop` 앱 리셋 통과. 회귀 20묶음, `dap_allstop` 10/10, 한 세션 시험 전체 통과 |
+| `ca86354` `eb4f09c` | 데이터 watchpoint 정지도 펄스로 전파(`TRnEVT` 0x22, `SUSP` + `BOD` 0은 펄스를 낸다고 실측), `SWEVT` 0x2A 복귀. 동료가 자기 watchpoint에 멈춘 판단은 걸린 watchpoint가 있을 때만. `perfWindow` 메시지에 코어 번호 | `dap_watch allstop` 10/10, 회귀 20묶음, 한 세션 시험 전체, 한 세션 `perf`(코어별 성능 창) 통과 |
 
 그 밖에 명령어 단위 스텝, 명령어 BP, Memory Inspector, `setVariable`, Restart, `launch`와 플래시 쓰기, GDB 서버를 실기로 확인했다.
 

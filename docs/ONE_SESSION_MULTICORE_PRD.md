@@ -19,6 +19,8 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 | `84a45aa` | FR-M11 | 저널이 `debug` 명령 외에 세션이 켠 트리거 유닛(`TRnEVT`)과 그룹 라우팅(`CBS_TRCn`, `EXEVT`)도 기록. 다음 세션이 그 값이 그대로인 곳만 되돌림 |
 | `d7d32e7` | 동시 정지 | 그룹 라인에 정지 상태(레벨) 대신 break-out 펄스를 싣는다(`CBS_TRCn` BRKOUT 7:4 + BRKIN 23:20 = 라인 7). 앱 리셋 뒤 장치 잠김 해결 |
 | `7036cc3` | 시험 도구 | `trigger_switch mask`·`brkout`, `sw_reset --trc` |
+| `ca86354` | 동시 정지 | 데이터 watchpoint 정지도 펄스로 전파(`TRnEVT` 0x22: `BOD` 0, `SUSP` 유지), `SWEVT` 0x2A로 복귀. 동료가 자기 watchpoint에 멈춘 것은 `SUSP` 흔적과 걸린 watchpoint가 함께 있을 때만으로 판단 |
+| `eb4f09c` | 5.5 | `perfWindow` 실패 메시지에 코어 번호 |
 
 데모와 확장(이 저장소): `TC275: probe-rs CPU0–CPU2 one session` 설정(`m25_tcf/examples/aurix_tcf_demo/.vscode/launch.json`), Live Watch 확장 0.2.0(`vscode/probe-rs-live-watch`: 코어마다 읽기, **Select Cores**).
 
@@ -39,13 +41,14 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 | T-M11 | 통과 | restart: 세 코어 라우팅과 BP가 되살아나고 pause·continue 정상. 앱 SW 리셋(`allStop` 켬): 33 ms 뒤 다시 접근되고, BP가 세 코어에 남고 CPU0이 시작 코드에서 정지, 라우팅 유지, 콘솔 알림 |
 | T-M12 | 통과 | 강제 종료 뒤 다음 세션이 `debug` 명령 4개를 되돌리고, 트리거 유닛을 지우고(0,0,0), 라우팅을 원래 값(TRC0 0x2)으로 돌린다. 세 코어 실행 |
 | singleThread | 통과 | 세 코어가 멈춘 상태에서 CPU0 `singleThread` continue: CPU0만 실행, `allThreadsContinued: false`. 이어서 CPU1 일반 continue에 CPU1·CPU2 실행 |
+| perfWindow | 통과 | CPU0 성능 창(`square`–`0x8021c024`)이 `compute` 1회에 24명령, CPU2의 잘못된 설정은 "`perfWindow` of core 2 is ignored", CPU1 프레임은 CPU1의 카운터 |
 | 섹터 겹침 | 통과 | `demo_flash.elf`와 그 사본을 CPU0·CPU1에 준 launch가 쓰기 전에 거부되고 코어는 그대로 실행 |
 | T-M13 | 통과 | 실행 중 폴링 1회: 코어별 6요청 24.8 ms → 묶음 1요청 11.5 ms(`poll_cost`) |
 | T-M14 | 통과 | 코어 하나 설정 회귀 20묶음 통과 |
 | T-M15 | 통과 | VS Code에서 설정 하나로: 호출 스택에 스레드 3개(`0-TC275`…`2-TC275`), 17행 BP에 CPU0 정지와 콜스택·변수, CPU1·CPU2 `external`, F10 step은 CPU0만, continue 뒤 BP 재적중, 스레드 행의 continue·pause가 그 코어(CPU0은 BP에 남음), Live Watch 코어별 묶음과 Select Cores |
 | FR-M13 | 통과 | `liveWatch` `core` 0·1·2·없음, 코어 계속 실행. 확장 로직은 가짜 `vscode` 모듈로 9항목 |
 
-단위 테스트: probe-rs 563(TriCore 68), probe-rs-tools 218, probe-rs-debug 113, probe-rs-infineon 56(mcd 65). clippy 경고 없음. 펄스 라우팅 뒤 회귀 20묶음, 한 세션 시험 전 모드, `dap_allstop`(세션 3개) 10/10, `dap_swbp allstop` 5/5 통과.
+단위 테스트: probe-rs 564(TriCore 69), probe-rs-tools 218, probe-rs-debug 113, probe-rs-infineon 56(mcd 65). clippy 경고 없음. 펄스 라우팅 뒤 회귀 20묶음, 한 세션 시험 전 모드, `dap_allstop`(세션 3개) 10/10, `dap_swbp allstop` 5/5 통과.
 
 **시험 중 찾아 고친 것**
 
@@ -56,6 +59,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 - 그룹에 코어가 둘 이상이면 앱 리셋 뒤 장치가 잠겼다(TAS `DEVICE_CONNECT` 0x46). 레벨 라우팅이 리셋 뒤에도 남고, 부트 정지 상태의 CPU1이 라인 7을 활성으로 잡아 시작 소프트웨어를 돌던 CPU0을 멈췄다(DAP 없이 `sw_reset --group 2`로도 재현). 실험으로 `CBS_TRCn` 7:4가 break-out 펄스 경로임을 확인하고 펄스 라우팅으로 바꿨다(`d7d32e7`). 복구 수단인 `--connect-under-reset`도 TAS 프로브에 전달되게 고쳤다(`63d721a`).
 - 펄스 라우팅에서 정지 요청(pause, attach)은 펄스를 만들지 않는다. 그래서 (1) 세션 3개 `dap_allstop`이 6번 중 2번 실패했다. CPU1 pause 뒤 CPU2가 잠깐 더 도는 사이에 "함께 돈 동료" 목록에서 CPU1이 빠졌다. 목록을 run마다 새로 시작해 누적하게 고쳤다. (2) 정지한 코어가 그룹에 들어갈 때 도는 멤버를 소프트웨어로 멈추게 했다. 멈추지 않으면 다른 코어가 멈춘 동안 도는 코어가 워치독 서비스를 놓쳐 SMU 리셋이 났다(모두 `d7d32e7`).
 - 강제 종료된 세션의 트리거 유닛이 남아 다음 세션 뒤에도 코어가 멈췄다(코어 하나 세션도 같음). 저널에 넣었다(`84a45aa`).
+- 데이터 watchpoint에 break-out을 켜자 `dap_watch allstop`이 5번 중 4번 실패했다. `start_in_flash`의 정지가 남긴 `PREVSUSP`가 정지 요청으로는 바뀌지 않아, 그룹 가입 때 요청으로 멈춘 CPU0이 "자기 watchpoint에 멈춤"으로 보여 함께 실행되지 않았다. 걸린 watchpoint가 있을 때만 그렇게 보게 고쳤다(`ca86354`, 고친 뒤 10/10).
 
 **설계와 다른 점**
 
@@ -69,7 +73,7 @@ WP-M1–WP-M7을 9절의 권장안대로 구현했고, 실기 시험 T-M1–T-M1
 
 **알려진 제한**
 
-- 데이터 watchpoint의 정지는 펄스를 만들지 않는다(`SUSP`로 정지를 가려내므로). 다른 코어는 세션이 그 정지를 볼 때(폴링, 수십 ms 안) 소프트웨어로 멈춘다. BP·`debug` 명령·step은 하드웨어로 바로 멈춘다.
+- BP·`debug` 명령·데이터 watchpoint의 정지는 하드웨어 펄스로 나머지를 바로 멈춘다. pause(정지 요청)는 펄스가 없어 세션이 같은 요청 안에서 나머지를 소프트웨어로 멈춘다.
 - `dap_watch allstop`(세션 3개, 데이터 watchpoint)에서 드물게 SMU(워치독) 리셋이 난다. 바꾸기 전 빌드와 새 빌드가 각각 40번 중 1번으로 같다(세션들이 붙는 동안, CPU0 세션 혼자 붙은 직후). 이번 변경과 관계없는 시험 환경의 문제다.
 - 이전 버전이 남긴 레벨 라우팅(`CBS_TRCn` 0x700007)이 세션 없는 코어에 남아 있으면 엉뚱한 external 정지가 날 수 있다. 버전을 바꾼 뒤 한 번 `probe-rs reset`한다.
 - VS Code의 Stop(disconnect)은 멈춰 있던 코어를 멈춘 채 둔다(업스트림과 코어 하나 세션도 같다). 끝내기 전에 continue한다.
