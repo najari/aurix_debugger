@@ -139,6 +139,29 @@
       "consoleLogLevel": "Console"
     },
     {
+      "type": "probe-rs-debug",
+      "request": "attach",
+      "name": "TC36x: probe-rs CPU0–CPU1 one session",
+      "preLaunchTask": "TC36x: probe-rs start flash demo on CPU0",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "D:\\work\\claude\\probe-rs\\target\\release\\probe-rs.exe",
+      "runtimeArgs": ["dap-server"],
+      "chip": "TC36x",
+      "probe": "058b:0000",
+      "allStop": true,
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash_tc36x.elf"
+        },
+        {
+          "coreIndex": 1,
+          "programBinary": "${workspaceFolder}\\build\\demo_flash_tc36x.elf"
+        }
+      ],
+      "consoleLogLevel": "Console"
+    },
+    {
       "type": "aurix-tcf",
       "request": "launch",
       "name": "TC275: aurix-tcf RAM CPU0",

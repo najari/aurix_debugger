@@ -18,7 +18,7 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `build.ps1` | build with the AURIX GCC (`-O0 -g3`) → `build/demo.elf` |
 | `tools/ram_load.js` | save state, load `demo.elf` into RAM, PC = `main` |
 | `tools/ram_restore.js` | restore the saved registers + RAM |
-| `.vscode/launch.json` | one set of configurations per board, named `TC275: ...` and `TC36x: ...`. TC275: aurix-tcf RAM and two PFLASH configurations; probe-rs PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, a compound that starts all three, and one session for all three. TC36x: probe-rs PFLASH and RAM configurations for CPU0 |
+| `.vscode/launch.json` | one set of configurations per board, named `TC275: ...` and `TC36x: ...`. TC275: aurix-tcf RAM and two PFLASH configurations; probe-rs PFLASH and RAM configurations for CPU0, one each for CPU1 and CPU2, a compound that starts all three, and one session for all three. TC36x: probe-rs PFLASH and RAM configurations for CPU0, and one session for CPU0 and CPU1 |
 | `src/reset_start.S`, `src/reset_demo.c`, `reset_demo.ld`, `build_reset.ps1` | the reset image with `core0_main` (see below; needs a PF0 change) |
 | `tools/pf0_jump_hex.py` | HEX files that point the PF0 reset jump at the reset image, and put it back |
 | `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks, per board |
@@ -105,6 +105,7 @@ TC36x: use the TC36x configuration`).
 | `TC275: probe-rs CPU0–CPU2 one session` | one session for the three cores (`preLaunchTask` as `PFLASH CPU0`): a thread per core in the call stack view, one breakpoint list for all three, one probe connection and one status request per poll |
 | `TC36x: probe-rs PFLASH CPU0` | `preLaunchTask` writes `demo_flash_tc36x.elf` with probe-rs (PF1 `0x80400000` only, skipped when it is already there) and halts CPU0 at `main`; then attaches to CPU0 |
 | `TC36x: probe-rs RAM CPU0` | the same `demo.elf` as on the TC275 (its PSPR and DSPR addresses exist on the TC36x CPU0), written into RAM, CPU0 halted at `main` |
+| `TC36x: probe-rs CPU0–CPU1 one session` | one session for both cores (`preLaunchTask` as `TC36x: probe-rs PFLASH CPU0`), with `allStop`. On the test board CPU1 is in boot halt (below): its thread shows as sleeping |
 
 On the TC36x (TriBoard TC3X5; JTAG ID `0x10209083`, detected as `TC36x`; 2
 cores, DSPR 192 KiB and PSPR 32 KiB each, PFLASH PF0 `0x80000000` and PF1
@@ -115,10 +116,15 @@ cores, DSPR 192 KiB and PSPR 32 KiB each, PFLASH PF0 `0x80000000` and PF1
   `0x80400000` is in the part of PF1 (`0xA0400000..0xA04FFFFF`) that was erased
   on the test board; `pflash_usage` (probe-rs-infineon example) shows which
   sectors hold data.
-- CPU1 stays in boot halt (`SYSCON.BHALT`) until the application starts it. A
-  halt of such a core fails with `Core 1 is in boot halt`, so the TC36x
-  configurations do not set `allStop` and have no CPU1 configuration; flashing
-  leaves such a core alone.
+- CPU1 stays in boot halt (`SYSCON.BHALT`) until the application starts it
+  (the application on the test board does not). Such a core runs no code and
+  takes no halt request: probe-rs reports it as sleeping (`The core is asleep.`,
+  with a notice in the debug console), a halt leaves it as it is, a pause of
+  its thread answers `Core 1 was not paused: The core is asleep.` and a step
+  `Core 1 is in boot halt`. The other core debugs as usual, also with
+  `allStop`; once the application starts CPU1, its thread runs and halts like
+  any other. The debugger does not start the core itself. Flashing leaves such
+  a core alone.
 - The peripheral view uses the bundled `TC36XPD` SVD file.
 
 A probe-rs session debugs the cores of its `coreConfigs`: one core (a session
