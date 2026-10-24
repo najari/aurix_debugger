@@ -1,0 +1,34 @@
+// Zed debug scenarios for the AURIX demo (A0: Zed as a probe-rs DAP client).
+// Start the probe-rs fork first: probe-rs dap-server --port 50000
+// No scenario writes the flash: they attach to the demo that is already in PF1.
+[
+  {
+    "label": "TC275: probe-rs CPU0-CPU2 one session",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC275",
+    "probe": "058b:0000",
+    "allStop": true,
+    "coreConfigs": [
+      { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" },
+      { "coreIndex": 1, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" },
+      { "coreIndex": 2, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" }
+    ],
+    "consoleLogLevel": "Console"
+  },
+  {
+    "label": "TC275: probe-rs PFLASH CPU0",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC275",
+    "probe": "058b:0000",
+    "coreConfigs": [
+      { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" }
+    ],
+    "consoleLogLevel": "Console"
+  }
+]

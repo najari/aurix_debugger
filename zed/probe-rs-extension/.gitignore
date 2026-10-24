@@ -1,0 +1,4 @@
+/target
+
+# Compiled extension
+extension.wasm
