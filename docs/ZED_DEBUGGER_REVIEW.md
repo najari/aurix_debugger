@@ -65,7 +65,7 @@ VS Code는 위 세 서버 문제를 그냥 넘어갔다. 처음 수정(`ea6d0df`
 
 ## A1: 디스어셈블리 패널 시제품
 
-Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore-disassembly), 브랜치 `tricore-disassembly`, `39f53e4`, 로컬 `C:\work\zed`) 디버그 패널에 "Disassembly" 탭을 더했고, TC275에서 동작을 확인했다.
+Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore-disassembly), 브랜치 `tricore-disassembly`, `39f53e4`·`db1bf8e`, 로컬 `C:\work\zed`) 디버그 패널에 "Disassembly" 탭을 더했고, TC275에서 동작을 확인했다.
 
 | 항목 | 내용 |
 | --- | --- |
@@ -73,9 +73,20 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 | 내용 | 선택한 프레임(없으면 첫 프레임)의 PC 앞 24개부터 명령 80개: 주소, 명령 바이트, 명령, 심볼, 소스 줄이 바뀌는 곳에 `demo.c:23` 같은 구분 |
 | PC 줄 | ▶ 표시와 강조, 열 때 PC 앞뒤로 스크롤 |
 | 갱신 | 프레임이 바뀔 때. 프레임 id는 정지마다 새로 정해져서 정지 직후 남아 있는 옛 프레임으로는 다시 요청하지 않음(정지 1번에 요청 1번) |
-| 바꾼 파일 | `project`: `Session::disassemble`, 부호 있는 오프셋의 `disassemble` 요청. `debugger_ui`: `disassembly_view.rs`, `DebuggerPaneItem::Disassembly`, `StackFrameList::current_stack_frame` |
+| 명령 BP (`db1bf8e`) | 줄 왼쪽 칸을 누르면 그 명령에 BP를 걸거나 지움(`setInstructionBreakpoints`, 어댑터가 `supportsInstructionBreakpoints`를 알릴 때). 바뀔 때마다 전체 목록을 보냄. 설정된 BP는 빨간 점, 거절됐거나 응답 전이면 흐린 점, 툴팁에 서버 메시지 |
+| 툴바 (`db1bf8e`) | 명령 단위 Step Over·Step Into(`granularity: instruction`), 앞·뒤로 40개 더 읽기(보던 자리 유지, 이미 보이는 주소와 겹치는 명령은 버림), PC로 돌아가기 |
+| 바꾼 파일 | `project`: `Session::disassemble`, 부호 있는 오프셋의 `disassemble` 요청, `Session::toggle_instruction_breakpoint`, `SetInstructionBreakpointsCommand`. `debugger_ui`: `disassembly_view.rs`, `DebuggerPaneItem::Disassembly`, `StackFrameList::current_stack_frame` |
 
-실기(TC275, CPU0–CPU2 한 세션): `demo.c:23` BP에서 `0x8021C028 ld.w d3, [a14]#-4`에 PC 표시. continue 뒤 같은 BP에서 다시 표시, step over 뒤 `0x8021C032 add d2, #1`로 이동.
+실기(TC275, CPU0–CPU2 한 세션):
+
+| 시험 | 결과 |
+| --- | --- |
+| PC 표시 | `demo.c:23` BP에서 `0x8021C028 ld.w d3, [a14]#-4`에 PC 표시. continue 뒤 같은 BP에서 다시 표시, step over 뒤 `0x8021C032 add d2, #1`로 이동 |
+| 명령 Step Over | `next` `granularity: instruction`, PC `0x8021C028` → `0x8021C02C` |
+| 명령 BP 설정 | `0x8021C030 mul d2, d3`: 코어 0·1·2에 설정(`verified: true`), continue 뒤 그 주소에서 정지 |
+| 명령 BP 해제 | 빈 목록 요청, 다음 continue는 소스 BP `0x8021C028`에서 정지 |
+| 앞·뒤 더 읽기 | `0x8021BFEE` 오프셋 -40, `0x8021C0CC` 오프셋 1로 요청, 화면 위치 유지. 데모 앞뒤는 지운 플래시라 `<not readable>` |
+| 스레드 전환 | `1-TC275`를 고르면 그 PC `0x8003A552`(PF0 보드 펌웨어) 주변을 표시, `0-TC275`로 돌아오면 `0x8021C030` |
 
 작업 중 찾은 것:
 
@@ -83,7 +94,12 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 - probe-rs는 읽을 수 없는 주소마다 긴 오류 문구를 명령 칸에 넣고 표시 힌트가 없었다. `<not readable>`과 `presentationHint: invalid`로 바꿨다(probe-rs `d6c8b63`).
 - Windows에서 Zed를 빌드하려면 Visual Studio의 Spectre 완화 라이브러리가 필요하다(`pet` 크레이트가 없으면 빌드를 멈춤). 이 PC(메모리 15.6 GB)에서는 `-j 4`로 빌드하다 메모리 부족으로 중단됐고, `-j 2`와 `CARGO_PROFILE_DEV_DEBUG=line-tables-only`로 첫 빌드 30분, 이후 다시 빌드는 약 2분 걸렸다.
 
-남은 것: 명령 단위 BP(디스어셈블리 줄에서 BP 걸기), 명령 단위 step 버튼, 위아래로 더 읽기, 다른 스레드 선택 시 확인.
+남은 것:
+
+- `disassemble` 요청에는 스레드가 없어 서버가 초점 코어(CPU0)로 보낸다. 플래시는 코어끼리 같아 문제없었지만, 코어 전용 메모리(PSPR 등)에서는 다른 코어의 내용을 보여 줄 수 있다. 서버가 `stackTrace` 응답의 `instructionPointerReference`에 `@코어`를 붙이면 해결된다(probe-rs 쪽 작업).
+- 스레드를 바꿨다 돌아오면 새로 읽어서 앞·뒤로 더 읽은 줄이 사라진다.
+- CPU1을 골랐을 때 Variables 패널은 CPU0의 값(`v`, `k`, `s`)을 그대로 보였다. CPU1 프레임에 대한 `scopes` 요청이 없었다(Zed 쪽 동작, 원인 미확인).
+- 명령 BP는 세션이 끝나면 사라진다(저장하지 않음).
 
 ## 그 밖의 관찰
 
@@ -94,7 +110,7 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 ## 다음 단계
 
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
-2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`). 명령 단위 BP·step은 남음
+2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`)
 3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
