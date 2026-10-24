@@ -96,10 +96,28 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 
 남은 것:
 
-- `disassemble` 요청에는 스레드가 없어 서버가 초점 코어(CPU0)로 보낸다. 플래시는 코어끼리 같아 문제없었지만, 코어 전용 메모리(PSPR 등)에서는 다른 코어의 내용을 보여 줄 수 있다. 서버가 `stackTrace` 응답의 `instructionPointerReference`에 `@코어`를 붙이면 해결된다(probe-rs 쪽 작업).
+- ~~`disassemble` 요청이 초점 코어로 감~~ 고침(probe-rs `18f99ec`, Zed `82e6980`, 아래).
 - 스레드를 바꿨다 돌아오면 새로 읽어서 앞·뒤로 더 읽은 줄이 사라진다.
 - CPU1을 골랐을 때 Variables 패널은 CPU0의 값(`v`, `k`, `s`)을 그대로 보였다. CPU1 프레임에 대한 `scopes` 요청이 없었다(Zed 쪽 동작, 원인 미확인).
 - 명령 BP는 세션이 끝나면 사라진다(저장하지 않음).
+
+### 코어별 디스어셈블리와 명령 BP (probe-rs `18f99ec`, Zed `82e6980`)
+
+`disassemble` 요청에는 스레드가 없어서, 한 세션 멀티코어에서는 서버가 초점 코어(CPU0)로 보냈다. 플래시는 코어끼리 같아 결과가 맞았지만, 코어 전용 메모리(PSPR 등)였다면 다른 코어의 내용을 보여 줬을 것이다.
+
+- 서버: `stackTrace` 응답의 `instructionPointerReference`에 `@코어`를 붙인다(`0x8003cc80@1`). 변수의 `memoryReference`와 같은 방식이고, 그 참조로 오는 `disassemble`은 해당 코어로 간다.
+- 서버: 명령 BP는 참조에 코어가 붙어 있으면 그 코어에만, 없으면 모든 코어에 건다. 응답은 요청 순서대로 합친다.
+- 서버: 명령 BP의 `offset`(바이트)을 무시하고 있었다. VS Code 디스어셈블리 뷰는 "읽은 기준 참조 + 오프셋"으로 BP를 보내므로, 지금까지는 기준 주소에 걸렸을 것이다. 이제 더한다.
+- Zed: 앞·뒤 더 읽기를 화면 첫·끝 주소가 아니라 프레임의 참조와 명령 오프셋으로 요청한다. 참조 앞부분의 숫자를 PC로 읽는다.
+
+| 시험 (TC275, CPU0–CPU2 한 세션) | 결과 |
+| --- | --- |
+| CPU1 선택 | `disassemble 0x8003cc80@1`, 더 읽기도 같은 참조에 오프셋 -64, 56. 받은 명령이 빈틈없이 이어짐, PC 표시 |
+| CPU0 | `0x8021c028@0`, PC 표시 |
+| Zed 명령 BP(코어 없음) | `0x8021C02C`가 코어 0·1·2에 설정, 해제 |
+| DAP 스크립트: `0x8021c028@0` + `offset: 8` | `0x8021c030`이 코어 0에만 설정(`cores 0`), CPU0이 그 주소에서 정지 |
+
+단위 테스트: probe-rs dap_server 113개(새 2개), Zed `parse_address` 1개. clippy `-D warnings`는 mcd 켬·끔 모두 통과. VS Code 디스어셈블리 뷰로는 아직 확인하지 않았다.
 
 ## 그 밖의 관찰
 
@@ -110,7 +128,7 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 ## 다음 단계
 
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
-2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`)
+2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`). VS Code 디스어셈블리 뷰 재확인은 남음
 3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
