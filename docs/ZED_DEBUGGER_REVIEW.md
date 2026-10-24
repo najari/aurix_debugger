@@ -65,7 +65,7 @@ VS Code는 위 세 서버 문제를 그냥 넘어갔다. 처음 수정(`ea6d0df`
 
 ## A1: 디스어셈블리 패널 시제품
 
-Zed v1.25.3을 포크해(`C:\work\zed`, 브랜치 `tricore-disassembly`, `39f53e4`) 디버그 패널에 "Disassembly" 탭을 더했고, TC275에서 동작을 확인했다.
+Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore-disassembly), 브랜치 `tricore-disassembly`, `39f53e4`, 로컬 `C:\work\zed`) 디버그 패널에 "Disassembly" 탭을 더했고, TC275에서 동작을 확인했다.
 
 | 항목 | 내용 |
 | --- | --- |
