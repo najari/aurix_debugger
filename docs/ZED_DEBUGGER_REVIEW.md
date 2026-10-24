@@ -63,6 +63,28 @@ VS Code는 위 세 서버 문제를 그냥 넘어갔다. 처음 수정(`ea6d0df`
 
 2026-10-24 재확인(`7b97cbb`): VS Code 1.143은 CPU0 `paused on breakpoint`(콜스택 `square → scale → accumulate → compute`, 17번 줄 강조, `x = 2`), CPU1·2 `paused on external`, continue 뒤 `x = 3`에서도 초점 유지. Zed 1.25.3은 CPU0가 `demo.c:23`에 정지, 콜스택 표시.
 
+## A1: 디스어셈블리 패널 시제품
+
+Zed v1.25.3을 포크해(`C:\work\zed`, 브랜치 `tricore-disassembly`, `39f53e4`) 디버그 패널에 "Disassembly" 탭을 더했고, TC275에서 동작을 확인했다.
+
+| 항목 | 내용 |
+| --- | --- |
+| 표시 조건 | 어댑터가 `supportsDisassembleRequest`를 알릴 때만 메뉴에 나옴 |
+| 내용 | 선택한 프레임(없으면 첫 프레임)의 PC 앞 24개부터 명령 80개: 주소, 명령 바이트, 명령, 심볼, 소스 줄이 바뀌는 곳에 `demo.c:23` 같은 구분 |
+| PC 줄 | ▶ 표시와 강조, 열 때 PC 앞뒤로 스크롤 |
+| 갱신 | 프레임이 바뀔 때. 프레임 id는 정지마다 새로 정해져서 정지 직후 남아 있는 옛 프레임으로는 다시 요청하지 않음(정지 1번에 요청 1번) |
+| 바꾼 파일 | `project`: `Session::disassemble`, 부호 있는 오프셋의 `disassemble` 요청. `debugger_ui`: `disassembly_view.rs`, `DebuggerPaneItem::Disassembly`, `StackFrameList::current_stack_frame` |
+
+실기(TC275, CPU0–CPU2 한 세션): `demo.c:23` BP에서 `0x8021C028 ld.w d3, [a14]#-4`에 PC 표시. continue 뒤 같은 BP에서 다시 표시, step over 뒤 `0x8021C032 add d2, #1`로 이동.
+
+작업 중 찾은 것:
+
+- Zed의 dap-types는 `instructionOffset`을 `u64`로 정의해 PC 앞쪽 명령(음수)을 요청할 수 없다. 포크에 부호 있는 요청 타입을 따로 두었다.
+- probe-rs는 읽을 수 없는 주소마다 긴 오류 문구를 명령 칸에 넣고 표시 힌트가 없었다. `<not readable>`과 `presentationHint: invalid`로 바꿨다(probe-rs `d6c8b63`).
+- Windows에서 Zed를 빌드하려면 Visual Studio의 Spectre 완화 라이브러리가 필요하다(`pet` 크레이트가 없으면 빌드를 멈춤). 이 PC(메모리 15.6 GB)에서는 `-j 4`로 빌드하다 메모리 부족으로 중단됐고, `-j 2`와 `CARGO_PROFILE_DEV_DEBUG=line-tables-only`로 첫 빌드 30분, 이후 다시 빌드는 약 2분 걸렸다.
+
+남은 것: 명령 단위 BP(디스어셈블리 줄에서 BP 걸기), 명령 단위 step 버튼, 위아래로 더 읽기, 다른 스레드 선택 시 확인.
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -72,7 +94,7 @@ VS Code는 위 세 서버 문제를 그냥 넘어갔다. 처음 수정(`ea6d0df`
 ## 다음 단계
 
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
-2. A1: Zed 포크에 디스어셈블리 패널 시제품 (`C:\work\zed`, v1.25.3)
+2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`). 명령 단위 BP·step은 남음
 3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
