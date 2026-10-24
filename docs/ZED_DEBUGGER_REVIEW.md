@@ -1,6 +1,6 @@
 # Zed 디버거 검토와 A0 실기 시험
 
-2026-10-24 · TC275 ShieldBuddy, Zed 1.25.3 (Windows), probe-rs fork `tricore` `ea6d0df`
+2026-10-24 · 원본: [Claude 문서](https://claude.ai/artifact/Gh846ob7JKdHV8Ux77HpDH) · TC275 ShieldBuddy, Zed 1.25.3 (Windows), probe-rs fork `tricore` `ea6d0df`
 
 ## 결론
 
