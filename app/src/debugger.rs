@@ -36,6 +36,7 @@ use crate::source::{SourceFile, SourceFiles};
 mod breakpoint_edit;
 mod connect;
 mod memory;
+mod os;
 mod panels;
 mod splitters;
 
@@ -135,6 +136,13 @@ pub struct Debugger {
     memory_write_input: Entity<TextInput>,
     /// What the last write did, or why it was refused.
     memory_write_note: Option<Result<String, String>>,
+    /// The OS objects of the ORTI file, and their values.
+    os: Option<aurix_debug_model::orti::OsView>,
+    os_file: Option<std::path::PathBuf>,
+    /// Why the ORTI file could not be read.
+    os_note: Option<String>,
+    /// A read of the OS attributes is under way.
+    os_busy: bool,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -195,6 +203,10 @@ impl Debugger {
             memory_focus: None,
             memory_write_input: cx.new(|cx| TextInput::new("Hex bytes, e.g. 2A 00", cx)),
             memory_write_note: None,
+            os: None,
+            os_file: None,
+            os_note: None,
+            os_busy: false,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,

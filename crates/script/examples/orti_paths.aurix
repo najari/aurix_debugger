@@ -1,0 +1,31 @@
+# The path expressions of orti_demo.ort read by liveWatch, the core running and halted (the ORTI
+# test program: zed/aurix_tcf_demo/build_orti.ps1, started with start_in_flash, RAM only).
+
+attach ../../dap-client/examples/tc275_orti_demo.json
+continue all
+expect live OsTcb[0].prio == 3 within 2s
+expect live OsTcb[2].prio == 1
+expect live OsTaskState[0] <= 3
+expect live OsRunningTcb->state == 0
+expect live OsTcb[1].activations > 0 within 3s
+expect live OsTicks > 10 within 2s
+pause 0
+wait stopped 0
+expect live OsRunningTcb->state == 0
+expect live OsCurrentTask <= 2
+expect OsRunningTcb->state == 0
+expect OsTcb[1].prio == 2
+
+# A breakpoint for one task: a condition on a path (TaskB has priority 2).
+break ../../../zed/aurix_tcf_demo/src/orti_demo.c:85 if OsRunningTcb->prio == 2
+continue 0
+wait stopped 0 reason breakpoint within 3s
+expect OsCurrentTask == 1
+expect OsTaskState[1] == 1
+step over
+wait stopped 0 reason step
+expect OsTaskState[1] == 0
+expect OsRunningTcb->state == 0
+continue 0
+wait stopped 0 reason breakpoint within 3s
+expect OsCurrentTask == 1

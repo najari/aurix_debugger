@@ -68,11 +68,7 @@ impl fmt::Display for Op {
 /// `<name> <op> <value>`: the first operator in `text` splits it.
 pub fn split_comparison(text: &str) -> Result<(String, Op, String), String> {
     let text = text.trim();
-    let Some((at, symbol, op)) = Op::ALL
-        .iter()
-        .filter_map(|(symbol, op)| text.find(symbol).map(|at| (at, *symbol, *op)))
-        .min_by_key(|(at, _, _)| *at)
-    else {
+    let Some((at, symbol, op)) = find_operator(text) else {
         return Err(format!(
             "`{text}` has no comparison: write <name> <op> <value> with ==, !=, <, <=, > or >="
         ));
@@ -86,6 +82,21 @@ pub fn split_comparison(text: &str) -> Result<(String, Op, String), String> {
         return Err(format!("`{text}` needs a value after {symbol}"));
     }
     Ok((name.to_string(), op, value.to_string()))
+}
+
+/// The first comparison operator in `text`, longest first at a place: the `>` of `->` (a
+/// pointer's member) is none.
+fn find_operator(text: &str) -> Option<(usize, &'static str, Op)> {
+    let bytes = text.as_bytes();
+    (0..text.len()).find_map(|at| {
+        if at > 0 && bytes[at] == b'>' && bytes[at - 1] == b'-' {
+            return None;
+        }
+        Op::ALL
+            .iter()
+            .find(|(symbol, _)| text[at..].starts_with(symbol))
+            .map(|(symbol, op)| (at, *symbol, *op))
+    })
 }
 
 /// `value` as an integer; a value as probe-rs shows it may carry more after a space.
@@ -175,6 +186,11 @@ mod tests {
             ("k".to_string(), Op::Eq, "3".to_string())
         );
         assert_eq!(split_comparison("v<=4").unwrap().1, Op::Le);
+        assert_eq!(
+            split_comparison("p->state >= 2").unwrap(),
+            ("p->state".to_string(), Op::Ge, "2".to_string())
+        );
+        assert_eq!(split_comparison("p->a->b==0").unwrap().0, "p->a->b");
         assert!(split_comparison("k").is_err());
         assert!(split_comparison("== 3").is_err());
         assert!(split_comparison("k ==").is_err());

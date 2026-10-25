@@ -369,6 +369,28 @@ TRACE32 갭 보완 개발지시서의 WP-1이다. 하드웨어 조건(MCDS)은 �
 
 T-C8 시간의 대부분은 상태 확인(19 ms), 프레임 풀기(67 ms, 레지스터를 하나씩 읽음), BP에서 다시 실행(40 ms, 한 명령 step 포함)이다. 디버그 빌드 서버는 지역 변수에서 약 200 ms다. T-C9의 VS Code 쪽은 이번에 확인하지 못했다: 자동화 도구로 VS Code의 명령 팔레트와 메뉴가 화면에 잡히지 않았다(키 입력 하나가 편집기에 들어가 되돌렸고, 파일은 저장되지 않았다). 서버는 VS Code가 보내는 것과 같은 DAP 필드(`condition`, `hitCondition`, `logMessage`)를 받는다. 회귀: dap_server 테스트 124개, 조건 없는 소스·데이터 BP와 allStop 정지, clippy(mcd 있고 없고).
 
+### ORTI 태스크 보기 (probe-rs `d8954dd`)
+
+TRACE32 갭 보완 개발지시서의 WP-3이다. ORTI 파일이 적은 C 경로(`OsTcb[1].prio`, `OsRunningTcb->state`)를 서버가 읽고, 앱 B의 OS 탭이 객체 종류별 표로 보인다.
+
+- **서버**: `liveWatch`와 `evaluate`가 정적 변수에서 경로를 푼다. 이름, `a.b`, `a[n]`(10진·`0x`), `p->b`, `*p`만 받고, 캐스트·산술은 "not supported: …"로 답한다. `liveWatch`는 식마다 따로 답하므로 한 식이 틀려도 나머지는 읽힌다. 멈춘 코어와 도는 코어 모두 된다. 조건은 `->`의 `>`에서 나누지 않아 `OsRunningTcb->prio == 2`가 조건이 된다. probe-rs-debug에서 `T *volatile` 포인터의 멤버를 포인터 자신의 주소에서 읽던 문제를 고쳤다(`is_pointer`가 volatile 안의 포인터를 보지 못했음).
+- **공통 크레이트**(`debug-model`의 `orti`, `path_expr`): ORTI 2.1·2.2의 VERSION, IMPLEMENTATION(CTYPE, ENUM, STRING), 객체 정의를 읽는다. 모르는 문장, 선언되지 않은 종류·속성은 경고로 건너뛰고, 닫히지 않은 주석·문자열과 잘못된 수만 오류다. `OsView`가 표를 만든다: ENUM 값은 항목 이름(목록에 없으면 수), STRING은 글 그대로, 바뀐 값 표시는 다음 값이 바뀔 때까지 유지.
+- **앱 B**: 아래 탭에 OS. "ORTI file…"로 고른 경로는 `<attach>.orti`에 남아 다음 세션에 다시 열린다(상대 경로는 attach 파일 폴더 기준, `<attach>.orti`가 ORTI 파일 자체여도 됨). 탭이 보이는 동안만 0.5초마다 한 번에 한 요청으로 읽는다. 바뀐 값은 빨간색, 읽지 못한 칸은 흐린 글씨로 이유.
+- **시험 펌웨어** `orti_demo`(RAM만, `zed/aurix_tcf_demo/build_orti.ps1`): 태스크 셋이 0.4초씩 도는 협조형 OS와 10 ms 타이머 ISR. ORTI 파일 `orti_demo.ort`는 직접 썼고, 일부러 캐스트 식(`(unsigned)OsTicks / 2`) 하나를 넣었다.
+
+실기(TC275, CPU0에 `orti_demo`):
+
+| 시험 | 결과 |
+| --- | --- |
+| T-O1 파싱 | 공통 크레이트 테스트(데모 ORTI 파일, 깨진 파일, ENUM·STRING·문자 상수) 통과 |
+| T-O2 Pause 뒤 OS 탭과 메모리 탭 | 같음: `A000` 00 = TaskA, `A002` 00 01 02, activations 3F·3E·3E, 포인터 `0x7000A008`, ticks `0x1C9F` = 7327 |
+| T-O3 태스크가 바뀔 때까지 step | `os_dispatch`(task 2, previous 1)에서: 84번 줄 Running task TaskC·상태 WAITING → 85번 줄 TaskC activations 87(빨간색) → 86번 줄 TaskC RUNNING, 실행 중 태스크 상태 RUNNING(빨간색) |
+| T-O4 지원하지 않는 식 | 캐스트 칸만 "not supported", 나머지 속성은 값이 나옴 |
+| T-O5 실행 중 | 표가 0.5초마다 바뀜. `aurix-run script/examples/orti_paths.aurix` 15/15(경로 `expect`·`expect live`, `OsRunningTcb->prio == 2` 태스크 BP) |
+| T-O6 ORTI 없음·깨진 ORTI | 없으면 "No ORTI file", 깨지면 "line 2: `0x1G` is not a number"(콘솔에도). 두 경우 모두 attach, Pause, 콜스택, 변수, step 정상 |
+
+회귀: probe-rs 바이너리 테스트 235개, lib 566개, probe-rs-debug, 공통 크레이트(debug-model 32개), 앱 9개, clippy(mcd 있고 없고). 실제 AUTOSAR OS가 낸 ORTI 파일로는 아직 시험하지 못했다. T-O6 중 Pause 직후의 Step Over 한 번이 다른 태스크의 같은 함수(66 → 67번 줄, task 2 → 0)에서 멈췄다. ORTI 없이 생긴 일이라 이번 변경과 상관없고, 루프 안 step over의 기존 동작으로 보인다.
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -391,7 +413,8 @@ T-C8 시간의 대부분은 상태 확인(19 ms), 프레임 풀기(67 ms, 레지
 12. ~~B에 메모리 쓰기(RAM만)~~ 보드에서 확인
 13. ~~RTT 입력 채널~~ 보드에서 확인(두 코어)
 14. ~~조건·횟수 BP와 로그 지점~~ 보드에서 확인(probe-rs `c18738d`, 앱 B). VS Code 화면 확인은 남음
-15. 크레이트·앱 라이선스 결정
+15. ~~ORTI 태스크 보기~~ 보드에서 확인(probe-rs `d8954dd`, 앱 B OS 탭). 실제 AUTOSAR OS의 ORTI 파일 시험은 남음
+16. 크레이트·앱 라이선스 결정
 
 ## 출처
 

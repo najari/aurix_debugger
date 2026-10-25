@@ -8,7 +8,7 @@ dependencies are serde, serde_json and [dap-types](https://github.com/zed-indust
 
 | Crate | What it holds |
 | --- | --- |
-| `aurix-debug-model` | State without I/O or UI: `reference` (addresses, the probe-rs `@core` suffix), `protocol` (probe-rs `liveWatch`, `rttWindowOpened`, the RTT events, `disassemble` with signed offsets), `disassembly` (the window around a program counter, read further on either side), `breakpoints` (instruction breakpoints, and the condition, hit count and log message of any breakpoint), `source_breakpoints` (source line breakpoints per file, with their conditions), `variables` (scopes and variables as a tree read on demand, expanded nodes kept across stops, changed values marked), `live_watch` (expressions read on every core), `memory` (a memory window read again and again through one core, changed bytes marked, base64; writes only to the TC27x RAMs), `rtt` (RTT lines per core and channel, the down channels and the `rtt write` command that sends a line to one) |
+| `aurix-debug-model` | State without I/O or UI: `reference` (addresses, the probe-rs `@core` suffix), `protocol` (probe-rs `liveWatch`, `rttWindowOpened`, the RTT events, `disassemble` with signed offsets), `disassembly` (the window around a program counter, read further on either side), `breakpoints` (instruction breakpoints, and the condition, hit count and log message of any breakpoint), `source_breakpoints` (source line breakpoints per file, with their conditions), `variables` (scopes and variables as a tree read on demand, expanded nodes kept across stops, changed values marked), `live_watch` (expressions read on every core), `memory` (a memory window read again and again through one core, changed bytes marked, base64; writes only to the TC27x RAMs), `rtt` (RTT lines per core and channel, the down channels and the `rtt write` command that sends a line to one), `orti` (an ORTI 2.1/2.2 file: the attribute declarations with their ENUM items, the OS objects; what it does not know is skipped with a warning; `OsView` turns the values read into a table per object kind, ENUM values by name, changed values marked), `path_expr` (the C paths the probe-rs fork reads: names, `a.b`, `a[n]`, `p->b`, `*p`) |
 | `aurix-dap-client` | A DAP client over TCP: requests typed with dap-types, events on a channel; threads only, no async runtime |
 | `aurix-script` | Board tests from a command file without a screen: the `aurix-run` tool (below) |
 
@@ -71,7 +71,10 @@ time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation
 (the ones not reached are skipped). Examples in `script/examples`: `demo_flash`, `conditions`
 and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
 `watch_after_break`, a data breakpoint next to an instruction breakpoint (it did not halt before
-probe-rs fork `149db65`).
+probe-rs fork `149db65`), and `orti_paths` (the ORTI demo `zed/aurix_tcf_demo/build_orti.ps1`,
+RAM only): `expect` and `expect live` on paths such as `OsTcb[1].prio` and
+`OsRunningTcb->state`, and a breakpoint for one task, `if OsRunningTcb->prio == 2` (probe-rs fork
+`d8954dd`).
 
 ```text
 cargo test

@@ -22,6 +22,8 @@ pub enum BottomTab {
     Rtt(ChannelKey),
     LiveWatch,
     Memory,
+    /// The OS objects of the ORTI file.
+    Os,
 }
 
 /// The file the Live Watch expressions of `attach` are kept in.
@@ -98,6 +100,7 @@ impl Debugger {
                             );
                         }
                         this.read_memory(cx);
+                        this.read_os(cx);
                         true
                     })
                     .unwrap_or(false);
@@ -151,7 +154,7 @@ impl Debugger {
                 .console_scroll
                 .scroll_to_item(self.console.len().saturating_sub(1), ScrollStrategy::Bottom),
             BottomTab::Rtt(_) => self.scroll_rtt_to_end(),
-            BottomTab::LiveWatch | BottomTab::Memory => {}
+            BottomTab::LiveWatch | BottomTab::Memory | BottomTab::Os => {}
         }
     }
 
@@ -174,11 +177,13 @@ impl Debugger {
                 None => "Memory".to_string(),
             },
         ));
+        tabs.push((BottomTab::Os, "OS".to_string()));
         let body = match self.bottom {
             BottomTab::Console => self.render_console(cx).into_any_element(),
             BottomTab::Rtt(key) => self.render_rtt(key, cx).into_any_element(),
             BottomTab::LiveWatch => self.render_live_watch(cx),
             BottomTab::Memory => self.render_memory(cx),
+            BottomTab::Os => self.render_os(cx),
         };
         div()
             .flex()

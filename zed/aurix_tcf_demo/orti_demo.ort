@@ -1,0 +1,77 @@
+/* ORTI 2.2 description of orti_demo (src/orti_demo.c), written by hand: what an AUTOSAR
+ * system builder would generate for an OS with three tasks and one ISR. */
+
+VERSION {
+    KOIL = "2.2";
+    OSSEMANTICS = "ORTI", "2.2";
+};
+
+IMPLEMENTATION orti_demo_ORTI {
+    OS {
+        ENUM "unsigned char" [
+            "NO_TASK" = 0xFF,
+            "TaskA" : TaskA = 0,
+            "TaskB" : TaskB = 1,
+            "TaskC" : TaskC = 2
+        ] RUNNINGTASK, "Running task";
+        ENUM "unsigned char" [
+            "NO_ISR" = 0,
+            "TimerIsr" : TimerIsr = 1
+        ] RUNNINGISR2, "Running ISR2";
+        CTYPE "unsigned int" vs_TICKS, "Ticks";
+        ENUM "unsigned char" [
+            "RUNNING" = 0,
+            "READY" = 1,
+            "WAITING" = 2,
+            "SUSPENDED" = 3
+        ] vs_RUNNING_STATE, "State of the running task";
+        CTYPE "unsigned int" vs_TICKS_HALF, "Ticks / 2 (a cast, not supported)";
+    }, "OS";
+    TASK {
+        ENUM "unsigned char" [
+            "RUNNING" = 0,
+            "READY" = 1,
+            "WAITING" = 2,
+            "SUSPENDED" = 3
+        ] STATE, "Task state";
+        CTYPE "unsigned char" PRIORITY, "Priority";
+        CTYPE "unsigned int" vs_ACTIVATIONS, "Activations";
+        STRING vs_NOTE, "Note";
+    }, "Tasks";
+    ISR {
+        CTYPE "unsigned int" vs_COUNT, "Ticks counted";
+    }, "ISRs";
+};
+
+OS orti_demo_os {
+    RUNNINGTASK = "OsCurrentTask";
+    RUNNINGISR2 = "OsCurrentIsr";
+    vs_TICKS = "OsTicks";
+    vs_RUNNING_STATE = "OsRunningTcb->state";
+    vs_TICKS_HALF = "(unsigned)OsTicks / 2";
+};
+
+TASK TaskA {
+    STATE = "OsTaskState[0]";
+    PRIORITY = "OsTcb[0].prio";
+    vs_ACTIVATIONS = "OsTcb[0].activations";
+    vs_NOTE = "highest priority";
+};
+
+TASK TaskB {
+    STATE = "OsTaskState[1]";
+    PRIORITY = "OsTcb[1].prio";
+    vs_ACTIVATIONS = "OsTcb[1].activations";
+    vs_NOTE = "";
+};
+
+TASK TaskC {
+    STATE = "OsTaskState[2]";
+    PRIORITY = "OsTcb[2].prio";
+    vs_ACTIVATIONS = "OsTcb[2].activations";
+    vs_NOTE = "waits after its slice";
+};
+
+ISR TimerIsr {
+    vs_COUNT = "OsTicks";
+};

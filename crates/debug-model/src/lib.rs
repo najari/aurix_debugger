@@ -17,11 +17,15 @@
 //! - [`live_watch`]: expressions read on every core, and what changed.
 //! - [`memory`]: a memory window read again and again, and what changed.
 //! - [`rtt`]: the lines of the RTT channels of every core.
+//! - [`orti`]: ORTI files and the OS view (tasks, ISRs) built on them.
+//! - [`path_expr`]: the path expressions the server reads (`a.b`, `a[n]`, `p->b`, `*p`).
 
 pub mod breakpoints;
 pub mod disassembly;
 pub mod live_watch;
 pub mod memory;
+pub mod orti;
+pub mod path_expr;
 pub mod protocol;
 pub mod reference;
 pub mod rtt;

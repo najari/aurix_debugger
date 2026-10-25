@@ -1,0 +1,10 @@
+{
+  "request": "attach",
+  "cwd": "C:\\work\\claude\\zed\\aurix_tcf_demo",
+  "chip": "TC275",
+  "probe": "058b:0000",
+  "coreConfigs": [
+    { "coreIndex": 0, "programBinary": "C:\\work\\claude\\zed\\aurix_tcf_demo\\build\\orti_demo.elf" }
+  ],
+  "consoleLogLevel": "Console"
+}
