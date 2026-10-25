@@ -33,10 +33,12 @@ use serde_json::{Value, json};
 
 use crate::source::{SourceFile, SourceFiles};
 
+mod memory;
 mod panels;
 
 use crate::text_input::{Submitted, TextInput};
 use aurix_debug_model::live_watch::LiveWatch;
+use aurix_debug_model::memory::MemoryView;
 use gpui::Entity;
 use panels::BottomTab;
 
@@ -110,6 +112,13 @@ pub struct Debugger {
     watch_input: Entity<TextInput>,
     /// Where the Live Watch expressions are kept: next to the attach file.
     watch_file: Option<std::path::PathBuf>,
+    memory: MemoryView,
+    /// Where an address for the memory tab is typed.
+    memory_input: Entity<TextInput>,
+    memory_input_error: Option<String>,
+    memory_paused: bool,
+    /// The address asked for, marked in the memory tab.
+    memory_focus: Option<u64>,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -151,6 +160,11 @@ impl Debugger {
             watch_input: cx
                 .new(|cx| TextInput::new("Add an expression (a global variable), Enter", cx)),
             watch_file,
+            memory: MemoryView::default(),
+            memory_input: cx.new(|cx| TextInput::new("Address, e.g. 0x7000A000@1", cx)),
+            memory_input_error: None,
+            memory_paused: false,
+            memory_focus: None,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
@@ -158,6 +172,11 @@ impl Debugger {
         };
         cx.subscribe(&this.watch_input, |this, _, Submitted(expression), cx| {
             this.add_watch(expression);
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&this.memory_input, |this, _, Submitted(text), cx| {
+            this.memory_submitted(text);
             cx.notify();
         })
         .detach();
@@ -1207,6 +1226,7 @@ impl Debugger {
                 // A global can be read while the core runs: it can go to the Live Watch.
                 let watchable = row.depth == 1 && row.key.first().is_some_and(|s| s == "Static");
                 let watch_name = row.name.clone();
+                let memory_reference = row.memory_reference.clone().filter(|_| !scope);
                 div()
                     .id(SharedString::from(format!("variable-{ix}")))
                     .flex()
@@ -1250,9 +1270,31 @@ impl Debugger {
                     .when_some(note, |this, note| {
                         this.child(div().text_xs().text_color(hsla(color::MUTED)).child(note))
                     })
+                    .child(div().flex_1())
+                    .when_some(memory_reference, |this, reference| {
+                        this.child(
+                            div()
+                                .id(SharedString::from(format!("memory-{ix}")))
+                                .px_1()
+                                .rounded_sm()
+                                .text_xs()
+                                .text_color(hsla(color::MUTED))
+                                .cursor_pointer()
+                                .hover(|style| {
+                                    style
+                                        .bg(hsla(color::BUTTON_HOVER))
+                                        .text_color(hsla(color::TEXT))
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.show_memory_at(&reference);
+                                    cx.notify();
+                                }))
+                                .child("mem"),
+                        )
+                    })
                     .when(watchable, |this| {
                         let expression = watch_name.clone();
-                        this.child(div().flex_1()).child(
+                        this.child(
                             div()
                                 .id(SharedString::from(format!("watch-{ix}")))
                                 .px_1()

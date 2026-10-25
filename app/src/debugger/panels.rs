@@ -24,6 +24,7 @@ pub enum BottomTab {
     Console,
     Rtt(ChannelKey),
     LiveWatch,
+    Memory,
 }
 
 /// The file the Live Watch expressions of `attach` are kept in.
@@ -98,6 +99,7 @@ impl Debugger {
                                 },
                             );
                         }
+                        this.read_memory(cx);
                         true
                     })
                     .unwrap_or(false);
@@ -127,7 +129,7 @@ impl Debugger {
                 .console_scroll
                 .scroll_to_item(self.console.len().saturating_sub(1), ScrollStrategy::Bottom),
             BottomTab::Rtt(_) => self.scroll_rtt_to_end(),
-            BottomTab::LiveWatch => {}
+            BottomTab::LiveWatch | BottomTab::Memory => {}
         }
     }
 
@@ -143,10 +145,18 @@ impl Debugger {
             BottomTab::LiveWatch,
             format!("Live Watch ({})", self.live_watch.expressions().len()),
         ));
+        tabs.push((
+            BottomTab::Memory,
+            match self.memory.start() {
+                Some(start) => format!("Memory {start:08X}"),
+                None => "Memory".to_string(),
+            },
+        ));
         let body = match self.bottom {
             BottomTab::Console => self.render_console(cx).into_any_element(),
             BottomTab::Rtt(key) => self.render_rtt(key, cx).into_any_element(),
             BottomTab::LiveWatch => self.render_live_watch(cx),
+            BottomTab::Memory => self.render_memory(cx),
         };
         div()
             .flex()

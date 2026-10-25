@@ -15,11 +15,13 @@
 //! - [`source_breakpoints`]: breakpoints on source lines.
 //! - [`variables`]: the scopes and variables of a stack frame, as a tree read on demand.
 //! - [`live_watch`]: expressions read on every core, and what changed.
+//! - [`memory`]: a memory window read again and again, and what changed.
 //! - [`rtt`]: the lines of the RTT channels of every core.
 
 pub mod breakpoints;
 pub mod disassembly;
 pub mod live_watch;
+pub mod memory;
 pub mod protocol;
 pub mod reference;
 pub mod rtt;

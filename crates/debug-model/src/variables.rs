@@ -42,6 +42,8 @@ pub struct Row {
     pub loading: bool,
     /// The value differs from the previous stop's.
     pub changed: bool,
+    /// Where the value is, for a memory view (`0x7000bfe4@0`).
+    pub memory_reference: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -238,6 +240,7 @@ impl Variables {
                     expanded,
                     loading: expanded && self.pending.contains(&scope.variables_reference),
                     changed: false,
+                    memory_reference: None,
                     key: key.clone(),
                 },
                 context.clone(),
@@ -281,6 +284,7 @@ impl Variables {
                 expanded,
                 loading: expanded && self.pending.contains(&variable.variables_reference),
                 changed,
+                memory_reference: variable.memory_reference.clone(),
                 key: key.clone(),
             };
             rows.push((row, context.clone()));
