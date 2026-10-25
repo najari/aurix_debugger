@@ -16,9 +16,6 @@ use gpui::{AnyElement, Context, ScrollStrategy, SharedString, div, prelude::*, p
 
 use super::{Debugger, button, color, hsla};
 
-/// The panel's height.
-const HEIGHT: f32 = 210.;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BottomTab {
     Console,
@@ -162,7 +159,7 @@ impl Debugger {
         div()
             .flex()
             .flex_col()
-            .h(px(HEIGHT))
+            .h(px(self.layout.bottom))
             .flex_none()
             .border_t_1()
             .border_color(hsla(color::BORDER))

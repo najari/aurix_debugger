@@ -16,6 +16,11 @@ The standalone debugger: a GPUI window on the probe-rs DAP server.
 | Memory (tab) | 256 bytes from an address typed in (hex, `0x` optional, `@core` optional) or from a variable's "mem", read every 500 ms while the tab is shown, the cores running or not; through the core chosen, so `0xD000A000` reads that core's scratch-pad RAM; ◀/▶ move by 256 bytes; a byte that changed is red until the next change; the address asked for is marked |
 | Live Watch (tab) | Expressions (global variables) read every 500 ms on every core while the cores run; a value that changed since the last read is red; typed into the input (Enter), or sent from a Static variable with "watch"; × removes one; reading can be paused. The expressions are kept next to the attach file (`<attach>.watch`) |
 
+The splitters between the panels (threads | center | variables, source / disassembly, the
+bottom panel) are dragged to resize them and double-clicked to put them back; the sizes are kept
+in `%APPDATA%\aurix-debugger\layout.json`, and a smaller window shrinks the panels so that the
+center keeps its least.
+
 The state and rules of the views are the shared crates' (`../crates`: `aurix-debug-model`,
 `aurix-dap-client`); this crate only draws them and sends the requests.
 

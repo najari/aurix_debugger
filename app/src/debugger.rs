@@ -36,6 +36,9 @@ use crate::source::{SourceFile, SourceFiles};
 mod connect;
 mod memory;
 mod panels;
+mod splitters;
+
+use crate::layout::{Drag, Layout, Splitter};
 
 use crate::text_input::{Submitted, TextInput};
 use aurix_debug_model::live_watch::LiveWatch;
@@ -132,6 +135,9 @@ pub struct Debugger {
     recent: Vec<String>,
     server_input: Entity<TextInput>,
     connect_error: Option<String>,
+    layout: Layout,
+    /// A splitter being dragged.
+    drag: Option<Drag>,
 }
 
 impl Debugger {
@@ -180,6 +186,8 @@ impl Debugger {
             recent: crate::recent::load(),
             server_input,
             connect_error: None,
+            layout: crate::layout::load(),
+            drag: None,
         };
         cx.subscribe(&this.watch_input, |this, _, Submitted(expression), cx| {
             this.add_watch(expression);
@@ -1382,7 +1390,13 @@ impl Debugger {
 }
 
 impl Render for Debugger {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.drag.is_none() {
+            self.fit_layout(window);
+        }
+        let layout = self.layout;
+        let source_height = layout.source_height(window.viewport_size().height.as_f32());
+        let dragging = self.drag.map(|drag| drag.splitter.across());
         div()
             .size_full()
             .flex()
@@ -1390,6 +1404,18 @@ impl Render for Debugger {
             .bg(hsla(color::BACKGROUND))
             .text_color(hsla(color::TEXT))
             .font_family("Segoe UI")
+            .when(dragging == Some(true), |this| this.cursor_ew_resize())
+            .when(dragging == Some(false), |this| this.cursor_ns_resize())
+            .on_mouse_move(
+                cx.listener(|this, event, window, cx| this.mouse_moved(event, window, cx)),
+            )
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.end_drag();
+                    cx.notify();
+                }),
+            )
             .child(self.render_toolbar(cx))
             .when(self.client.is_none(), |this| {
                 this.child(self.render_connect(cx))
@@ -1403,40 +1429,47 @@ impl Render for Debugger {
                         .child(
                             div()
                                 .id("side")
-                                .w(px(260.))
+                                .w(px(layout.left))
                                 .flex_none()
                                 .flex()
                                 .flex_col()
                                 .gap_2()
-                                .border_r_1()
-                                .border_color(hsla(color::BORDER))
                                 .bg(hsla(color::PANEL))
                                 .overflow_y_scroll()
                                 .child(self.render_threads(cx))
                                 .child(self.render_stack(cx)),
                         )
+                        .child(self.splitter(Splitter::Left, cx))
                         .child(
                             div()
                                 .flex()
                                 .flex_col()
                                 .flex_1()
                                 .min_w_0()
-                                .child(self.render_source(cx))
+                                .child(
+                                    div()
+                                        .h(px(source_height))
+                                        .flex_none()
+                                        .flex()
+                                        .flex_col()
+                                        .child(self.render_source(cx)),
+                                )
+                                .child(self.splitter(Splitter::Source, cx))
                                 .child(self.render_disassembly(cx)),
                         )
+                        .child(self.splitter(Splitter::Right, cx))
                         .child(
                             div()
                                 .id("variables")
-                                .w(px(340.))
+                                .w(px(layout.right))
                                 .flex_none()
-                                .border_l_1()
-                                .border_color(hsla(color::BORDER))
                                 .bg(hsla(color::PANEL))
                                 .overflow_y_scroll()
                                 .child(self.render_variables(cx)),
                         ),
                 )
             })
+            .child(self.splitter(Splitter::Bottom, cx))
             .child(self.render_bottom(cx))
     }
 }

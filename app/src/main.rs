@@ -9,6 +9,7 @@
 //! before, a file dialog).
 
 mod debugger;
+mod layout;
 mod recent;
 mod source;
 mod text_input;
