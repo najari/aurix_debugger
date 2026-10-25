@@ -140,7 +140,7 @@ TRACE32 수치는 이번에 재지 않았다. 우리 메모리 속도는 크기�
 1. **MCDS 기록 검증:** 주소 맵 1을 여는 어댑터(예: DAP miniWiggler)를 구해, 이미 만든 `probe-rs mcds record`를 TC275 ED에서 돌리고 Infineon 디코더로 열어 본다. 하드웨어 구매 결정이 필요하다.
 2. ~~**조건·횟수 BP:** DAP의 `condition`·`hitCondition`을 호스트에서 평가한다. 멈췄다 다시 도는 방식이라 느리지만, 가장 자주 아쉬운 기능이다.~~ 2026-10-25 구현(probe-rs `c18738d`, 앱 B 편집 줄). 전역 변수만 쓰는 조건은 프레임을 풀지 않아 한 번에 63 ms다.
 3. **ORTI 태스크 보기:** ORTI 파일을 읽어 태스크·ISR 상태를 변수 패널에 보인다. AUTOSAR 보드가 대상이다.
-4. ~~**스크립트 실행:** DAP 클라이언트 위에 명령 파일을 돌리는 도구를 둔다(attach, BP, continue, 값 확인). CI의 보드 시험에 바로 쓸 수 있다.~~ 2026-10-25 구현(`crates/script`, `aurix-run`). 이 도구로 probe-rs 포크의 문제 하나를 찾았다: 코어가 명령 BP에서 다시 실행된 뒤에는 데이터 BP가 멈추지 않는다(`script/examples/watch_after_break.aurix`).
+4. ~~**스크립트 실행:** DAP 클라이언트 위에 명령 파일을 돌리는 도구를 둔다(attach, BP, continue, 값 확인). CI의 보드 시험에 바로 쓸 수 있다.~~ 2026-10-25 구현(`crates/script`, `aurix-run`). 이 도구로 probe-rs 포크의 문제 하나를 찾아 고쳤다(`149db65`): 명령 BP가 켜져 있으면 데이터 BP가 멈추지 않았다. TC275에서는 break-before-make 트리거가 켜진 동안 break-after-make 트리거가 동작하지 않는다. 데이터 트리거도 접근 전에 멈추게 하고, 그 접근 하나를 데이터 트리거만 켠 채 실행해 접근 뒤에 멈춘 상태로 만든다(`script/examples/watch_after_break.aurix`).
 5. **속도 측정:** MCD 경로와 다른 어댑터로 같은 측정을 돌려, 19.4 KiB/s가 TAS의 한계인지 확인한다.
 6. **칩 확대:** TC36x를 붙인 방식대로 프로젝트가 쓰는 TC3xx 칩을 더한다.
 

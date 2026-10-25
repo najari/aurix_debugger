@@ -70,8 +70,8 @@ Exit code 0: every expectation held; 1: one did not (the run stops there, or goe
 time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation as a testcase
 (the ones not reached are skipped). Examples in `script/examples`: `demo_flash`, `conditions`
 and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
-`watch_after_break`, which shows a known problem of the probe-rs fork (a data breakpoint no
-longer halts after the core ran on from an instruction breakpoint; exit code 2).
+`watch_after_break`, a data breakpoint next to an instruction breakpoint (it did not halt before
+probe-rs fork `149db65`).
 
 ```text
 cargo test
