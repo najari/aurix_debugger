@@ -118,7 +118,7 @@ impl Debugger {
                 .p_2()
                 .text_sm()
                 .text_color(hsla(color::MUTED))
-                .child("No cache view for this chip (the TC27x caches are known)")
+                .child("No cache view for this chip (the TC27x and TC36x caches are known)")
                 .into_any_element();
         };
         let measuring = view.measuring();

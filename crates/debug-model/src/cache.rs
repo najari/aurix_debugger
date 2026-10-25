@@ -1,6 +1,7 @@
 //! The caches of the TriCore cores: what each core has and whether it is on, which segments it
 //! caches, and the hits and misses its performance counters count. Everything is read from the
-//! cores' CSFRs over the bus, while the cores run too (TC27x User's Manual V2.2, 5.8, 5.10, 5.11):
+//! cores' CSFRs over the bus, while the cores run too (TC27x User's Manual V2.2, 5.8, 5.10, 5.11;
+//! the TC1.6.2P of the TC3xx has the same registers at the same offsets):
 //!
 //! - `PCON2`/`DCON2`: the sizes of the program cache and scratch-pad, of the data cache and
 //!   scratch-pad, in KB;
@@ -38,11 +39,12 @@ const CCTRL_CE: u32 = 1 << 1;
 const CCTRL_SOURCES: u32 = 0x7FC;
 
 /// The TriCore of a core: the TC1.6E has a program cache and a data read buffer, the TC1.6P
-/// a program cache and a write-back data cache.
+/// (TC27x) and the TC1.6.2P (TC3xx) a program cache and a write-back data cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoreKind {
     E,
     P,
+    P2,
 }
 
 impl CoreKind {
@@ -50,15 +52,18 @@ impl CoreKind {
         match self {
             CoreKind::E => "TC1.6E",
             CoreKind::P => "TC1.6P",
+            CoreKind::P2 => "TC1.6.2P",
         }
     }
 
     /// What the data side has.
     pub fn data_name(self) -> &'static str {
-        match self {
-            CoreKind::E => "DRB",
-            CoreKind::P => "DCACHE",
-        }
+        if self.write_back() { "DCACHE" } else { "DRB" }
+    }
+
+    /// The data side is a write-back data cache (not a read buffer).
+    pub fn write_back(self) -> bool {
+        self != CoreKind::E
     }
 }
 
@@ -84,13 +89,24 @@ pub struct Caches {
 }
 
 impl Caches {
-    /// The TC27x: CPU0 a TC1.6E, CPU1 and CPU2 TC1.6P (CSFRs at `0xF881_0000 + 0x2_0000 * n`).
+    /// The TC27x: CPU0 a TC1.6E, CPU1 and CPU2 TC1.6P. The TC36x: CPU0 and CPU1 TC1.6.2P. The
+    /// CSFRs of core n are at `0xF881_0000 + 0x2_0000 * n` on both.
     pub fn for_chip(chip: &str) -> Option<Self> {
-        chip.to_ascii_uppercase().starts_with("TC27").then(|| Self {
-            cores: (0..3)
-                .map(|core| CacheCore {
+        let chip = chip.to_ascii_uppercase();
+        let kinds: &[CoreKind] = if chip.starts_with("TC27") {
+            &[CoreKind::E, CoreKind::P, CoreKind::P]
+        } else if chip.starts_with("TC36") {
+            &[CoreKind::P2, CoreKind::P2]
+        } else {
+            return None;
+        };
+        Some(Self {
+            cores: kinds
+                .iter()
+                .enumerate()
+                .map(|(core, &kind)| CacheCore {
                     core,
-                    kind: if core == 0 { CoreKind::E } else { CoreKind::P },
+                    kind,
                     csfr: 0xF881_0000 + 0x2_0000 * core as u32,
                 })
                 .collect(),
@@ -160,10 +176,7 @@ impl CoreCaches {
 
     /// The data cache (TC1.6P) or data read buffer (TC1.6E) caches.
     pub fn data_on(&self) -> bool {
-        let present = match self.kind {
-            CoreKind::P => self.dcache_kb() > 0,
-            CoreKind::E => true,
-        };
+        let present = !self.kind.write_back() || self.dcache_kb() > 0;
         present && self.dcon0 & BYPASS == 0
     }
 
@@ -308,7 +321,7 @@ fn measured(kind: CoreKind, p: [u32; 5], d: [u32; 5], s: [u32; 5], b: [u32; 5]) 
         p[1]
     );
     let data = match kind {
-        CoreKind::P => format!(
+        CoreKind::P | CoreKind::P2 => format!(
             "DCACHE {}, {} dirty misses",
             percent(d[2], d[3] + d[4]),
             d[4]
@@ -321,7 +334,7 @@ fn measured(kind: CoreKind, p: [u32; 5], d: [u32; 5], s: [u32; 5], b: [u32; 5]) 
         format!("{:.2}", s[1] as f64 / s[0] as f64)
     };
     let dispatch = match kind {
-        CoreKind::P => format!(
+        CoreKind::P | CoreKind::P2 => format!(
             "IP {}, LS {}, loop {}",
             share(s[2], s[0]),
             share(s[3], s[0]),
@@ -330,7 +343,7 @@ fn measured(kind: CoreKind, p: [u32; 5], d: [u32; 5], s: [u32; 5], b: [u32; 5]) 
         CoreKind::E => format!("IP {}, LS {}", share(s[2], s[0]), share(s[3], s[0])),
     };
     let multi = match kind {
-        CoreKind::P => format!(", multi-issue {} of cycles", share(p[4], p[0])),
+        CoreKind::P | CoreKind::P2 => format!(", multi-issue {} of cycles", share(p[4], p[0])),
         CoreKind::E => String::new(),
     };
     let branches = if b[1] == 0 {
@@ -583,18 +596,19 @@ impl CacheView {
                         on(state.pcache_on()),
                         state.pspr_kb()
                     ),
-                    data: match core.kind {
-                        CoreKind::P => format!(
+                    data: if core.kind.write_back() {
+                        format!(
                             "DCACHE {} KB {}, DSPR {} KB",
                             state.dcache_kb(),
                             on(state.data_on()),
                             state.dspr_kb()
-                        ),
-                        CoreKind::E => format!(
+                        )
+                    } else {
+                        format!(
                             "DRB 128 B {}, DSPR {} KB",
                             on(state.data_on()),
                             state.dspr_kb()
-                        ),
+                        )
                     },
                     code_segments: state.segments(|s| state.code_cacheable(core.core, s)),
                     data_segments: state.segments(|s| state.data_cacheable(core.core, s)),
@@ -614,9 +628,10 @@ impl CacheView {
         for (core, state) in self.caches.cores.iter().zip(&self.states) {
             let Ok(state) = state else { continue };
             if state.data_on() && state.data_cacheable(core.core, segment) {
-                match core.kind {
-                    CoreKind::P => write_back.push(format!("CPU{}", core.core)),
-                    CoreKind::E => read_only.push(format!("CPU{}", core.core)),
+                if core.kind.write_back() {
+                    write_back.push(format!("CPU{}", core.core));
+                } else {
+                    read_only.push(format!("CPU{}", core.core));
                 }
             }
         }
@@ -689,6 +704,46 @@ mod tests {
         assert_eq!(rows[2].data_segments, "8 9");
         // Bypassed: nothing to say about the LMU.
         assert_eq!(view.memory_note(0x9000_0000), None);
+    }
+
+    /// The TC36x board's registers (flash demo built with `-Caches`): CPU0 with both caches on,
+    /// CPU1 (in boot halt) with both bypassed.
+    #[test]
+    fn the_tc36x_board_as_read() {
+        let caches = Caches::for_chip("TC36x").unwrap();
+        assert_eq!(caches.cores.len(), 2);
+        assert_eq!(caches.cores[1].csfr, 0xF883_0000);
+        let mut view = CacheView::new(caches);
+        let (ranges, generation) = view.ranges();
+        assert_eq!(ranges.len(), 10);
+        let answer: Vec<RangeData> = [0, 2]
+            .iter()
+            .flat_map(|&bypass| {
+                [
+                    data(&[0x300, 0x300]),
+                    data(&[0x00C0_0010]),
+                    data(&[bypass]),
+                    data(&[0x0020_0020, bypass]),
+                    data(&[0; 6]),
+                ]
+            })
+            .collect();
+        view.answered(generation, &answer);
+        let rows: Vec<CacheRow> = view.rows().into_iter().map(Result::unwrap).collect();
+        assert_eq!(rows[0].kind.name(), "TC1.6.2P");
+        assert_eq!(rows[0].program, "PCACHE 32 KB on, PSPR 32 KB");
+        assert_eq!(rows[0].data, "DCACHE 16 KB on, DSPR 192 KB");
+        assert_eq!(rows[1].data, "DCACHE 16 KB bypassed, DSPR 192 KB");
+        assert_eq!(rows[1].code_segments, "8 9");
+        let note = view.memory_note(0x9000_0000).unwrap();
+        assert!(
+            note.contains("CPU0 cache this segment in a write-back DCACHE"),
+            "{note}"
+        );
+        // CPU0's own DSPR, and the uncached segments.
+        assert_eq!(view.memory_note(0x7000_0000), None);
+        assert_eq!(view.memory_note(0xB000_0000), None);
+        assert!(Caches::for_chip("TC39x").is_none());
     }
 
     #[test]

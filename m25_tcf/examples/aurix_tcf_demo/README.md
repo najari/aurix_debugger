@@ -24,6 +24,7 @@ It runs **from RAM** on CPU0 (code in PSPR `0x70100000`, data in DSPR
 | `.vscode/tasks.json` | build tasks, M25 flasher tasks (`../../tools/m25_flash_task.ps1`), probe-rs flash and start tasks, per board |
 | `build_flash.ps1`, `demo_flash.ld` | the same program linked for PF1 sector `0x8021C000` (TC275) |
 | `build_flash.ps1 -Board tc36x`, `demo_flash_tc36x.ld` | the same program linked for PF1 sector `0x80400000` (TC36x) → `build/demo_flash_tc36x.elf` |
+| `build_flash.ps1 -Board tc36x -Caches` | the same, but `main` first turns CPU0's program and data caches on (bypassed out of reset on the TC3xx; only CPU0 can clear its ENDINIT) → `build/demo_flash_tc36x_cache.elf`, for the Cache tab's hit measurement |
 | `tools/flash_start.js` | point core0 at `main` of the flashed demo |
 | `agent/tcf-agent.exe` | the AURIX TCF agent (build it from `m25_tcf`, see its README; not tracked) - set `aurix-tcf.agentPath` to this file |
 
