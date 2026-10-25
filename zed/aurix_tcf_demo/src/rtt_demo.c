@@ -1,18 +1,23 @@
 /*
- * rtt_demo - RTT output test for the probe-rs debugger (TC275, CPU0, RAM only).
+ * rtt_demo - RTT output test for the probe-rs debugger (TC275, RAM only).
  *
- * Code in the CPU0 PSPR, data in the CPU0 DSPR, like demo.c: start_in_flash writes it
- * to RAM, the flash is not touched.  The program has a SEGGER RTT control block
- * (_SEGGER_RTT, the debugger finds it by its symbol) with one up channel "Terminal",
- * and writes a line to it about twice a second:
+ * Code in the PSPR, data in the DSPR of the core it is built for (CPU0 by default, CPU1
+ * with build_rtt.ps1 -Core 1): start_in_flash writes it to RAM, the flash is not touched.
+ * The program has a SEGGER RTT control block (_SEGGER_RTT, the debugger finds it by its
+ * symbol) with one up channel "Terminal", and writes a line to it about twice a second:
  *
- *     rtt_demo line 12, ticks 3456789
+ *     rtt_demo CPU0 line 12, ticks 3456789
  *
  * The RTT code is a minimal one written for this test (the layout of the SEGGER
  * control block, no SEGGER source).  A full buffer drops the line (no blocking).
  */
 
 #define UP_SIZE 512u
+
+/* The core the build runs on (build_rtt.ps1 -Core 1 builds for CPU1). */
+#ifndef CORE_NAME
+#define CORE_NAME "CPU0"
+#endif
 
 typedef struct {
     const char *name;
@@ -111,7 +116,7 @@ static void write_line(void)
     char line[48];
     char *p = line;
 
-    p = put_text(p, "rtt_demo line ");
+    p = put_text(p, "rtt_demo " CORE_NAME " line ");
     p = put_uint(p, g_lines + 1);
     p = put_text(p, ", ticks ");
     p = put_uint(p, g_ticks);

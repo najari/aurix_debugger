@@ -49,5 +49,30 @@
       }
     ],
     "consoleLogLevel": "Console"
+  },
+  {
+    // RTT on two cores in one session: build_rtt.ps1 and build_rtt.ps1 -Core 1, then
+    // start_in_flash.exe build\rtt_demo.elf and start_in_flash.exe build\rtt_demo_cpu1.elf
+    // --core 1 (RAM only; CPU1 leaves the board firmware, reset afterwards).
+    "label": "TC275: probe-rs RTT RAM CPU0 + CPU1",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC275",
+    "probe": "058b:0000",
+    "coreConfigs": [
+      {
+        "coreIndex": 0,
+        "programBinary": "C:\\work\\aurix_tcf_demo\\build\\rtt_demo.elf",
+        "rttEnabled": true
+      },
+      {
+        "coreIndex": 1,
+        "programBinary": "C:\\work\\aurix_tcf_demo\\build\\rtt_demo_cpu1.elf",
+        "rttEnabled": true
+      }
+    ],
+    "consoleLogLevel": "Console"
   }
 ]

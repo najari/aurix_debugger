@@ -166,10 +166,23 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 | 일시정지 | 정지 뒤 RTT 데이터 이벤트 없음 |
 | Live Watch 동시 | 앞 세션에서 넣은 식(`g_ticks`, `g_result`)이 Zed를 다시 열어도 남아 있었고, 이 프로그램의 `g_ticks`를 읽음(`g_result`는 없어서 오류 표시) |
 
-남은 것:
+### 여러 코어의 RTT (probe-rs `4b4b107`, Zed `76123f4`)
 
-- RTT 이벤트에는 코어가 없다. 한 세션 멀티코어에서 여러 코어가 RTT를 쓰면 채널 번호가 겹치고 `rttWindowOpened`도 초점 코어로만 간다(서버 쪽 작업).
-- down 채널(입력)은 서버가 `probe-rs-create-prompt` 이벤트로 알리지만 Zed 패널은 아직 입력을 받지 않는다.
+한 세션 멀티코어에서는 코어마다 RTT 제어 블록이 따로 있고 채널 번호도 0부터 시작한다. 그런데 RTT 이벤트에 코어가 없어 두 코어의 채널 0이 구분되지 않았고, `rttWindowOpened`도 초점 코어로만 갔다.
+
+- 서버: 코어가 여럿인 세션에서는 `probe-rs-rtt-channel-config`, `probe-rs-rtt-data`, `probe-rs-create-prompt` 이벤트에 `core`를 넣는다(코어가 하나면 예전과 같음). 클라이언트는 `rttWindowOpened`에 그 `core`를 돌려주고, 라우팅이 그 코어로 보낸다.
+- Zed: 채널을 (코어, 번호)로 구분하고 `core N · 0: Terminal`처럼 표시한다.
+- 시험 프로그램: `build_rtt.ps1 -Core 1`이 CPU1 PSPR `0x60100000`/DSPR `0x6000a000`용 `rtt_demo_cpu1.elf`를 만든다(`start_in_flash --core 1`로 RAM에 올림, CPU1은 보드 펌웨어를 떠나므로 끝나면 리셋). Zed 시나리오 "TC275: probe-rs RTT RAM CPU0 + CPU1".
+
+| 시험 (TC275, CPU0·CPU1 한 세션) | 결과 |
+| --- | --- |
+| DAP 스크립트 | 채널 0이 `core: 0`, `core: 1`로 각각 알려지고, 각자 `rttWindowOpened` 뒤 `rtt_demo CPU0 ...`, `rtt_demo CPU1 ...` 줄이 따로 옴 |
+| Zed | `rttWindowOpened`를 `core: 0`, `core: 1`로 보냄, 두 코어 데이터 이벤트 43개씩. 패널에 버튼 두 개, 고른 코어의 줄만 표시 |
+| 단일 코어 | 이벤트에 `core`가 없음(예전과 같음) |
+
+단위 테스트: dap_server 114개(새 1개: `core` 인자로 `rttWindowOpened` 라우팅). clippy는 mcd 켬·끔 모두 통과.
+
+남은 것: down 채널(입력)은 서버가 `probe-rs-create-prompt` 이벤트로 알리지만 Zed 패널은 아직 입력을 받지 않는다.
 
 ## 그 밖의 관찰
 
@@ -182,7 +195,7 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
 2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`), VS Code 디스어셈블리 뷰 재확인
 3. ~~Live Watch 패널~~ 동작 확인(`7648baf`). 코어별 로컬 주소 읽기도 확인(문제 아님)
-4. ~~RTT 패널~~ 동작 확인(`7f255b4`, 시험 프로그램 `rtt_demo`). 멀티코어 RTT와 입력 채널은 남음
+4. ~~RTT 패널~~ 동작 확인(`7f255b4`, 시험 프로그램 `rtt_demo`), 여러 코어 RTT(`76123f4`, probe-rs `4b4b107`). 입력 채널은 남음
 5. B로 옮길 공통 크레이트 분리(DAP 클라이언트, 디스어셈블리 모델, Live Watch, RTT 수신)
 
 ## 출처
