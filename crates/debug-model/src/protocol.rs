@@ -39,6 +39,46 @@ impl Request for LiveWatch {
     type Response = LiveWatchResponse;
 }
 
+/// One memory range of a `readRanges` request (`count` bytes at `address`).
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryRange {
+    pub address: u64,
+    pub count: usize,
+}
+
+/// Arguments of the probe-rs fork's `readRanges` request: several memory ranges in one
+/// request, each read on its own. `core` picks the core in a session of several cores.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadRangesArguments {
+    pub ranges: Vec<MemoryRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<u64>,
+}
+
+/// One range of a `readRanges` answer: its bytes (base64), or why it could not be read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RangeData {
+    pub address: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadRangesResponse {
+    pub ranges: Vec<RangeData>,
+}
+
+/// The probe-rs fork's `readRanges` request.
+pub enum ReadRanges {}
+
+impl Request for ReadRanges {
+    const COMMAND: &'static str = "readRanges";
+    type Arguments = ReadRangesArguments;
+    type Response = ReadRangesResponse;
+}
+
 /// Arguments of the probe-rs `rttWindowOpened` request: the client shows the RTT channel, so
 /// the adapter starts sending its data.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]

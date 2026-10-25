@@ -35,6 +35,7 @@ use crate::source::{SourceFile, SourceFiles};
 
 mod breakpoint_edit;
 mod connect;
+mod gtm;
 mod memory;
 mod os;
 mod panels;
@@ -143,6 +144,10 @@ pub struct Debugger {
     os_note: Option<String>,
     /// A read of the OS attributes is under way.
     os_busy: bool,
+    /// The GTM's MCS channels, for a chip whose GTM is known.
+    gtm: Option<aurix_debug_model::gtm::GtmView>,
+    /// A read of the MCS channels is under way.
+    gtm_busy: bool,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -207,6 +212,8 @@ impl Debugger {
             os_file: None,
             os_note: None,
             os_busy: false,
+            gtm: None,
+            gtm_busy: false,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,

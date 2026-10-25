@@ -1,0 +1,10 @@
+# The GTM MCS test program (zed/aurix_tcf_demo/build_gtm.ps1, started with start_in_flash, RAM
+# only): channels 0 and 1 of MCS1 run and store their counters in MCS memory, which the TriCore
+# copies to g_mcs_count and g_mcs_sum.
+
+attach ../../dap-client/examples/tc275_gtm_demo.json
+continue 0
+expect live g_gtm_state == 0 within 2s
+expect live g_mcs_count > 1000 within 2s
+expect live g_mcs_sum > 1000 within 2s
+expect live g_ticks > 0 within 2s

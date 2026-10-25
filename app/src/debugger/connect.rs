@@ -37,6 +37,7 @@ impl Debugger {
             self.live_watch = LiveWatch::new(panels::read_watch_file(&watch_file));
             self.watch_file = Some(watch_file);
             self.load_os_for(&attach);
+            self.load_gtm_for(&attach);
         }
         if let Err(error) = recent::remember(&mut self.recent, &attach) {
             self.log(format!("recent attach files: {error}"));
@@ -70,6 +71,7 @@ impl Debugger {
         // Reads under way in the old session never answer.
         self.live_watch = LiveWatch::new(self.live_watch.expressions().to_vec());
         self.os_busy = false;
+        self.gtm_busy = false;
         if let Some(start) = self.memory.start() {
             self.memory.show(start, self.memory.core());
         }
