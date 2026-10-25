@@ -12,6 +12,8 @@
 //!   `rttWindowOpened`, the RTT events) and `disassemble` with signed offsets.
 //! - [`disassembly`]: the instructions around a program counter, read further on either side.
 //! - [`breakpoints`]: breakpoints on instructions.
+//! - [`source_breakpoints`]: breakpoints on source lines.
+//! - [`variables`]: the scopes and variables of a stack frame, as a tree read on demand.
 //! - [`live_watch`]: expressions read on every core, and what changed.
 //! - [`rtt`]: the lines of the RTT channels of every core.
 
@@ -21,3 +23,5 @@ pub mod live_watch;
 pub mod protocol;
 pub mod reference;
 pub mod rtt;
+pub mod source_breakpoints;
+pub mod variables;

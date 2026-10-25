@@ -1,13 +1,15 @@
 # aurix-debugger (B)
 
-The standalone debugger: a GPUI window on the probe-rs DAP server. This is its first screen.
+The standalone debugger: a GPUI window on the probe-rs DAP server.
 
 | Part | What it does |
 | --- | --- |
 | Toolbar | Continue, Pause, Step Over (line), Step Instruction, Step Into Instruction of the selected thread; the connection state |
 | Threads | One thread per core, with its state (running, stopped and why); a click selects it |
-| Call stack | The frames of the selected thread; a click shows the frame's disassembly |
-| Disassembly | The instructions around the frame's program counter (▶), read further with ▲/▼, back to the PC; a click left of an instruction sets or removes a breakpoint on it (● set, ○ refused) |
+| Call stack | The frames of the selected thread; a click shows the frame's source, disassembly and variables |
+| Source | The frame's source file (read from the path in the debug information) with its line marked (▶), back to it with PC, Reload after an edit; a click left of a line sets or removes a breakpoint on it (● set, ○ refused) |
+| Disassembly | The instructions around the frame's program counter (▶), read further with ▲/▼, back to the PC; a click left of an instruction sets or removes a breakpoint on it (● set, ○ refused); ◆ marks where a source line's breakpoint was set |
+| Variables | The frame's scopes (Static, Peripherals, Registers, Variables) as a tree; a click expands or collapses a node, what is expanded stays so at the next stop, and a value that differs from the previous stop's is red (locals and registers: same function on the same core; statics and peripherals: same core) |
 | Console | The server's messages, stop descriptions and the RTT output of every core |
 
 The state and rules of the views are the shared crates' (`../crates`: `aurix-debug-model`,

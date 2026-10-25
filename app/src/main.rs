@@ -9,6 +9,7 @@
 //! selected thread, the disassembly around the selected frame, and the console.
 
 mod debugger;
+mod source;
 
 use gpui::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_platform::application;

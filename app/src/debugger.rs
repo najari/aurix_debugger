@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aurix_dap_client::{DapClient, Event};
 use aurix_debug_model::breakpoints::InstructionBreakpoints;
@@ -16,14 +16,22 @@ use aurix_debug_model::protocol::{
     DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RttChannelConfig, RttData,
     RttWindowOpened,
 };
+use aurix_debug_model::reference::parse_address;
 use aurix_debug_model::rtt::RttChannels;
-use dap_types::requests::{Request, SetInstructionBreakpoints, StackTrace, Threads};
-use dap_types::{StackFrame, StackTraceArguments, ThreadsArgument};
+use aurix_debug_model::source_breakpoints::SourceBreakpoints;
+use aurix_debug_model::variables::{Row, Variables};
+use dap_types::requests::{
+    Request, Scopes, SetBreakpoints, SetInstructionBreakpoints, StackTrace, Threads,
+    Variables as VariablesRequest,
+};
+use dap_types::{StackFrame, StackTraceArguments, ThreadsArgument, VariablesArguments};
 use gpui::{
     AnyElement, ClickEvent, Context, Hsla, ScrollStrategy, SharedString, UniformListScrollHandle,
     Window, div, prelude::*, px, rgb, uniform_list,
 };
 use serde_json::{Value, json};
+
+use crate::source::{SourceFile, SourceFiles};
 
 /// How long a request may take.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,6 +39,10 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const EVENT_POLL: Duration = Duration::from_millis(30);
 /// The console keeps at most this many lines.
 const MAX_CONSOLE_LINES: usize = 5_000;
+/// The same console line twice within this is shown once.
+const REPEAT_WINDOW: Duration = Duration::from_millis(500);
+/// What the source view shows while no frame is selected.
+const NOT_STOPPED: &str = "Not stopped";
 
 mod color {
     pub const BACKGROUND: u32 = 0x1e1e1e;
@@ -45,6 +57,7 @@ mod color {
     pub const BREAKPOINT: u32 = 0xe51400;
     pub const BUTTON: u32 = 0x3a3d41;
     pub const BUTTON_HOVER: u32 = 0x45494e;
+    pub const CHANGED: u32 = 0xf48771;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,8 +88,18 @@ pub struct Debugger {
     /// Scroll the disassembly to the program counter at the next render.
     scroll_to_pc: bool,
     breakpoints: InstructionBreakpoints,
+    source_files: SourceFiles,
+    /// The source file of the selected frame, or why there is none.
+    source: Result<Arc<SourceFile>, String>,
+    source_scroll: UniformListScrollHandle,
+    /// Scroll the source to the selected frame's line at the next render.
+    scroll_to_line: bool,
+    source_breakpoints: SourceBreakpoints,
+    variables: Variables,
     rtt: RttChannels,
     console: Vec<SharedString>,
+    /// When the last console line came.
+    last_log: Option<Instant>,
     console_scroll: UniformListScrollHandle,
 }
 
@@ -95,8 +118,15 @@ impl Debugger {
             disassembly_scroll: UniformListScrollHandle::new(),
             scroll_to_pc: false,
             breakpoints: InstructionBreakpoints::default(),
+            source_files: SourceFiles::default(),
+            source: Err(NOT_STOPPED.into()),
+            source_scroll: UniformListScrollHandle::new(),
+            scroll_to_line: false,
+            source_breakpoints: SourceBreakpoints::default(),
+            variables: Variables::default(),
             rtt: RttChannels::default(),
             console: Vec::new(),
+            last_log: None,
             console_scroll: UniformListScrollHandle::new(),
         };
         this.connect(cx);
@@ -119,8 +149,15 @@ impl Debugger {
 
     fn log(&mut self, line: impl Into<SharedString>) {
         let line = line.into();
-        // A stop's description often comes as an output event as well.
-        if self.console.last() == Some(&line) {
+        // A stop's description often comes as an output event as well, at once; the same stop
+        // again later is a line of its own.
+        let now = Instant::now();
+        let repeated = self.console.last() == Some(&line)
+            && self
+                .last_log
+                .is_some_and(|last| now.duration_since(last) < REPEAT_WINDOW);
+        self.last_log = Some(now);
+        if repeated {
             return;
         }
         self.console.push(line);
@@ -276,6 +313,7 @@ impl Debugger {
                 }
                 self.read_threads(cx);
                 if thread.is_some() && thread == self.selected_thread {
+                    self.variables.stopped();
                     self.read_stack(cx);
                 }
             }
@@ -291,7 +329,7 @@ impl Debugger {
                     .selected_thread
                     .is_some_and(|id| self.state(id) == Some(&ThreadState::Running))
                 {
-                    self.frames.clear();
+                    self.clear_stack();
                 }
             }
             "output" => {
@@ -404,11 +442,14 @@ impl Debugger {
         self.read_stack(cx);
     }
 
-    /// Forgets the call stack and disassembly shown (the selected thread runs or changed).
+    /// Forgets the call stack, source position, disassembly and variables shown (the selected
+    /// thread runs or changed).
     fn clear_stack(&mut self) {
         self.frames.clear();
         self.selected_frame = 0;
         self.disassembly = DisassemblyWindow::default();
+        self.source = Err(NOT_STOPPED.into());
+        self.variables.clear();
     }
 
     /// Reads the call stack of the selected thread. A running core has none (it would answer
@@ -427,6 +468,7 @@ impl Debugger {
             levels: Some(32),
             format: None,
         };
+        let asked_unknown = self.state(thread) == Some(&ThreadState::Unknown);
         self.request::<StackTrace>(arguments, cx, move |this, result, cx| {
             if this.selected_thread != Some(thread) {
                 return;
@@ -443,11 +485,13 @@ impl Debugger {
                 }
                 Err(error) => {
                     this.clear_stack();
-                    if this.state(thread) == Some(&ThreadState::Unknown) {
+                    match this.state(thread) {
                         // Asked to find out: a running core has no stack.
-                        this.set_state(thread, ThreadState::Running);
-                    } else {
-                        this.log(format!("stackTrace: {error}"));
+                        Some(ThreadState::Unknown) => this.set_state(thread, ThreadState::Running),
+                        // It started running meanwhile, or was asked to find out.
+                        Some(ThreadState::Running) => {}
+                        _ if asked_unknown => {}
+                        _ => this.log(format!("stackTrace: {error}")),
                     }
                 }
             }
@@ -456,6 +500,8 @@ impl Debugger {
 
     fn select_frame(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected_frame = ix;
+        self.show_source(ix);
+        self.read_scopes(ix, cx);
         let Some(reference) = self
             .frames
             .get(ix)
@@ -476,6 +522,96 @@ impl Debugger {
                     this.scroll_to_pc = true;
                 }
                 Err(error) => this.log(format!("disassemble: {error}")),
+            }
+        });
+    }
+
+    /// Shows the source file of frame `ix` around its line.
+    fn show_source(&mut self, ix: usize) {
+        let path = self
+            .frames
+            .get(ix)
+            .and_then(|frame| frame.source.as_ref())
+            .and_then(|source| source.path.clone());
+        self.source = match path {
+            Some(path) => self.source_files.get(&path),
+            None => Err("No source for this frame".into()),
+        };
+        self.scroll_to_line = true;
+    }
+
+    /// The line of the selected frame, if it is in the source file shown.
+    fn frame_line(&self) -> Option<u64> {
+        let frame = self.frames.get(self.selected_frame)?;
+        let path = frame.source.as_ref()?.path.as_deref()?;
+        let shown = self.source.as_ref().ok()?;
+        (shown.path == path && frame.line > 0).then_some(frame.line)
+    }
+
+    /// Reads the scopes of frame `ix`, then the variables of the expanded nodes.
+    fn read_scopes(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(frame) = self.frames.get(ix) else {
+            self.variables.clear();
+            return;
+        };
+        let id = frame.id;
+        let function = frame.name.clone();
+        let thread = self.selected_thread.unwrap_or(0).to_string();
+        let request = self.variables.set_frame(id, thread, function);
+        self.request::<Scopes>(request, cx, move |this, result, cx| match result {
+            Ok(response) => {
+                let requests = this.variables.set_scopes(id, response.scopes);
+                this.read_variables(requests, cx);
+            }
+            Err(error) => {
+                if this.variables.frame_id() == Some(id) {
+                    this.log(format!("scopes: {error}"));
+                }
+            }
+        });
+    }
+
+    fn read_variables(&mut self, requests: Vec<VariablesArguments>, cx: &mut Context<Self>) {
+        for request in requests {
+            let reference = request.variables_reference;
+            self.request::<VariablesRequest>(request, cx, move |this, result, cx| match result {
+                Ok(response) => {
+                    let requests = this.variables.set_children(reference, response.variables);
+                    this.read_variables(requests, cx);
+                }
+                Err(error) => this.variables.failed(reference, error),
+            });
+        }
+    }
+
+    fn toggle_variable(&mut self, row: &Row, cx: &mut Context<Self>) {
+        if let Some(request) = self.variables.toggle(&row.key, row.reference) {
+            self.read_variables(vec![request], cx);
+        }
+    }
+
+    fn toggle_source_breakpoint(&mut self, path: String, line: u64, cx: &mut Context<Self>) {
+        self.source_breakpoints.toggle(&path, line);
+        let request = self.source_breakpoints.request(&path);
+        let asked = request.clone();
+        self.request::<SetBreakpoints>(request, cx, move |this, result, _| match result {
+            Ok(response) => {
+                for (breakpoint, line) in response
+                    .breakpoints
+                    .iter()
+                    .zip(asked.lines.iter().flatten())
+                {
+                    if !breakpoint.verified {
+                        let message = breakpoint.message.as_deref().unwrap_or("not set");
+                        this.log(format!("breakpoint at line {line}: {message}"));
+                    }
+                }
+                this.source_breakpoints
+                    .answered(&asked, Ok(&response.breakpoints));
+            }
+            Err(error) => {
+                this.log(format!("setBreakpoints: {error}"));
+                this.source_breakpoints.answered(&asked, Err(&error));
             }
         });
     }
@@ -526,7 +662,7 @@ impl Debugger {
         }
         if command != "pause" {
             self.set_state(thread, ThreadState::Running);
-            self.frames.clear();
+            self.clear_stack();
         }
         self.request_raw(command, arguments, cx);
     }
@@ -750,9 +886,14 @@ impl Debugger {
                     .line_start(ix)
                     .map(|(file, line)| format!("{}:{line}", file.unwrap_or("line")));
                 let gutter_address = instruction.address.clone();
+                let source_breakpoint = parse_address(&instruction.address)
+                    .and_then(|address| self.source_breakpoints.at_address(address))
+                    .is_some();
                 let mark = match breakpoint {
                     Some(state) if state.verified == Some(true) => ("●", color::BREAKPOINT),
                     Some(_) => ("○", color::MUTED),
+                    // A source line's breakpoint, set at this instruction.
+                    None if source_breakpoint => ("◆", color::BREAKPOINT),
                     None => ("", color::MUTED),
                 };
                 Some(
@@ -874,6 +1015,216 @@ impl Debugger {
             )
     }
 
+    fn render_source_lines(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let Ok(file) = self.source.clone() else {
+            return Vec::new();
+        };
+        let frame_line = self.frame_line();
+        range
+            .filter_map(|ix| {
+                let text = file.lines.get(ix)?.clone();
+                let line = ix as u64 + 1;
+                let at_frame = frame_line == Some(line);
+                let mark = match self.source_breakpoints.get(&file.path, line) {
+                    Some(state) if state.verified == Some(true) => ("●", color::BREAKPOINT),
+                    Some(_) => ("○", color::MUTED),
+                    None => ("", color::MUTED),
+                };
+                let path = file.path.clone();
+                Some(
+                    div()
+                        .id(SharedString::from(format!("source-{ix}")))
+                        .h(px(20.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .font_family("Consolas")
+                        .text_sm()
+                        .when(at_frame, |this| this.bg(hsla(color::PC_LINE)))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("source-gutter-{ix}")))
+                                .w(px(16.))
+                                .cursor_pointer()
+                                .text_color(hsla(mark.1))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_source_breakpoint(path.clone(), line, cx)
+                                }))
+                                .child(mark.0),
+                        )
+                        .child(
+                            div()
+                                .w(px(40.))
+                                .flex()
+                                .justify_end()
+                                .text_color(hsla(color::MUTED))
+                                .child(line.to_string()),
+                        )
+                        .child(
+                            div()
+                                .w(px(12.))
+                                .text_color(hsla(color::PC_MARK))
+                                .child(if at_frame { "▶" } else { "" }),
+                        )
+                        .child(div().whitespace_nowrap().child(text))
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
+    fn render_source(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scroll_to_line
+            && let Some(line) = self.frame_line()
+        {
+            self.scroll_to_line = false;
+            self.source_scroll
+                .scroll_to_item(line as usize - 1, ScrollStrategy::Center);
+        }
+        let (title, count) = match &self.source {
+            Ok(file) => (SharedString::from(file.path.clone()), file.lines.len()),
+            Err(why) => (SharedString::from(why.clone()), 0),
+        };
+        let shown = self.frame_line().is_some();
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .border_b_1()
+            .border_color(hsla(color::BORDER))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(panel_title("SOURCE"))
+                    .child(button(
+                        "go-to-line",
+                        "PC",
+                        shown,
+                        cx.listener(|this, _, _, cx| {
+                            this.scroll_to_line = true;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button(
+                        "reload-source",
+                        "Reload",
+                        true,
+                        cx.listener(|this, _, _, cx| {
+                            this.source_files.reload();
+                            this.show_source(this.selected_frame);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        div()
+                            .px_2()
+                            .text_xs()
+                            .text_color(hsla(color::MUTED))
+                            .child(title),
+                    ),
+            )
+            .child(
+                uniform_list(
+                    "source",
+                    count,
+                    cx.processor(|this, range, _window, cx| this.render_source_lines(range, cx)),
+                )
+                .track_scroll(&self.source_scroll)
+                .flex_1(),
+            )
+    }
+
+    fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.variables.rows();
+        div()
+            .flex()
+            .flex_col()
+            .child(panel_title("VARIABLES"))
+            .when(rows.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .text_sm()
+                        .text_color(hsla(color::MUTED))
+                        .child(NOT_STOPPED),
+                )
+            })
+            .children(rows.into_iter().enumerate().map(|(ix, row)| {
+                let chevron = match (row.reference != 0, row.expanded) {
+                    (false, _) => "",
+                    (true, false) => "▸",
+                    (true, true) => "▾",
+                };
+                let note = if row.loading {
+                    Some("…".to_string())
+                } else if row.expanded {
+                    self.variables.error(row.reference).map(str::to_string)
+                } else {
+                    None
+                };
+                let scope = row.depth == 0;
+                let value_color = if row.changed {
+                    color::CHANGED
+                } else {
+                    color::TEXT
+                };
+                let name = row.name.clone();
+                let value = row.value.clone();
+                let type_ = row.type_.clone();
+                div()
+                    .id(SharedString::from(format!("variable-{ix}")))
+                    .flex()
+                    .gap_1()
+                    .pl(px(8. + 12. * row.depth as f32))
+                    .pr_2()
+                    .text_sm()
+                    .when(row.reference != 0, |this| {
+                        this.cursor_pointer()
+                            .hover(|style| style.bg(hsla(color::SELECTED)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_variable(&row, cx);
+                                cx.notify();
+                            }))
+                    })
+                    .child(
+                        div()
+                            .w(px(10.))
+                            .flex_none()
+                            .text_color(hsla(color::MUTED))
+                            .child(chevron),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(hsla(if scope { color::ACCENT } else { color::TEXT }))
+                            .child(name),
+                    )
+                    .when(!scope, |this| {
+                        this.child(div().text_color(hsla(color::MUTED)).child("="))
+                            .child(
+                                div()
+                                    .font_family("Consolas")
+                                    .text_color(hsla(value_color))
+                                    .child(value),
+                            )
+                    })
+                    .when_some(type_, |this, type_| {
+                        this.child(div().text_xs().text_color(hsla(color::MUTED)).child(type_))
+                    })
+                    .when_some(note, |this, note| {
+                        this.child(div().text_xs().text_color(hsla(color::MUTED)).child(note))
+                    })
+            }))
+    }
+
     fn render_console(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -927,7 +1278,8 @@ impl Render for Debugger {
                     .child(
                         div()
                             .id("side")
-                            .w(px(300.))
+                            .w(px(260.))
+                            .flex_none()
                             .flex()
                             .flex_col()
                             .gap_2()
@@ -938,7 +1290,26 @@ impl Render for Debugger {
                             .child(self.render_threads(cx))
                             .child(self.render_stack(cx)),
                     )
-                    .child(self.render_disassembly(cx)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.render_source(cx))
+                            .child(self.render_disassembly(cx)),
+                    )
+                    .child(
+                        div()
+                            .id("variables")
+                            .w(px(340.))
+                            .flex_none()
+                            .border_l_1()
+                            .border_color(hsla(color::BORDER))
+                            .bg(hsla(color::PANEL))
+                            .overflow_y_scroll()
+                            .child(self.render_variables(cx)),
+                    ),
             )
             .child(self.render_console(cx))
     }
