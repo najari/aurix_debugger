@@ -266,6 +266,29 @@ pub fn disassemble(word: u32) -> String {
     }
 }
 
+/// A write of [`GtmView::switch`]: one 32-bit word to a channel's control register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SwitchWrite {
+    pub address: u32,
+    pub value: u32,
+    pub mcs: usize,
+    pub channel: usize,
+    pub on: bool,
+}
+
+impl SwitchWrite {
+    /// The `writeMemory` arguments: four bytes at a word address, which the TriCore bus writes
+    /// as one 32-bit access (the MCS registers take no other).
+    pub fn arguments(&self) -> dap_types::WriteMemoryArguments {
+        dap_types::WriteMemoryArguments {
+            memory_reference: format!("{:#010x}", self.address),
+            offset: None,
+            allow_partial: Some(false),
+            data: crate::memory::encode_base64(&self.value.to_le_bytes()),
+        }
+    }
+}
+
 /// One line of the code window: an MCS address, its word and the instruction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLine {
@@ -476,6 +499,19 @@ impl GtmView {
         }
     }
 
+    /// The write that switches channel `channel` of the MCS shown on or off: `MCSi_CHx_CTRL`
+    /// with `EN` (the only writable bit), one 32-bit word. Off keeps the channel's PC and
+    /// registers, on goes on from there.
+    pub fn switch(&self, channel: usize, on: bool) -> Option<SwitchWrite> {
+        (channel < CHANNELS).then(|| SwitchWrite {
+            address: self.gtm.channel_ctrl(self.mcs, channel),
+            value: u32::from(on),
+            mcs: self.mcs,
+            channel,
+            on,
+        })
+    }
+
     /// The request failed as a whole.
     pub fn failed(&mut self, error: &str) {
         self.error = Some(error.to_string());
@@ -644,5 +680,19 @@ mod tests {
         let (asked, reply) = answer(&view, 0xC, 6, &code);
         view.answered(&asked, &reply);
         assert!(view.rows()[0].changed[0]);
+    }
+
+    #[test]
+    fn a_channel_is_switched_by_its_control_register() {
+        let mut view = GtmView::new(Gtm::for_chip("TC275").unwrap());
+        view.show_mcs(1);
+        let off = view.switch(2, false).unwrap();
+        assert_eq!(off.address, 0xF013_1120);
+        assert_eq!(off.value, 0);
+        let on = view.switch(2, true).unwrap();
+        let arguments = on.arguments();
+        assert_eq!(arguments.memory_reference, "0xf0131120");
+        assert_eq!(arguments.data, encode_base64(&[1, 0, 0, 0]));
+        assert!(view.switch(8, true).is_none());
     }
 }

@@ -2,13 +2,17 @@
 //! stack depth) read every [`INTERVAL_MS`] while the tab is shown, the cores running or not,
 //! with the changed values marked, and the MCS code around the program counter of the selected
 //! channel. The registers are read word by word through the probe-rs fork's `readRanges`
-//! request (`aurix_debug_model::gtm`). Only read: nothing is written to the GTM.
+//! request (`aurix_debug_model::gtm`). The one write is a channel's Stop or Run button: `EN` of
+//! its control register, so the channel keeps its PC and registers while it stands still.
+//! The whole GTM does not halt with the cores: the suspend routing of the OCDS trigger switch
+//! is not public, and with `GTM_OCS.SUS = 2` alone the GTM ran on (probe-rs `gtm_suspend`).
 //!
 //! The tab knows the GTM of the TC27x; for another chip it says so.
 
 use aurix_debug_model::gtm::{Gtm, GtmView, MCS_COUNT};
 use aurix_debug_model::live_watch::INTERVAL_MS;
 use aurix_debug_model::protocol::{ReadRanges, ReadRangesArguments};
+use dap_types::requests::WriteMemory;
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use super::panels::BottomTab;
@@ -55,6 +59,26 @@ impl Debugger {
                 }
             },
         );
+    }
+
+    /// Switches a channel of the MCS shown off (it keeps its PC and registers) or on (it goes
+    /// on from there): the only write the GTM tab makes, to the channel's control register.
+    fn switch_channel(&mut self, channel: usize, on: bool, cx: &mut Context<Self>) {
+        let Some(write) = self.gtm.as_ref().and_then(|view| view.switch(channel, on)) else {
+            return;
+        };
+        self.request::<WriteMemory>(write.arguments(), cx, move |this, result, _| {
+            let what = format!(
+                "MCS{} channel {}: {}",
+                write.mcs,
+                write.channel,
+                if write.on { "run" } else { "stop" }
+            );
+            match result {
+                Ok(_) => this.log(format!("{what} (CTRL.EN = {})", write.value)),
+                Err(error) => this.log(format!("{what} failed: {error}")),
+            }
+        });
     }
 
     pub(super) fn render_gtm(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -117,7 +141,28 @@ impl Debugger {
             .children((0..8).map(|i| cell(format!("R{i}"), 72., color::MUTED)))
             .child(cell("NVZC".into(), 48., color::MUTED))
             .child(cell("SP".into(), 28., color::MUTED))
-            .child(cell("IRQ ERR".into(), 64., color::MUTED));
+            .child(cell("IRQ ERR".into(), 64., color::MUTED))
+            .child(cell(String::new(), 48., color::MUTED));
+        const STOP_IDS: [&str; 8] = [
+            "gtm-stop-0",
+            "gtm-stop-1",
+            "gtm-stop-2",
+            "gtm-stop-3",
+            "gtm-stop-4",
+            "gtm-stop-5",
+            "gtm-stop-6",
+            "gtm-stop-7",
+        ];
+        const RUN_IDS: [&str; 8] = [
+            "gtm-run-0",
+            "gtm-run-1",
+            "gtm-run-2",
+            "gtm-run-3",
+            "gtm-run-4",
+            "gtm-run-5",
+            "gtm-run-6",
+            "gtm-run-7",
+        ];
         let table = div()
             .flex()
             .flex_col()
@@ -176,6 +221,29 @@ impl Debugger {
                             64.,
                             mark(row.changed[9]),
                         ))
+                        .child(div().w(px(48.)).flex_none().child(if on {
+                            button(
+                                STOP_IDS[channel],
+                                "Stop",
+                                true,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.switch_channel(channel, false, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .into_any_element()
+                        } else {
+                            button(
+                                RUN_IDS[channel],
+                                "Run",
+                                true,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.switch_channel(channel, true, cx);
+                                    cx.notify();
+                                }),
+                            )
+                            .into_any_element()
+                        }))
                     }
                     Err(error) => line.child(cell(error, 600., color::MUTED)),
                 }
