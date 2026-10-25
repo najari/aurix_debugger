@@ -184,6 +184,26 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 
 남은 것: down 채널(입력)은 서버가 `probe-rs-create-prompt` 이벤트로 알리지만 Zed 패널은 아직 입력을 받지 않는다.
 
+## B로 옮길 공통 크레이트
+
+A에서 만든 패널들의 로직을 Zed 없이 쓸 수 있는 크레이트로 떼어 냈다([`crates/`](../crates/README.md)). Zed의 GPL 크레이트에 의존하지 않고 serde, serde_json, dap-types(MIT OR Apache-2.0, Zed와 같은 리비전이라 Zed 포크와 타입이 같다)만 쓴다. 라이선스는 아직 정하지 않았다(`publish = false`).
+
+| 크레이트 | 내용 |
+| --- | --- |
+| `aurix-debug-model` | 입출력·UI 없는 상태. `reference`(주소, probe-rs `@core`), `protocol`(`liveWatch`, `rttWindowOpened`, RTT 이벤트, 부호 있는 오프셋의 `disassemble`), `disassembly`(PC 주변 창, 앞뒤 더 읽기와 겹침 제거), `breakpoints`(명령 BP), `live_watch`(코어별 읽기, 바뀐 값), `rtt`(코어·채널별 줄) |
+| `aurix-dap-client` | TCP DAP 클라이언트. dap-types로 타입이 정해진 요청, 이벤트는 채널로. 스레드만 쓰고 async 런타임 없음(GPUI 백그라운드 작업이나 CLI에서 그대로 사용) |
+
+Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그대로 옮겼고, 단위 테스트 11개(모델 10, 클라이언트 1)와 clippy `-D warnings`를 통과한다.
+
+보드 확인(Zed 없이 예제만으로, probe-rs `4b4b107`):
+
+| 예제 | 결과 |
+| --- | --- |
+| `rtt_tail` (CPU0·CPU1 RTT 시험 프로그램) | `core 0 · 0: Terminal`과 `core 1 · 0: Terminal` 채널을 열고 두 코어의 줄을 따로 출력(4초에 9줄, 14줄) |
+| `live_watch` (플래시 데모, 3코어) | `g_ticks`가 읽을 때마다 늘며 `*` 표시, `g_result = 46`, 없는 변수는 `<not a global variable>` |
+
+다음: Zed 포크가 이 크레이트를 쓰도록 바꿔 로직을 한 곳에만 두거나, B(GPUI 독립 앱)의 첫 화면(세션 연결, 스레드·콜스택, 디스어셈블리)을 이 크레이트로 시작한다.
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -196,7 +216,8 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`), VS Code 디스어셈블리 뷰 재확인
 3. ~~Live Watch 패널~~ 동작 확인(`7648baf`). 코어별 로컬 주소 읽기도 확인(문제 아님)
 4. ~~RTT 패널~~ 동작 확인(`7f255b4`, 시험 프로그램 `rtt_demo`), 여러 코어 RTT(`76123f4`, probe-rs `4b4b107`). 입력 채널은 남음
-5. B로 옮길 공통 크레이트 분리(DAP 클라이언트, 디스어셈블리 모델, Live Watch, RTT 수신)
+5. ~~B로 옮길 공통 크레이트 분리~~ `crates/`의 `aurix-debug-model`, `aurix-dap-client`(보드에서 예제로 확인)
+6. Zed 포크를 이 크레이트로 바꾸거나 B의 첫 화면 시작
 
 ## 출처
 

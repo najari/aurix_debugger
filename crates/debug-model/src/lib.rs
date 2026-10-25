@@ -1,0 +1,23 @@
+//! Debugger state for a DAP client of the probe-rs debug adapter, without I/O or UI.
+//!
+//! The Zed fork prototype (A) showed what a TRACE32 style debugger needs beyond the DAP views
+//! Zed has: a disassembly window around the program counter, breakpoints on instructions,
+//! global variables read while the target runs (Live Watch) and the target's RTT output. This
+//! crate keeps the state and the rules of those views, so that the standalone debugger (B) and
+//! any other client use the same logic. A client sends the requests this crate builds and hands
+//! it the responses and events it receives.
+//!
+//! - [`reference`]: addresses in memory references, and the `@core` suffix of probe-rs.
+//! - [`protocol`]: the probe-rs requests and events outside DAP (`liveWatch`,
+//!   `rttWindowOpened`, the RTT events) and `disassemble` with signed offsets.
+//! - [`disassembly`]: the instructions around a program counter, read further on either side.
+//! - [`breakpoints`]: breakpoints on instructions.
+//! - [`live_watch`]: expressions read on every core, and what changed.
+//! - [`rtt`]: the lines of the RTT channels of every core.
+
+pub mod breakpoints;
+pub mod disassembly;
+pub mod live_watch;
+pub mod protocol;
+pub mod reference;
+pub mod rtt;

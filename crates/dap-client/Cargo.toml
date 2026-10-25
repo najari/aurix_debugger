@@ -1,0 +1,14 @@
+[package]
+name = "aurix-dap-client"
+description = "A small DAP client over TCP: requests typed with dap-types, events on a channel. Threads only, no async runtime."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+dap-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+aurix-debug-model.workspace = true

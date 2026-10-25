@@ -1,0 +1,17 @@
+# Crates shared by the Zed fork prototype (A) and the standalone GPUI debugger (B).
+# They depend on no Zed crate (Zed's debugger_ui, dap, ui and editor are GPL-3.0-or-later):
+# only serde, serde_json and dap-types (MIT OR Apache-2.0, the revision Zed uses).
+[workspace]
+resolver = "2"
+members = ["debug-model", "dap-client"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+aurix-debug-model = { path = "debug-model" }

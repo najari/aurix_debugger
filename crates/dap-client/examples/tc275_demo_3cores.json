@@ -1,0 +1,12 @@
+{
+  "request": "attach",
+  "cwd": "C:\\work\\aurix_tcf_demo",
+  "chip": "TC275",
+  "probe": "058b:0000",
+  "coreConfigs": [
+    { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" },
+    { "coreIndex": 1, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" },
+    { "coreIndex": 2, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" }
+  ],
+  "consoleLogLevel": "Console"
+}
