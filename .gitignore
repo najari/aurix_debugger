@@ -24,3 +24,6 @@ out/
 # Live Watch expressions the debugger app keeps next to an attach file
 *.watch
 /app/target/
+
+# vendor manuals (Infineon user's manuals and datasheets) are not redistributed
+/docs/*.pdf
