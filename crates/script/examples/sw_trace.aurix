@@ -1,0 +1,20 @@
+# The software trace of the ORTI demo (zed/aurix_tcf_demo/build_orti.ps1 -Trace, started with
+# start_in_flash, RAM only): aurix_trace.h records on RTT channel "SwTrace" (BinaryLE), the ids
+# named in tc275_orti_trace.trace. Each task runs a slice of 0.4 s, the timer ISR every 10 ms.
+
+attach ../../dap-client/examples/tc275_orti_trace.json
+continue all
+# What the target kept while nobody read (and its "dropped" record) comes first: forget it.
+sleep 1s
+trace clear
+
+trace expect timer_isr count >= 50 within 2s
+trace expect timer_isr interval avg >= 9.9ms
+trace expect timer_isr interval avg <= 10.1ms
+trace expect timer_isr span max < 20us
+trace expect dispatch count >= 3 within 2s
+trace expect TaskA span last >= 399ms within 3s
+trace expect TaskA span last <= 401ms
+trace expect TaskC span max <= 401ms within 3s
+# The reader kept up: nothing dropped since the clear.
+trace expect dropped == 0

@@ -17,7 +17,7 @@ expect OsRunningTcb->state == 0
 expect OsTcb[1].prio == 2
 
 # A breakpoint for one task: a condition on a path (TaskB has priority 2).
-break ../../../zed/aurix_tcf_demo/src/orti_demo.c:85 if OsRunningTcb->prio == 2
+break ../../../zed/aurix_tcf_demo/src/orti_demo.c:107 if OsRunningTcb->prio == 2
 continue 0
 wait stopped 0 reason breakpoint within 3s
 expect OsCurrentTask == 1

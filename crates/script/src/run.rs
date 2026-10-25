@@ -25,7 +25,8 @@ use serde_json::{Value, json};
 
 use crate::compare::{Op, parse_integer};
 use crate::expr::{self, Value as ScriptValue};
-use crate::script::{Access, Command, Cores, LetValue, Script, Step};
+use crate::script::{Access, Command, Cores, LetValue, Script, Step, TraceMeasure, TraceStat};
+use aurix_debug_model::sw_trace::{Names, SwTrace, binary_bytes, format_ns};
 
 /// The server when the script does not name one.
 pub const DEFAULT_SERVER: &str = "127.0.0.1:50000";
@@ -131,6 +132,8 @@ struct Session<'a> {
     rtt: RttChannels,
     /// Per RTT channel, the index (counting dropped lines) of the next line `rtt expect` reads.
     rtt_read: HashMap<ChannelKey, usize>,
+    /// The software trace of the binary RTT channels.
+    sw_trace: SwTrace,
     /// The script variables (the `--set` values first).
     vars: HashMap<String, String>,
     /// Per `repeat` line being run, the times left.
@@ -164,6 +167,7 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
         data_breakpoints: Vec::new(),
         rtt: RttChannels::default(),
         rtt_read: HashMap::new(),
+        sw_trace: SwTrace::default(),
         vars: script.vars.clone(),
         repeats: HashMap::new(),
     };
@@ -330,7 +334,17 @@ impl Session<'_> {
             }
             RTT_DATA_EVENT => {
                 if let Ok(data) = serde_json::from_value::<RttData>(body) {
-                    self.rtt.received(data);
+                    // A binary channel carries the software trace.
+                    let binary = self
+                        .rtt
+                        .get((data.core, data.channel_number))
+                        .is_some_and(|c| c.data_format == "BinaryLE");
+                    if binary {
+                        let bytes = binary_bytes(&data.data).map_err(Fail::Error)?;
+                        self.sw_trace.received(data.core, &bytes);
+                    } else {
+                        self.rtt.received(data);
+                    }
                 }
             }
             RTT_PROMPT_EVENT => {
@@ -553,6 +567,20 @@ impl Session<'_> {
                 self.pass_time(*time)?;
                 Ok(None)
             }
+            Command::TraceExpect {
+                core,
+                id,
+                measure,
+                op,
+                value,
+                within,
+            } => self.trace_expect(*core, id.as_deref(), *measure, *op, *value, *within),
+            Command::TraceClear => {
+                self.drain()?;
+                let records = self.sw_trace.total();
+                self.sw_trace.clear();
+                Ok(Some(format!("{records} record(s) forgotten")))
+            }
             Command::Disconnect => {
                 self.end().map_err(Fail::Error)?;
                 Ok(None)
@@ -609,6 +637,14 @@ impl Session<'_> {
                 Err(error) => return Err(error.into()),
             }
         }
+        // The names of the trace ids, next to the attach file.
+        let names_file = path.with_extension("trace");
+        let names = match std::fs::read_to_string(&names_file) {
+            Ok(text) => Names::parse(&text)
+                .map_err(|error| Fail::Error(format!("{}: {error}", names_file.display())))?,
+            Err(_) => Names::default(),
+        };
+        self.sw_trace = SwTrace::new(names);
         self.client()?
             .request_raw("attach", arguments, ATTACH_TIMEOUT)?;
         self.request("configurationDone", json!({}))?;
@@ -1127,6 +1163,101 @@ impl Session<'_> {
                     None => format!(
                         "no line on core {core} channel {channel} within {:.1}s",
                         within.as_secs_f64()
+                    ),
+                }));
+            };
+            self.pump(left.min(Duration::from_millis(100)))?;
+        }
+    }
+
+    /// What `measure` of the trace reads now, as text: a count, or a time.
+    fn trace_value(
+        &self,
+        core: Option<u64>,
+        id: Option<&str>,
+        measure: TraceMeasure,
+    ) -> Result<Option<u64>, Fail> {
+        // The channel's core is named only in a session of several cores.
+        let core = if self.threads.len() > 1 { core } else { None };
+        if measure == TraceMeasure::Dropped {
+            let dropped = self.sw_trace.dropped();
+            return Ok(Some(match core {
+                Some(core) => dropped.get(&Some(core)).copied().unwrap_or(0),
+                None => dropped.values().sum(),
+            }));
+        }
+        let name = id.unwrap_or_default();
+        let id = self.sw_trace.names().id(name).ok_or_else(|| {
+            Fail::Error(format!(
+                "`{name}` is no trace id: name it in the attach file's .trace file, or give its number"
+            ))
+        })?;
+        let Some(stats) = self.sw_trace.stats_of(core, id) else {
+            return Ok(None);
+        };
+        let ns =
+            |ticks: u64| (ticks as u128 * 1_000_000_000 / self.sw_trace.tick_hz() as u128) as u64;
+        let pick = |spread: &aurix_debug_model::sw_trace::Spread, stat: TraceStat| {
+            (spread.count > 0).then(|| {
+                ns(match stat {
+                    TraceStat::Min => spread.min,
+                    TraceStat::Max => spread.max,
+                    TraceStat::Average => spread.average().unwrap_or(0),
+                    TraceStat::Last => spread.last,
+                })
+            })
+        };
+        Ok(match measure {
+            TraceMeasure::Count => Some(stats.count),
+            TraceMeasure::Span(stat) => pick(&stats.span, stat),
+            TraceMeasure::Interval(stat) => pick(&stats.interval, stat),
+            TraceMeasure::Dropped => None,
+        })
+    }
+
+    fn trace_expect(
+        &mut self,
+        core: Option<u64>,
+        id: Option<&str>,
+        measure: TraceMeasure,
+        op: Op,
+        value: u64,
+        within: Duration,
+    ) -> Result<Option<String>, Fail> {
+        let shown = |n: u64| {
+            if measure.is_time() {
+                format_ns(n)
+            } else {
+                n.to_string()
+            }
+        };
+        let end = Instant::now() + within;
+        loop {
+            self.drain()?;
+            let actual = self.trace_value(core, id, measure)?;
+            if let Some(actual) = actual
+                && op.holds(&actual.to_string(), &value.to_string())
+            {
+                return Ok(Some(format!(
+                    "{} of {} record(s)",
+                    shown(actual),
+                    self.sw_trace.total()
+                )));
+            }
+            self.check_interrupted()?;
+            let Some(left) = end.checked_duration_since(Instant::now()) else {
+                return Err(Fail::Expectation(match actual {
+                    Some(actual) => format!(
+                        "expected {op} {} within {:.1}s, found {} ({} record(s) read)",
+                        shown(value),
+                        within.as_secs_f64(),
+                        shown(actual),
+                        self.sw_trace.total()
+                    ),
+                    None => format!(
+                        "no such records within {:.1}s ({} record(s) read; is the channel BinaryLE?)",
+                        within.as_secs_f64(),
+                        self.sw_trace.total()
                     ),
                 }));
             };

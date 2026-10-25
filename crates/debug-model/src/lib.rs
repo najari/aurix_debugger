@@ -21,6 +21,7 @@
 //! - [`path_expr`]: the first check of the C expressions the server reads (paths, `&`, casts,
 //!   operators).
 //! - [`gtm`]: the GTM's MCS channels and memory, their instructions as text, the GTM view.
+//! - [`sw_trace`]: the software trace of `aurix_trace.h` records on a binary RTT channel.
 //! - [`cache`]: the cores' caches, the segments they cache, their hit and miss counts.
 
 pub mod breakpoints;
@@ -35,4 +36,5 @@ pub mod protocol;
 pub mod reference;
 pub mod rtt;
 pub mod source_breakpoints;
+pub mod sw_trace;
 pub mod variables;

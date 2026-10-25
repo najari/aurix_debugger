@@ -14,6 +14,10 @@
  *   OsTicks          ticks of the timer ISR                        OS vs_TICKS
  *
  * os_dispatch() is where the running task changes: a breakpoint there stops at each switch.
+ *
+ * Built with -DSW_TRACE (build_orti.ps1 -Trace: build\orti_trace.elf) it also writes a software
+ * trace (aurix_trace.h, RTT channel "SwTrace"): ids 1-3 a task's slice (begin and end), 10 the
+ * timer ISR (begin and end), 20 a dispatch with the task as arg. orti_trace.trace names them.
  */
 
 #define TASKS 3
@@ -22,6 +26,21 @@
 #define READY 1u
 #define WAITING 2u
 #define SUSPENDED 3u
+
+#ifdef SW_TRACE
+#define AURIX_TRACE_IMPLEMENTATION
+#define AURIX_TRACE_OWN_RTT
+#define AURIX_TRACE_BUFFER_SIZE 2048u
+#include "aurix_trace.h"
+#else
+#define AURIX_TRACE(id, arg) ((void)0)
+#define AURIX_TRACE_BEGIN(id) ((void)0)
+#define AURIX_TRACE_END(id) ((void)0)
+#endif
+
+/* The ids of the trace (orti_trace.trace). */
+#define TRACE_ISR 10u
+#define TRACE_DISPATCH 20u
 
 /* STM0 timer, low 32 bits (TC27x: STM0 base 0xF0000000, TIM0 at +0x10), 100 MHz. */
 #define STM0_TIM0 (*(volatile unsigned *)0xF0000010u)
@@ -52,9 +71,11 @@ static void set_state(unsigned task, unsigned char state)
 
 __attribute__((noinline)) static void timer_isr(void)
 {
+    AURIX_TRACE_BEGIN(TRACE_ISR);
     OsCurrentIsr = 1;
     OsTicks++;
     OsCurrentIsr = 0;
+    AURIX_TRACE_END(TRACE_ISR);
 }
 
 /* Runs task `task` for one slice: its work, and the timer ISR every tick. */
@@ -77,6 +98,7 @@ __attribute__((noinline)) static void TaskC(void) { run_slice(2); }
 /* The running task changes to `task`; the one before is ready again (TaskC waits instead). */
 __attribute__((noinline)) static void os_dispatch(unsigned task, unsigned previous)
 {
+    AURIX_TRACE(TRACE_DISPATCH, task);
     if (previous < TASKS)
         set_state(previous, previous == 2 ? WAITING : READY);
     OsCurrentTask = (unsigned char)task;
@@ -90,6 +112,9 @@ int main(void)
     unsigned task;
     unsigned previous = NO_TASK;
 
+#ifdef SW_TRACE
+    aurix_trace_init();
+#endif
     /* No start code clears the data: set it here. */
     for (task = 0; task < TASKS; task++) {
         OsTcb[task].prio = (unsigned char)(3 - task);
@@ -107,12 +132,14 @@ int main(void)
         for (task = 0; task < TASKS; task++) {
             os_dispatch(task, previous);
             previous = task;
+            AURIX_TRACE_BEGIN(task + 1);
             if (task == 0)
                 TaskA();
             else if (task == 1)
                 TaskB();
             else
                 TaskC();
+            AURIX_TRACE_END(task + 1);
         }
     }
 }

@@ -40,6 +40,7 @@ impl Debugger {
             self.load_gtm_for(&attach);
             self.load_cache_for(&attach);
         }
+        self.load_sw_trace_names(&attach);
         if let Err(error) = recent::remember(&mut self.recent, &attach) {
             self.log(format!("recent attach files: {error}"));
         }
@@ -74,6 +75,8 @@ impl Debugger {
         self.os_busy = false;
         self.gtm_busy = false;
         self.cache_busy = false;
+        // A new session is a new stream of records.
+        self.sw_trace = aurix_debug_model::sw_trace::SwTrace::new(self.sw_trace.names().clone());
         // A measurement of the old session cannot go on (its CCTRL writes stay as they were).
         if let Some(view) = &mut self.cache
             && view.measuring()

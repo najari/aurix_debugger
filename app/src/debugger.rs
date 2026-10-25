@@ -41,6 +41,7 @@ mod memory;
 mod os;
 mod panels;
 mod splitters;
+mod sw_trace;
 
 use crate::layout::{Drag, Layout, Splitter};
 
@@ -153,6 +154,13 @@ pub struct Debugger {
     cache: Option<aurix_debug_model::cache::CacheView>,
     /// A read of the cache registers is under way.
     cache_busy: bool,
+    /// The software trace of the binary RTT channels.
+    sw_trace: aurix_debug_model::sw_trace::SwTrace,
+    /// The names file of the trace ids, and why it could not be read.
+    sw_trace_names: Option<std::path::PathBuf>,
+    sw_trace_note: Option<String>,
+    /// What the tab shows while frozen (the trace is still read meanwhile).
+    sw_trace_frozen: Option<aurix_debug_model::sw_trace::SwTrace>,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -221,6 +229,10 @@ impl Debugger {
             gtm_busy: false,
             cache: None,
             cache_busy: false,
+            sw_trace: Default::default(),
+            sw_trace_names: None,
+            sw_trace_note: None,
+            sw_trace_frozen: None,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
@@ -530,7 +542,14 @@ impl Debugger {
             RTT_DATA_EVENT => {
                 if let Ok(data) = serde_json::from_value::<RttData>(event.body) {
                     let key = (data.core, data.channel_number);
-                    if self.rtt.received(data) > 0 && self.bottom == BottomTab::Rtt(key) {
+                    // A binary channel carries the software trace (aurix_trace.h).
+                    if self
+                        .rtt
+                        .get(key)
+                        .is_some_and(|c| c.data_format == "BinaryLE")
+                    {
+                        self.sw_trace_received(data);
+                    } else if self.rtt.received(data) > 0 && self.bottom == BottomTab::Rtt(key) {
                         self.scroll_rtt_to_end();
                     }
                 }

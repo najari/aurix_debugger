@@ -126,6 +126,19 @@ pub enum Command {
     },
     Sleep(Duration),
     Disconnect,
+    /// `trace expect [core] <id> <measure> <op> <value> [within <time>]`: the software trace.
+    TraceExpect {
+        core: Option<u64>,
+        /// The id's name (from `<attach>.trace`) or number; none for `dropped`.
+        id: Option<String>,
+        measure: TraceMeasure,
+        op: Op,
+        /// A count, or nanoseconds.
+        value: u64,
+        within: Duration,
+    },
+    /// `trace clear`: the trace read so far is forgotten.
+    TraceClear,
     /// `let <name> = …`.
     Let {
         name: String,
@@ -145,6 +158,113 @@ pub enum Command {
     Print(String),
     /// A failed expectation, with its message.
     Fail(String),
+}
+
+/// What `trace expect` compares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceMeasure {
+    /// The records of the id that are no span ends.
+    Count,
+    /// The records the target dropped.
+    Dropped,
+    /// The spans of the id, `BEGIN` to `END`.
+    Span(TraceStat),
+    /// From one record of the id to the next.
+    Interval(TraceStat),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceStat {
+    Min,
+    Max,
+    Average,
+    Last,
+}
+
+impl TraceMeasure {
+    /// Whether the value is a time.
+    pub fn is_time(self) -> bool {
+        matches!(self, TraceMeasure::Span(_) | TraceMeasure::Interval(_))
+    }
+}
+
+/// `750ns`, `2.5us`, `2.5µs`, `10ms`, `1.5s`: nanoseconds.
+pub fn parse_time_ns(text: &str) -> Result<u64, String> {
+    let bad = || format!("`{text}` is not a time: write 750ns, 2.5us, 10ms or 1s");
+    let (number, scale) = [
+        ("ns", 1.0),
+        ("us", 1e3),
+        ("µs", 1e3),
+        ("ms", 1e6),
+        ("s", 1e9),
+    ]
+    .iter()
+    .find_map(|(unit, scale)| text.strip_suffix(unit).map(|n| (n, *scale)))
+    .ok_or_else(bad)?;
+    let value: f64 = number.parse().map_err(|_| bad())?;
+    if !(value.is_finite() && value >= 0.0) {
+        return Err(bad());
+    }
+    Ok((value * scale).round() as u64)
+}
+
+/// The words after `trace expect`.
+fn trace_expect(text: &str) -> Result<Command, String> {
+    let (rest, within) = take_within(text)?;
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    // A number first is the core, unless a measure follows it: then it is the id.
+    let measure_next = words
+        .get(1)
+        .is_some_and(|w| matches!(*w, "count" | "span" | "interval"));
+    let (core, words) = match words.first() {
+        Some(word) if word.parse::<u64>().is_ok() && !measure_next => {
+            (Some(parse_core(word)?), &words[1..])
+        }
+        _ => (None, &words[..]),
+    };
+    let usage = "`trace expect` is `trace expect [core] <id> count|span <stat>|interval <stat> <op> <value>` \
+                 or `trace expect [core] dropped <op> <count>`, stat min, max, avg or last";
+    let stat = |word: Option<&&str>| match word.copied() {
+        Some("min") => Ok(TraceStat::Min),
+        Some("max") => Ok(TraceStat::Max),
+        Some("avg") => Ok(TraceStat::Average),
+        Some("last") => Ok(TraceStat::Last),
+        _ => Err(usage.to_string()),
+    };
+    let (id, measure, tail) = match words {
+        ["dropped", tail @ ..] => (None, TraceMeasure::Dropped, tail),
+        [id, "count", tail @ ..] => (Some(id.to_string()), TraceMeasure::Count, tail),
+        [id, "span", s, tail @ ..] => (
+            Some(id.to_string()),
+            TraceMeasure::Span(stat(Some(s))?),
+            tail,
+        ),
+        [id, "interval", s, tail @ ..] => (
+            Some(id.to_string()),
+            TraceMeasure::Interval(stat(Some(s))?),
+            tail,
+        ),
+        _ => return Err(usage.into()),
+    };
+    let [op, value] = tail else {
+        return Err(usage.into());
+    };
+    let op = Op::parse(op).ok_or_else(|| format!("`{op}` is not ==, !=, <, <=, > or >="))?;
+    let value = if measure.is_time() {
+        parse_time_ns(value)?
+    } else {
+        value
+            .parse()
+            .map_err(|_| format!("`{value}` is not a count"))?
+    };
+    Ok(Command::TraceExpect {
+        core,
+        id,
+        measure,
+        op,
+        value,
+        within,
+    })
 }
 
 /// Where a `let` takes its value.
@@ -173,6 +293,7 @@ impl Command {
                 | Command::ExpectLive { .. }
                 | Command::ExpectMemory { .. }
                 | Command::RttExpect { .. }
+                | Command::TraceExpect { .. }
                 | Command::Check(_)
         )
     }
@@ -877,6 +998,14 @@ fn parse_command(text: &str) -> Result<Command, String> {
                 _ => Err("`rtt` is `rtt send …` or `rtt expect …`".into()),
             }
         }
+        "trace" => match args.first() {
+            Some(&"expect") => trace_expect(after(2)),
+            Some(&"clear") => {
+                no_more(1)?;
+                Ok(Command::TraceClear)
+            }
+            _ => Err("`trace` is `trace expect …` or `trace clear`".into()),
+        },
         "sleep" => {
             no_more(1)?;
             Ok(Command::Sleep(parse_duration(
@@ -1251,6 +1380,62 @@ mod tests {
         assert!(
             Script::parse("let n = 1\nattach a.json\nexpect memory 0x0@${n}\n", &vars).is_err()
         );
+    }
+
+    #[test]
+    fn trace_expectations() {
+        assert_eq!(
+            one("trace expect 0 timer_isr count >= 50 within 1s"),
+            Command::TraceExpect {
+                core: Some(0),
+                id: Some("timer_isr".into()),
+                measure: TraceMeasure::Count,
+                op: Op::Ge,
+                value: 50,
+                within: Duration::from_secs(1)
+            }
+        );
+        assert_eq!(
+            one("trace expect TaskA span max <= 450ms"),
+            Command::TraceExpect {
+                core: None,
+                id: Some("TaskA".into()),
+                measure: TraceMeasure::Span(TraceStat::Max),
+                op: Op::Le,
+                value: 450_000_000,
+                within: DEFAULT_WAIT
+            }
+        );
+        assert!(matches!(
+            one("trace expect 10 interval avg > 9.5ms"),
+            Command::TraceExpect {
+                core: None,
+                measure: TraceMeasure::Interval(TraceStat::Average),
+                value: 9_500_000,
+                ..
+            }
+        ));
+        assert!(matches!(
+            one("trace expect dropped == 0"),
+            Command::TraceExpect {
+                id: None,
+                measure: TraceMeasure::Dropped,
+                value: 0,
+                ..
+            }
+        ));
+        assert_eq!(one("trace clear"), Command::TraceClear);
+        assert_eq!(parse_time_ns("2.75us").unwrap(), 2_750);
+        assert_eq!(parse_time_ns("2.75µs").unwrap(), 2_750);
+        for bad in [
+            "trace expect isr span 3ms",
+            "trace expect isr span max <= 3",
+            "trace expect isr count >= x",
+            "trace expect isr",
+            "trace look",
+        ] {
+            assert!(parse(&format!("attach a.json\n{bad}")).is_err(), "{bad}");
+        }
     }
 
     #[test]

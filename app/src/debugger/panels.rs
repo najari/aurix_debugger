@@ -28,6 +28,8 @@ pub enum BottomTab {
     Gtm,
     /// The cores' caches.
     Cache,
+    /// The software trace of the binary RTT channels.
+    SwTrace,
 }
 
 /// The file the Live Watch expressions of `attach` are kept in.
@@ -164,18 +166,26 @@ impl Debugger {
             | BottomTab::Memory
             | BottomTab::Os
             | BottomTab::Gtm
-            | BottomTab::Cache => {}
+            | BottomTab::Cache
+            | BottomTab::SwTrace => {}
         }
     }
 
     pub(super) fn render_bottom(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut tabs = vec![(BottomTab::Console, "Console".to_string())];
-        tabs.extend(self.rtt.channels().iter().map(|channel| {
-            (
-                BottomTab::Rtt(channel.key()),
-                format!("RTT {}", channel.label()),
-            )
-        }));
+        // A binary channel shows in the SW Trace tab.
+        tabs.extend(
+            self.rtt
+                .channels()
+                .iter()
+                .filter(|c| c.data_format != "BinaryLE")
+                .map(|channel| {
+                    (
+                        BottomTab::Rtt(channel.key()),
+                        format!("RTT {}", channel.label()),
+                    )
+                }),
+        );
         tabs.push((
             BottomTab::LiveWatch,
             format!("Live Watch ({})", self.live_watch.expressions().len()),
@@ -190,6 +200,10 @@ impl Debugger {
         tabs.push((BottomTab::Os, "OS".to_string()));
         tabs.push((BottomTab::Gtm, "GTM".to_string()));
         tabs.push((BottomTab::Cache, "Cache".to_string()));
+        tabs.push((
+            BottomTab::SwTrace,
+            format!("SW Trace ({})", self.sw_trace.total()),
+        ));
         let body = match self.bottom {
             BottomTab::Console => self.render_console(cx).into_any_element(),
             BottomTab::Rtt(key) => self.render_rtt(key, cx).into_any_element(),
@@ -198,6 +212,7 @@ impl Debugger {
             BottomTab::Os => self.render_os(cx),
             BottomTab::Gtm => self.render_gtm(cx),
             BottomTab::Cache => self.render_cache(cx),
+            BottomTab::SwTrace => self.render_sw_trace(cx),
         };
         div()
             .flex()
