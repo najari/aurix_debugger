@@ -19,7 +19,7 @@ A0(포크 없이 Zed를 probe-rs DAP 클라이언트로 쓰기)는 서버 수정
 | 주변장치 (SVD) | 변수 뷰의 `Peripherals` | 됨. 서버가 변수 범위로 준다 (실기 확인) |
 | 한 세션 멀티코어 | 됨 | 스레드 3개로 보임, 동시 정지 동작 (실기 확인) |
 | RTT 출력 | 확장이 `probe-rs-rtt-data` 이벤트를 터미널로 표시 | 표시할 수 없음 (사용자 정의 이벤트를 받을 확장 API 없음) |
-| Live Watch (`liveWatch` 요청) | 확장 `najari.probe-rs-live-watch` | 만들 수 없음 (확장이 패널을 추가할 수 없음) |
+| Live Watch (`liveWatch` 요청) | 확장 `najari.probe-rs-live-watch` | 확장으로는 만들 수 없음 (패널 추가 불가). Zed 포크에 패널을 넣어 동작 확인(`7648baf`) |
 | `tasks.json`의 `dependsOn` | 됨 | 읽지 못함 (시작 전 준비 작업은 직접 실행) |
 
 Zed 확장은 Rust를 WASM으로 컴파일한 것이고 언어, 디버거 어댑터, 테마, 스니펫, MCP만 제공한다. 디버거 확장이 정하는 것은 어댑터 실행 방법과 설정 스키마뿐이다.
@@ -121,6 +121,32 @@ Zed v1.25.3을 포크해([najari/zed](https://github.com/najari/zed/tree/tricore
 
 VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "Open Disassembly View"를 열면 `@0` 참조로도 PC 줄(`0x8021C008`)이 표시됐다. `0x8021C030 mul d2, d3` 줄에 BP를 걸자 BP 목록에 `0x8021c030`이 생겼고, continue 뒤 `0x8021c030`(23번 줄)에서 멈췄다. 수정 전이었다면 VS Code가 보낸 "기준 참조 + 오프셋" 중 기준 주소(`0x8021C008`)에 걸렸을 것이다.
 
+## Live Watch 패널 (Zed `7648baf`)
+
+디버그 패널에 "Live Watch" 탭을 더했다. VS Code 확장 `najari.probe-rs-live-watch`와 같은 방식으로, probe-rs의 `liveWatch` 요청(DAP 밖)으로 전역 변수를 타깃을 멈추지 않고 읽는다.
+
+| 항목 | 내용 |
+| --- | --- |
+| 식 추가·삭제 | 위쪽 입력 칸에 쓰고 Enter, 줄마다 삭제 버튼. 식 목록은 Zed 키-값 저장소에 남음 |
+| 읽기 | 500 ms마다. 스레드가 여럿이면 스레드마다(코어마다) `core`를 붙여 읽고 코어별로 묶어 표시. 앞 요청이 끝나지 않은 코어는 건너뜀 |
+| 표시 | 값과 타입, 지난번과 달라진 값은 주황색, 읽지 못한 식은 서버 오류 |
+| 일시정지 | 버튼으로 읽기를 멈춤. 세션이 끝나면 읽기도 끝남 |
+| 바꾼 파일 | `project`: `Session::live_watch`, `liveWatch` 요청 타입. `debugger_ui`: `live_watch.rs`, `DebuggerPaneItem::LiveWatch`. 키맵: `LiveWatch > Editor`의 Enter |
+
+실기(TC275, CPU0–CPU2 한 세션, probe-rs `18f99ec`):
+
+| 시험 | 결과 |
+| --- | --- |
+| 정지 중 | `g_ticks = 36215`, `g_result = 46`이 코어 0·1·2에 표시 |
+| 실행 중(`demo.c:23` BP를 잠시 끄고 continue) | 6초 동안 `liveWatch` 60번, `g_ticks`가 약 485만까지 늘며 주황색 표시, `g_result`는 46 유지 |
+| 일시정지·재개 | 일시정지 3초 동안 요청 0번, 재개 뒤 3초에 18번(코어 3개 × 초당 2번) |
+
+남은 것:
+
+- `g_ticks`는 `0x7000a000`, 즉 각 코어가 자기 DSPR로 보는 로컬 주소에 있다. 그런데 코어 1·2에서 읽은 값도 CPU0의 카운터처럼 늘었다. 디버거 쪽 접근에서는 이 주소가 CPU0 DSPR로 가는 것으로 보인다. 코어별로 읽으려면 서버가 로컬 주소를 코어별 전역 주소(CPU1 DSPR `0x6000_0000` 등)로 바꿔야 한다(probe-rs 쪽 확인 필요).
+- Zed의 메뉴에는 어댑터와 상관없이 Live Watch가 나온다(어댑터 기능 표시가 없어 가릴 수 없음). probe-rs가 아니면 오류만 보인다.
+- RTT 터미널은 아직이다. 데모 프로그램에 RTT 제어 블록이 없어서, RTT를 쓰는 시험 프로그램(RAM이나 PF1 시험 섹터)이 먼저 필요하다.
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -131,7 +157,8 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
 2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`), VS Code 디스어셈블리 뷰 재확인
-3. RTT 터미널과 Live Watch 패널, 이후 B로 옮길 공통 크레이트 분리
+3. ~~Live Watch 패널~~ 동작 확인(`7648baf`). 코어별 로컬 주소 읽기는 서버 확인 필요
+4. RTT 터미널(RTT 시험 프로그램 필요), 이후 B로 옮길 공통 크레이트 분리
 
 ## 출처
 
