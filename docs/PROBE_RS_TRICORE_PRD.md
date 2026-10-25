@@ -131,7 +131,7 @@ FR-S3(MCDS 타임스탬프)은 이 어댑터에서도 열린 맵 15로 확인했
 
 - **WP-9 (TC37x)**: TC37x 보드가 필요하다. TC36x(TC3xx 계열)는 따로 더했고, 아래 항목처럼 TriBoard TC3X5에서 확인했다(커밋 메시지 기준). 이 PC에는 TC36x 보드가 없어 이 PC에서는 단위 테스트까지만 돌렸다.
 - **TC36x**: 코어 2개, DSPR 192 KiB, PSPR 32 KiB, PFLASH는 PF0 `0x80000000`과 PF1 `0x80300000`(각 2 MiB, 논리 섹터 16 KiB)이고 TC3xx 로더(`m25_flash_loader_tc3xx.bin`, `loader/build.ps1`이 둘을 만든다)로 쓴다. 코어 시작 상태(`SYSCON.BHALT`, 앱이 시작하지 않은 코어)는 잠든 코어(`CoreStatus::Sleeping`)로 보인다(`bf53965`): halt는 정지 요청 없이 바로 성공하고, run은 그대로 두고, step은 `CoreInBootHalt`로 실패하며, 디버그 콘솔에 한 번 알린다. DAP pause는 "The core is asleep"으로 거절한다. 앱이 코어를 시작하면 실행 중으로 보이고, 디버거가 코어를 시작하지는 않는다. 플래시 쓰기는 그 코어를 건드리지 않는다. TC36x의 SVD(TC36XPD)는 빈 `<access />` 요소를 지운 뒤 읽는다. 서버가 비어 있는 PFLASH의 블록 읽기(ECC 오류 0x8D)에 데이터 없이 답하는 것도 처리한다.
-- **T-15 (MCDS 기록)**: 이 보드는 EMEM이 읽히는 TC27x ED다. 맵 1을 여는 어댑터(예: DAP miniWiggler)나 TriBoard가 있으면 검증할 수 있다. Infineon의 MCDS 기록 라이브러리(`mcds_recorder.dll`)도 이 어댑터에서는 맵 1을 읽지 못하고 연속 트레이스 등급이 8(불안정)로 나오므로, 어댑터를 바꾸지 않고는 방법이 없다([DAS 분석](DAS_DLL_ANALYSIS.md)의 부록 D).
+- **T-15 (MCDS 기록)**: ~~이 보드는 EMEM이 읽히는 TC27x ED다.~~ 정정(2026-10-25): 이 보드는 ED가 아닌 것으로 보인다. TC27x 사용자 설명서로 SCU_CHIPID `0x47427060`을 풀면 EEA(bit 16) = 0("EEC is not available")이고, EMEM(`0x9F000000`·`0xBF000000`)은 맵 0에서도 `0x8D`로 거부된다. 예전에 "EMEM이 읽힌다"고 본 `0xAF00xxxx`는 DF0(데이터 플래시)였다. 검증에는 ED 보드(예: TriBoard TC275 ED)와 맵 1을 여는 어댑터(예: DAP miniWiggler)가 필요하다. Infineon의 MCDS 기록 라이브러리(`mcds_recorder.dll`)도 이 어댑터에서는 맵 1을 읽지 못하고 연속 트레이스 등급이 8(불안정)로 나오므로, 어댑터를 바꾸지 않고는 방법이 없다([DAS 분석](DAS_DLL_ANALYSIS.md)의 부록 D).
 - **FR-C5 (SW 브레이크포인트, Could)**: 코어 자신의 PSPR에서만 쓰고, 그것도 트리거 유닛이 모자랄 때만 쓴다(0.6). 다른 메모리(PFLASH, LMU, 다른 코어의 PSPR)의 BP는 트리거 유닛 8개를 쓴다. 트리거 유닛은 PC를 그대로 비교하므로, 코드를 로컬 별칭(0xC000\_0000)과 전역 주소에서 함께 실행하는 프로그램은 실행하는 주소에 BP를 걸어야 한다. 세션이 `disconnect` 없이 끝나면(디버거 강제 종료) 그때 있던 `debug` 명령이 RAM에 남지만, 다음 세션이 기록을 보고 원래 명령을 되돌린다(0.6, 같은 PC에서). **FR-V3 (주변장치 뷰, Could)**는 Infineon 레지스터 파일 대신 Infineon PD SVD로 구현했다(0.6).
 - **FR-F5**: 쓰기 전에 섹터를 읽어 같으면 건너뛰고, 이웃 섹터 무변화는 `pflash_check`로 검증한다. 환경 변수 `PROBE_RS_TRICORE_FLASH_BACKUP=<폴더>`를 주면 지우는 섹터마다 지우기 전 내용을 `<폴더>/<UTC 시각>/sector_<주소>.json`에 저장한다(0.6). 되돌리기는 데모 `tools/backup_to_hex.py`로 HEX를 만들어 `probe-rs download`로 한다.
 - **`probe-rs erase`**: 호스트 측 시퀀스로 PFLASH 전체를 섹터 단위로 지운다. TC27x에서는 DFLASH(DF0)도 지운다. 시험 보드에서 실행하지 말 것.
@@ -493,7 +493,7 @@ ELF는 보통 캐시 주소(0x8021C000)로 링크되므로, 플래셔는 0x8xxx\
 - [x] probe-rs가 쓰는 capstone 버전의 TriCore 지원 여부 — `arch_tricore` 기능(TriCore 1.6.1)으로 DAP 디스어셈블리 동작 (FR-U3)
 - [x] 성능 목표치 (step 지연, 메모리 처리량): 2026-10-24에 측정했다(0.2). 목표치는 따로 정하지 않았다. 참고: MCD 경유로 앱 섹터 12개와 PF1 시험 섹터를 ECC 인식 방식으로 읽어 비교하는 데 77초
 - [x] MCD FFI 타입을 SPRINT 헤더 없이 직접 정의해도 되는지 라이선스 확인 — 헤더는 넣지 않고 `ffi.rs`에 원문 저작권 고지와 변경 고지를 넣었다. 최종 확인은 담당자 몫
-- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보 — 보드는 TC27x ED(EMEM 읽힘)로 확인. 맵 1을 여는 어댑터가 남았다(Infineon 공식 라이브러리도 이 어댑터에서는 맵 1을 읽지 못한다)
+- [ ] MCDS 검증용 ED 보드와 맵 1 허용 어댑터 확보 — ~~보드는 TC27x ED(EMEM 읽힘)로 확인.~~ 정정(2026-10-25): 이 ShieldBuddy는 ED가 아닌 것으로 보인다(CHIPID.EEA = 0, EMEM 거부, 예전에 읽은 `0xAF00xxxx`는 DF0). ED 보드와 맵 1을 여는 어댑터가 둘 다 필요하다(Infineon 공식 라이브러리도 이 어댑터에서는 맵 1을 읽지 못한다)
 - [x] TC37x를 2차에 넣을지 — WP-9로 남기고 TC37x 보드가 생기면 진행
 
 ## 12. 부록

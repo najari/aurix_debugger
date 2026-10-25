@@ -15,7 +15,7 @@
 
 ## 비교 대상과 기준
 
-TC275(ShieldBuddy, TC27x ED)를 디버깅하는 같은 일을 두 도구로 할 때를 비교했다.
+TC275(ShieldBuddy, TC27x C-step, HSM 있음)를 디버깅하는 같은 일을 두 도구로 할 때를 비교했다. 예전에는 이 보드를 ED로 적었으나, CHIPID.EEA = 0이고 EMEM이 읽히지 않아 ED가 아닌 것으로 보인다(2026-10-25, [보조 코어 검토](AUX_CORES_DEBUG_REVIEW.md)).
 
 | 구성 | TRACE32 | 우리 디버거 |
 | --- | --- | --- |

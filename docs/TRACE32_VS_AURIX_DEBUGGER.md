@@ -20,7 +20,7 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 ## 비교 대상과 기준
 
 - **TRACE32**: Lauterbach의 TriCore 디버거와 트레이스다. 공개 문서를 기준으로 했다. [TriCore Debugger and Trace](https://www2.lauterbach.com/pdf/debugger_tricore.pdf) Release 02.2026, [TriCore 제품 페이지](https://www.lauterbach.com/tricore), 보도자료, 지원 문서를 봤다. TRACE32 하드웨어가 없어 실기로 확인하지는 않았다.
-- **aurix_debugger**: [najari/aurix_debugger](https://github.com/najari/aurix_debugger)와 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `ad00ecc`, 보완 뒤 `fbf362f`)다. probe-rs TriCore 포트, VS Code 설정, Live Watch 확장으로 이루어져 있다. TC275 ShieldBuddy(C-step ED, DAS JTAG AURDUINO)에서 확인한 결과를 기준으로 했다.
+- **aurix_debugger**: [najari/aurix_debugger](https://github.com/najari/aurix_debugger)와 [najari/probe-rs `tricore`](https://github.com/najari/probe-rs/tree/tricore)(커밋 `ad00ecc`, 보완 뒤 `fbf362f`)다. probe-rs TriCore 포트, VS Code 설정, Live Watch 확장으로 이루어져 있다. TC275 ShieldBuddy(C-step, DAS JTAG AURDUINO. 예전에 ED로 적었으나 CHIPID.EEA = 0이라 ED가 아닌 것으로 보임, 2026-10-25)에서 확인한 결과를 기준으로 했다.
 - 가격은 TRACE32가 공개하지 않아 비교하지 않았다. 하드웨어와 아키텍처별 라이선스를 따로 산다.
 
 ## 기능 비교
