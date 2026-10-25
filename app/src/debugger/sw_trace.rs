@@ -103,11 +103,19 @@ const CHART_WIDTH: u32 = 760;
 
 /// The chart of `trace`'s last `window` nanoseconds: a row per core and id, spans as bars,
 /// single records as ticks, the time under it.
-fn render_chart(trace: &SwTrace, window_ns: u64, several: bool) -> AnyElement {
+/// Also whether the window is at the latest and at the oldest events (for ◀ ▶). `back` is in
+/// halves of the window.
+fn render_chart(
+    trace: &SwTrace,
+    window_ns: u64,
+    several: bool,
+    back: u64,
+) -> (AnyElement, bool, bool) {
     let ticks = (window_ns as u128 * trace.tick_hz() as u128 / 1_000_000_000) as u64;
-    let Some(chart) = trace.chart(ticks, CHART_WIDTH) else {
-        return div().into_any_element();
+    let Some(chart) = trace.chart(ticks, CHART_WIDTH, back * (ticks / 2)) else {
+        return (div().into_any_element(), true, true);
     };
+    let (latest, oldest) = (chart.latest, chart.oldest);
     let label = |row: &aurix_debug_model::sw_trace::ChartRow| match (several, row.core) {
         (true, Some(core)) => format!("CPU{core} {}", row.name),
         _ => row.name.clone(),
@@ -186,7 +194,7 @@ fn render_chart(trace: &SwTrace, window_ns: u64, several: bool) -> AnyElement {
                 .child(trace.format(time)),
         );
     }
-    div()
+    let element = div()
         .flex()
         .flex_col()
         .gap_0p5()
@@ -198,7 +206,8 @@ fn render_chart(trace: &SwTrace, window_ns: u64, several: bool) -> AnyElement {
                 .child(div().w(px(150.)).flex_none())
                 .child(axis),
         )
-        .into_any_element()
+        .into_any_element();
+    (element, latest, oldest)
 }
 
 impl Debugger {
@@ -382,13 +391,18 @@ impl Debugger {
         let window = self.sw_trace_window;
         let chart = window
             .filter(|_| !empty)
-            .map(|i| render_chart(trace, WINDOWS[i].1, several));
+            .map(|i| render_chart(trace, WINDOWS[i].1, several, self.sw_trace_back));
+        let (chart, latest, oldest) = match chart {
+            Some((chart, latest, oldest)) => (Some(chart), latest, oldest),
+            None => (None, true, true),
+        };
         let mut views = div().flex().items_center().gap_1().child(button(
             "sw-trace-list",
             "List",
             window.is_some(),
             cx.listener(|this, _, _, cx| {
                 this.sw_trace_window = None;
+                this.sw_trace_back = 0;
                 cx.notify();
             }),
         ));
@@ -399,9 +413,42 @@ impl Debugger {
                 window != Some(i),
                 cx.listener(move |this, _, _, cx| {
                     this.sw_trace_window = Some(i);
+                    this.sw_trace_back = 0;
                     cx.notify();
                 }),
             ));
+        }
+        // With the chart: half a window earlier or later, or back to the latest events.
+        if window.is_some() {
+            let back = self.sw_trace_back;
+            views = views
+                .child(button(
+                    "sw-trace-earlier",
+                    "◀",
+                    !oldest,
+                    cx.listener(move |this, _, _, cx| {
+                        this.sw_trace_back = back + 1;
+                        cx.notify();
+                    }),
+                ))
+                .child(button(
+                    "sw-trace-later",
+                    "▶",
+                    back > 0 && !latest,
+                    cx.listener(move |this, _, _, cx| {
+                        this.sw_trace_back = back.saturating_sub(1);
+                        cx.notify();
+                    }),
+                ))
+                .child(button(
+                    "sw-trace-latest",
+                    "Latest",
+                    back > 0,
+                    cx.listener(|this, _, _, cx| {
+                        this.sw_trace_back = 0;
+                        cx.notify();
+                    }),
+                ));
         }
         div()
             .flex()

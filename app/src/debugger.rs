@@ -168,6 +168,8 @@ pub struct Debugger {
     sw_trace_frozen: Option<aurix_debug_model::sw_trace::SwTrace>,
     /// The chart's window (an index of the SW Trace tab's windows), or the list.
     sw_trace_window: Option<usize>,
+    /// How far the chart looks back, in halves of its window (0: the latest events).
+    sw_trace_back: u64,
     /// When trace data last redrew the window.
     sw_trace_drawn: Option<Instant>,
     bottom: BottomTab,
@@ -245,6 +247,7 @@ impl Debugger {
             sw_trace_note: None,
             sw_trace_frozen: None,
             sw_trace_window: None,
+            sw_trace_back: 0,
             sw_trace_drawn: None,
             bottom: BottomTab::Console,
             console: Vec::new(),

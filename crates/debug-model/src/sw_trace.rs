@@ -487,15 +487,23 @@ pub struct Chart {
     pub end: u64,
     pub columns: u32,
     pub rows: Vec<ChartRow>,
+    /// The window ends at the last event (it cannot go later).
+    pub latest: bool,
+    /// The window starts at the oldest event kept (it cannot go earlier).
+    pub oldest: bool,
 }
 
 impl SwTrace {
-    /// The chart of the last `window` ticks before the last event, `columns` columns wide. A
-    /// span still open runs to the end of the window. `None` before the first event.
-    pub fn chart(&self, window: u64, columns: u32) -> Option<Chart> {
-        let last = self.events.back()?.time;
+    /// The chart of `window` ticks ending `back` ticks before the last event (no earlier than
+    /// the oldest event kept allows), `columns` columns wide. A span still open at the end runs
+    /// to it. `None` before the first event.
+    pub fn chart(&self, window: u64, columns: u32, back: u64) -> Option<Chart> {
+        let newest = self.events.back()?.time;
+        let oldest = self.events.front()?.time;
         let window = window.max(1);
         let columns = columns.max(1);
+        let earliest_end = (oldest + window).min(newest);
+        let last = newest.saturating_sub(back).max(earliest_end);
         let from = last.saturating_sub(window);
         let column = |time: u64| -> u32 {
             let offset = time.saturating_sub(from).min(window);
@@ -519,7 +527,7 @@ impl SwTrace {
             })
             .collect();
         let add_span = |row: &mut ChartRow, begin: u64, end: u64| {
-            if end < from {
+            if end < from || begin > last {
                 return;
             }
             let a = column(begin);
@@ -542,6 +550,7 @@ impl SwTrace {
                 add_span(row, event.time - span, event.time);
             } else if !event.end
                 && event.time >= from
+                && event.time <= last
                 && self
                     .stats
                     .get(&(event.core, event.id))
@@ -553,7 +562,7 @@ impl SwTrace {
                 }
             }
         }
-        // Spans begun and not ended yet run to the end of the window.
+        // Spans begun and not ended by the last event run to the end of the window.
         for ((core, id), stats) in &self.stats {
             if let (Some(begin), true) = (stats.open, stats.span.count > 0)
                 && let Some(row) = rows.get_mut(&(*core, *id))
@@ -566,6 +575,8 @@ impl SwTrace {
             end: self.since_start(last),
             columns,
             rows: rows.into_values().collect(),
+            latest: last == newest,
+            oldest: from <= oldest,
         })
     }
 }
@@ -703,7 +714,7 @@ mod tests {
         trace.received(None, &bytes);
 
         // The last 1000 ticks in 100 columns: a column is 10 ticks.
-        let chart = trace.chart(1000, 100).unwrap();
+        let chart = trace.chart(1000, 100, 0).unwrap();
         assert_eq!((chart.start, chart.end), (2, 1002));
         let row = |name: &str| chart.rows.iter().find(|r| r.name == name).unwrap();
         // The task from 0 (before the window, cut at its start) to 600, and the open one from
@@ -717,10 +728,25 @@ mod tests {
         );
         assert_eq!(row("dispatch").marks, [64]);
         // A narrow chart merges what touches.
-        let narrow = trace.chart(1000, 2).unwrap();
+        let narrow = trace.chart(1000, 2, 0).unwrap();
         let task = narrow.rows.iter().find(|r| r.name == "task").unwrap();
         assert_eq!(task.segments, [(0, 2)]);
-        assert!(SwTrace::default().chart(10, 10).is_none());
+        assert!(SwTrace::default().chart(10, 10, 0).is_none());
+        assert!(chart.latest && !chart.oldest);
+
+        // 500 ticks back: the window 2..502 shows the first task, not what began after it.
+        let back = trace.chart(500, 50, 500).unwrap();
+        assert_eq!(
+            (back.start, back.end, back.latest, back.oldest),
+            (2, 502, false, false)
+        );
+        let row = |name: &str| back.rows.iter().find(|r| r.name == name).unwrap();
+        assert_eq!(row("task").segments, [(0, 50)]);
+        assert!(row("dispatch").marks.is_empty());
+        assert_eq!(row("isr").segments.len(), 5);
+        // Further back than kept: the window starts at the oldest event.
+        let oldest = trace.chart(500, 50, 5000).unwrap();
+        assert_eq!((oldest.start, oldest.end, oldest.oldest), (0, 500, true));
     }
 
     #[test]
