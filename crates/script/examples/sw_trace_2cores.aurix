@@ -1,0 +1,27 @@
+# The software trace of two cores at once: the ORTI demo's on CPU0 (build_orti.ps1 -Trace,
+# about 200 records a second) and trace_cpu1 on CPU1 (build_trace_cpu1.ps1, 2,200 records,
+# 17.6 KB a second), started with start_in_flash (CPU1 with --core 1), RAM only.
+
+attach ../../dap-client/examples/tc275_trace_2cores.json
+continue all
+# The backlog of the time nobody read comes first: forget it.
+sleep 1s
+trace clear
+
+trace expect 1 job count >= 500 within 2s
+trace expect 1 job interval avg >= 0.99ms
+trace expect 1 job interval avg <= 1.01ms
+trace expect 1 job span max <= 120us
+trace expect 1 sample interval avg >= 4.9ms
+trace expect 1 sample interval avg <= 5.1ms
+trace expect 0 timer_isr interval avg >= 9.9ms
+trace expect 0 timer_isr interval avg <= 10.1ms
+sleep 2s
+trace expect 0 dropped == 0
+trace expect 1 dropped == 0
+
+# How full the buffers got while the debugger read them (since the drop of the backlog).
+let high0 = read live aurix_trace_high@0
+let high1 = read live aurix_trace_high@1
+print buffer high water: CPU0 ${high0} of 2048 B, CPU1 ${high1} of 4096 B
+check high1 < 4000 && high0 < 2000

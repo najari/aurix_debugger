@@ -1,0 +1,9 @@
+# The ids of the software trace of build\orti_trace.elf on CPU0 and build\trace_cpu1.elf on
+# CPU1 (zed/aurix_tcf_demo), for the attach file tc275_trace_2cores.json.
+1 = TaskA
+2 = TaskB
+3 = TaskC
+10 = timer_isr
+20 = dispatch
+30 = job
+31 = sample

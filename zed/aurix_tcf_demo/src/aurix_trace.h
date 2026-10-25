@@ -27,6 +27,11 @@
  * A program with its own RTT control block leaves out AURIX_TRACE_OWN_RTT and hands one of its
  * up buffers to aurix_trace_attach() instead. The debugger names the ids from a file next to the
  * attach file (`<attach>.trace`, `id = name` a line).
+ *
+ * The buffer: the debugger (probe-rs RTT) read it about every 11 ms while records came, every
+ * 60 ms or so when few did (TC275, 2026-10-26); twice the bytes of 0.1 s is plenty. A RAM
+ * program on a core a flash program ran on before must keep its data clear of that program's
+ * context save areas (CSA), or the first deep call traps.
  */
 #ifndef AURIX_TRACE_H
 #define AURIX_TRACE_H
@@ -57,6 +62,11 @@ typedef struct {
 
 /* Records dropped since the last AURIX_TRACE_ID_DROPPED record. */
 extern volatile unsigned aurix_trace_dropped;
+/* The most bytes the buffer held at once (after a write) since the last drop: how big it must be
+ * for the debugger's reading. Before a debugger reads, the buffer fills and drops; the first
+ * record after its reading is the drop record, and the count starts again from there. Watch it
+ * with Live Watch or `expect live aurix_trace_high < …`. */
+extern volatile unsigned aurix_trace_high;
 
 void aurix_trace_attach(AurixRttBuffer *up);
 void aurix_trace_init(void);
@@ -69,6 +79,7 @@ void aurix_trace(unsigned id, unsigned arg);
 #ifdef AURIX_TRACE_IMPLEMENTATION
 
 volatile unsigned aurix_trace_dropped;
+volatile unsigned aurix_trace_high;
 static AurixRttBuffer *aurix_trace_up;
 
 #ifdef AURIX_TRACE_OWN_RTT
@@ -109,6 +120,7 @@ void aurix_trace_init(void)
     aurix_trace_up = &_SEGGER_RTT.up[0];
 #endif
     aurix_trace_dropped = 0;
+    aurix_trace_high = 0;
 }
 
 /* Room in bytes for the writer of b. */
@@ -159,11 +171,18 @@ void aurix_trace(unsigned id, unsigned arg)
             unsigned n = aurix_trace_dropped > 0xFFFFu ? 0xFFFFu : aurix_trace_dropped;
             wr = aurix_trace_put(b, wr, time, AURIX_TRACE_ID_DROPPED, n);
             aurix_trace_dropped = 0;
+            aurix_trace_high = 0;
         }
         wr = aurix_trace_put(b, wr, time, id, arg);
         /* The records first, the offset last: the reader takes only whole records. */
         __asm__ volatile("dsync" ::: "memory");
         b->wr_off = wr;
+        {
+            unsigned rd = b->rd_off;
+            unsigned used = wr >= rd ? wr - rd : b->size - (rd - wr);
+            if (used > aurix_trace_high)
+                aurix_trace_high = used;
+        }
     }
     __asm__ volatile("restore %0" ::"d"(ie) : "memory");
 }
