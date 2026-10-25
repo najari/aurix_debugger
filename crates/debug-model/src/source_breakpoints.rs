@@ -6,9 +6,10 @@ use std::collections::BTreeMap;
 
 use dap_types::{Breakpoint, SetBreakpointsArguments, Source, SourceBreakpoint};
 
+use crate::breakpoints::BreakpointSettings;
 use crate::reference::parse_address;
 
-/// What the adapter answered for one breakpoint.
+/// One breakpoint: its settings, and what the adapter answered for it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceBreakpointState {
     /// Whether the adapter set the breakpoint (`None` until it answered).
@@ -18,6 +19,8 @@ pub struct SourceBreakpointState {
     /// The address it set it at, if it said.
     pub instruction_reference: Option<String>,
     pub message: Option<String>,
+    /// The condition, hit count and log message sent with it.
+    pub settings: BreakpointSettings,
 }
 
 /// The source breakpoints, by file path (as the adapter gave it in stack frames) and line.
@@ -45,6 +48,17 @@ impl SourceBreakpoints {
 
     pub fn get(&self, path: &str, line: u64) -> Option<&SourceBreakpointState> {
         self.files.get(path)?.get(&line)
+    }
+
+    /// Sets a breakpoint on `line` of `path` with `settings`, or gives the one there new ones.
+    pub fn set(&mut self, path: &str, line: u64, settings: BreakpointSettings) {
+        self.files.entry(path.to_string()).or_default().insert(
+            line,
+            SourceBreakpointState {
+                settings,
+                ..Default::default()
+            },
+        );
     }
 
     /// The breakpoints of `path`, by line.
@@ -79,23 +93,21 @@ impl SourceBreakpoints {
     /// The request that sets all breakpoints of `path` (none: it clears them);
     /// [`Self::answered`] takes its answer.
     pub fn request(&self, path: &str) -> SetBreakpointsArguments {
-        let lines = self.lines(path).map(|(line, _)| line).collect::<Vec<_>>();
+        let breakpoints = self
+            .lines(path)
+            .map(|(line, state)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: state.settings.condition.clone(),
+                hit_condition: state.settings.hit_condition.clone(),
+                log_message: state.settings.log_message.clone(),
+                mode: None,
+            })
+            .collect::<Vec<_>>();
         SetBreakpointsArguments {
             source: source(path),
-            breakpoints: Some(
-                lines
-                    .iter()
-                    .map(|line| SourceBreakpoint {
-                        line: *line,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: None,
-                        mode: None,
-                    })
-                    .collect(),
-            ),
-            lines: Some(lines),
+            lines: Some(breakpoints.iter().map(|bp| bp.line).collect()),
+            breakpoints: Some(breakpoints),
             source_modified: Some(false),
         }
     }
@@ -125,6 +137,7 @@ impl SourceBreakpoints {
                             line: breakpoint.line,
                             instruction_reference: breakpoint.instruction_reference.clone(),
                             message: breakpoint.message.clone(),
+                            settings: std::mem::take(&mut state.settings),
                         };
                     }
                 }
@@ -135,6 +148,7 @@ impl SourceBreakpoints {
                         *state = SourceBreakpointState {
                             verified: Some(false),
                             message: Some(error.to_string()),
+                            settings: std::mem::take(&mut state.settings),
                             ..Default::default()
                         };
                     }
@@ -212,5 +226,35 @@ mod tests {
         let state = breakpoints.get(DEMO, 30).unwrap();
         assert_eq!(state.verified, Some(false));
         assert_eq!(state.message.as_deref(), Some("probe gone"));
+    }
+
+    #[test]
+    fn a_condition_goes_with_its_line_and_survives_the_answer() {
+        let mut breakpoints = SourceBreakpoints::default();
+        breakpoints.toggle(DEMO, 21);
+        let settings = BreakpointSettings::new("v == 3", "", "v = {v}");
+        breakpoints.set(DEMO, 23, settings.clone());
+        let request = breakpoints.request(DEMO);
+        let asked = request.breakpoints.as_ref().unwrap();
+        assert_eq!(asked[0].condition, None);
+        assert_eq!(asked[1].condition.as_deref(), Some("v == 3"));
+        assert_eq!(asked[1].hit_condition, None);
+        assert_eq!(asked[1].log_message.as_deref(), Some("v = {v}"));
+
+        let answer: Vec<Breakpoint> = serde_json::from_value(json!([
+            { "verified": true, "line": 22 },
+            { "verified": false, "message": "Breakpoint not set: `v ==` needs a value after ==" }
+        ]))
+        .unwrap();
+        breakpoints.answered(&request, Ok(&answer));
+        let state = breakpoints.get(DEMO, 23).unwrap();
+        assert_eq!(state.verified, Some(false));
+        assert_eq!(state.settings, settings);
+        breakpoints.answered(&request, Err("probe gone"));
+        assert_eq!(breakpoints.get(DEMO, 23).unwrap().settings, settings);
+
+        // A plain breakpoint again.
+        breakpoints.set(DEMO, 23, BreakpointSettings::default());
+        assert!(breakpoints.get(DEMO, 23).unwrap().settings.is_plain());
     }
 }

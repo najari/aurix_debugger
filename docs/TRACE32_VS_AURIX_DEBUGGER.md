@@ -35,7 +35,7 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 | 디버깅 코어 | 모든 TriCore CPU와 PPU, GTM, SCR, HSM, PCP | TriCore CPU0–2 |
 | 멀티코어 | SMP(한 GUI, 자동 동기), AMP(GUI별, `SYnch`로 동기), iAMP(한 GUI, 코어별 심볼) | 코어별 DAP 세션(AMP와 비슷). `allStop`을 켜면 OCDS 트리거 스위치로 함께 정지·실행 |
 | 프로그램 BP | 온칩 8개. RAM에는 SW BP, 플래시 SW BP는 `FLASH.AUTO`로 가능하나 수명 때문에 비권장 | 트리거 유닛 8개. 코어 자신의 PSPR에서는 유닛이 모자라면 SW(`debug` 명령) 32개까지. 유닛 BP는 리셋과 코드 복사에도 남는다 |
-| 데이터 BP | 읽기·쓰기 8개(단일 주소) 또는 4개(범위) | 읽기·쓰기·둘 다, 트리거 유닛을 프로그램 BP와 나눠 씀(1바이트는 1개, 범위는 2개). VS Code "Break on Value Change"(변수 뷰, Watch 표현식, 주소)와 GDB `watch`·`rwatch`·`awatch`. 값 조건은 없음 |
+| 데이터 BP | 읽기·쓰기 8개(단일 주소) 또는 4개(범위) | 읽기·쓰기·둘 다, 트리거 유닛을 프로그램 BP와 나눠 씀(1바이트는 1개, 범위는 2개). VS Code "Break on Value Change"(변수 뷰, Watch 표현식, 주소)와 GDB `watch`·`rwatch`·`awatch`. 값 조건·횟수는 DAP에서 멈춘 뒤 서버가 따진다(2026-10-25, probe-rs `c18738d`; 실시간은 아님) |
 | step | 온칩 BP 범위로 예외를 감지. step 중 인터럽트 막기 옵션(`IMASKASM`, `IMASKHLL`) | Infineon 참조 디버거의 step trap 순서. 명령 step 동안 `ICR.IE`를 막음(`stepInterrupts`, 기본 `maskInstruction`, `allow`) |
 | 리셋 | 소프트·하드 리셋과 전원 재인가를 넘어 디버깅. 리셋 뒤 동작 선택(`Halt`, `RestoreGo`, `RunRestore`) | DAP restart, `entryFunction`. 다른 세션의 리셋을 2초까지 버티고 정지 그룹을 다시 연결. 앱이 일으킨 리셋을 감지해 원인을 알리고, BP를 되살려 계속 실행(`restore`) 또는 정지(`halt`) |
 | 트레이스 | MCDS 온칩 트레이스(최대 6코어, TC275TF는 동시 2코어), AGBT·SGBT, DAP 스트리밍(CombiProbe 2), 복합 트리거 언어(CTL) | `probe-rs mcds record`·`timestamp` CLI. 기록은 이 어댑터가 맵 1을 막아 미검증. VS Code 연동 없음 |

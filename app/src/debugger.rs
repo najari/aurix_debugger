@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 
 use crate::source::{SourceFile, SourceFiles};
 
+mod breakpoint_edit;
 mod connect;
 mod memory;
 mod panels;
@@ -108,6 +109,9 @@ pub struct Debugger {
     /// Scroll the source to the selected frame's line at the next render.
     scroll_to_line: bool,
     source_breakpoints: SourceBreakpoints,
+    /// The edit row of a source breakpoint (condition, hit count, log message).
+    breakpoint_edit: breakpoint_edit::BreakpointEdit,
+    breakpoint_editing: bool,
     variables: Variables,
     rtt: RttChannels,
     rtt_scroll: UniformListScrollHandle,
@@ -173,6 +177,8 @@ impl Debugger {
             source_scroll: UniformListScrollHandle::new(),
             scroll_to_line: false,
             source_breakpoints: SourceBreakpoints::default(),
+            breakpoint_edit: breakpoint_edit::BreakpointEdit::new(cx),
+            breakpoint_editing: false,
             variables: Variables::default(),
             rtt: RttChannels::default(),
             rtt_scroll: UniformListScrollHandle::new(),
@@ -254,6 +260,11 @@ impl Debugger {
         if repeated {
             return;
         }
+        self.push_console(line);
+    }
+
+    /// Adds a line to the console as it is (program output: each line counts).
+    fn push_console(&mut self, line: SharedString) {
         self.console.push(line);
         if self.console.len() > MAX_CONSOLE_LINES {
             self.console.drain(..self.console.len() - MAX_CONSOLE_LINES);
@@ -446,9 +457,15 @@ impl Debugger {
                 }
             }
             "output" => {
+                // Program output (probe-rs sends log point lines so) is not folded.
+                let program = body.get("category").and_then(Value::as_str) == Some("stdout");
                 if let Some(output) = body.get("output").and_then(Value::as_str) {
                     for line in output.lines() {
-                        self.log(line.to_string());
+                        if program {
+                            self.push_console(line.to_string().into());
+                        } else {
+                            self.log(line.to_string());
+                        }
                     }
                 }
             }
@@ -710,6 +727,11 @@ impl Debugger {
 
     fn toggle_source_breakpoint(&mut self, path: String, line: u64, cx: &mut Context<Self>) {
         self.source_breakpoints.toggle(&path, line);
+        self.send_source_breakpoints(path, cx);
+    }
+
+    /// Sends all the breakpoints of `path` (`setBreakpoints` replaces the file's set).
+    fn send_source_breakpoints(&mut self, path: String, cx: &mut Context<Self>) {
         let request = self.source_breakpoints.request(&path);
         let asked = request.clone();
         self.request::<SetBreakpoints>(request, cx, move |this, result, _| match result {
@@ -1038,13 +1060,16 @@ impl Debugger {
                 let gutter_address = instruction.address.clone();
                 let source_breakpoint = parse_address(&instruction.address)
                     .and_then(|address| self.source_breakpoints.at_address(address))
-                    .is_some();
+                    .map(|state| state.settings.logs());
                 let mark = match breakpoint {
                     Some(state) if state.verified == Some(true) => ("●", color::BREAKPOINT),
                     Some(_) => ("○", color::MUTED),
-                    // A source line's breakpoint, set at this instruction.
-                    None if source_breakpoint => ("◆", color::BREAKPOINT),
-                    None => ("", color::MUTED),
+                    // A source line's breakpoint, set at this instruction (blue: a log point).
+                    None => match source_breakpoint {
+                        Some(true) => ("◆", color::ACCENT),
+                        Some(false) => ("◆", color::BREAKPOINT),
+                        None => ("", color::MUTED),
+                    },
                 };
                 Some(
                     div()
@@ -1179,12 +1204,31 @@ impl Debugger {
                 let text = file.lines.get(ix)?.clone();
                 let line = ix as u64 + 1;
                 let at_frame = frame_line == Some(line);
+                // ● a breakpoint, ◆ one with a condition or hit count, blue ◆ a log point;
+                // hollow while the adapter has not set it.
                 let mark = match self.source_breakpoints.get(&file.path, line) {
-                    Some(state) if state.verified == Some(true) => ("●", color::BREAKPOINT),
-                    Some(_) => ("○", color::MUTED),
+                    Some(state) => {
+                        let set = state.verified == Some(true);
+                        let settings = &state.settings;
+                        let glyph = match (settings.is_plain(), set) {
+                            (true, true) => "●",
+                            (true, false) => "○",
+                            (false, true) => "◆",
+                            (false, false) => "◇",
+                        };
+                        let tint = if !set {
+                            color::MUTED
+                        } else if settings.logs() {
+                            color::ACCENT
+                        } else {
+                            color::BREAKPOINT
+                        };
+                        (glyph, tint)
+                    }
                     None => ("", color::MUTED),
                 };
                 let path = file.path.clone();
+                let edit_path = file.path.clone();
                 Some(
                     div()
                         .id(SharedString::from(format!("source-{ix}")))
@@ -1205,6 +1249,17 @@ impl Debugger {
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.toggle_source_breakpoint(path.clone(), line, cx)
                                 }))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Right,
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.open_breakpoint_edit(
+                                            edit_path.clone(),
+                                            line,
+                                            window,
+                                            cx,
+                                        )
+                                    }),
+                                )
                                 .child(mark.0),
                         )
                         .child(
@@ -1281,6 +1336,7 @@ impl Debugger {
                             .child(title),
                     ),
             )
+            .children(self.render_breakpoint_edit(cx))
             .child(
                 uniform_list(
                     "source",
