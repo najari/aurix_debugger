@@ -121,8 +121,12 @@ pub struct Debugger {
     memory_input: Entity<TextInput>,
     memory_input_error: Option<String>,
     memory_paused: bool,
-    /// The address asked for, marked in the memory tab.
+    /// The address asked for, marked in the memory tab; writes go there.
     memory_focus: Option<u64>,
+    /// Where bytes to write at `memory_focus` are typed.
+    memory_write_input: Entity<TextInput>,
+    /// What the last write did, or why it was refused.
+    memory_write_note: Option<Result<String, String>>,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -177,6 +181,8 @@ impl Debugger {
             memory_input_error: None,
             memory_paused: false,
             memory_focus: None,
+            memory_write_input: cx.new(|cx| TextInput::new("Hex bytes, e.g. 2A 00", cx)),
+            memory_write_note: None,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
@@ -196,6 +202,11 @@ impl Debugger {
         .detach();
         cx.subscribe(&this.memory_input, |this, _, Submitted(text), cx| {
             this.memory_submitted(text);
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&this.memory_write_input, |this, _, Submitted(text), cx| {
+            this.memory_write(text, cx);
             cx.notify();
         })
         .detach();

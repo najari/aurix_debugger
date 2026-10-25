@@ -4,7 +4,7 @@
 //! its scratch-pad RAM) read that core's memory. The bytes that changed since the last read are
 //! marked, and an answer to a read made before the window moved is dropped.
 
-use dap_types::ReadMemoryArguments;
+use dap_types::{ReadMemoryArguments, WriteMemoryArguments};
 
 use crate::reference::{CORE_SEPARATOR, with_core};
 
@@ -188,6 +188,197 @@ impl MemoryView {
     }
 }
 
+/// A RAM of the TC27x that the memory view may write: name, start, end (exclusive), and the
+/// core whose local address it is, if it is a core's scratch-pad RAM (from probe-rs's
+/// `TC27x.yaml`).
+struct Ram {
+    name: &'static str,
+    start: u64,
+    end: u64,
+    core: Option<u64>,
+}
+
+const TC27X_RAM: &[Ram] = &[
+    Ram {
+        name: "DSPR0",
+        start: 0x7000_0000,
+        end: 0x7001_c000,
+        core: Some(0),
+    },
+    Ram {
+        name: "PSPR0",
+        start: 0x7010_0000,
+        end: 0x7010_6000,
+        core: Some(0),
+    },
+    Ram {
+        name: "DSPR1",
+        start: 0x6000_0000,
+        end: 0x6001_e000,
+        core: Some(1),
+    },
+    Ram {
+        name: "PSPR1",
+        start: 0x6010_0000,
+        end: 0x6010_8000,
+        core: Some(1),
+    },
+    Ram {
+        name: "DSPR2",
+        start: 0x5000_0000,
+        end: 0x5001_e000,
+        core: Some(2),
+    },
+    Ram {
+        name: "PSPR2",
+        start: 0x5010_0000,
+        end: 0x5010_8000,
+        core: Some(2),
+    },
+    Ram {
+        name: "LMU",
+        start: 0x9000_0000,
+        end: 0x9000_8000,
+        core: None,
+    },
+    Ram {
+        name: "LMU (not cached)",
+        start: 0xb000_0000,
+        end: 0xb000_8000,
+        core: None,
+    },
+];
+
+/// Where a core sees its own data and program scratch-pad RAM.
+const LOCAL_DSPR: u64 = 0xd000_0000;
+const LOCAL_PSPR: u64 = 0xc000_0000;
+
+/// The RAM of the TC27x that `len` bytes from `address`, read through `core`, are in: its name,
+/// or why they may not be written. Flash, the UCBs, the peripheral registers and anything not
+/// RAM are refused, as are bytes that leave the RAM they start in. A local address
+/// (`0xD000_0000`, `0xC000_0000`) names the RAM of the core it goes through.
+pub fn writable_ram(address: u64, len: usize, core: Option<u64>) -> Result<String, String> {
+    if len == 0 {
+        return Err("nothing to write".into());
+    }
+    let end = address
+        .checked_add(len as u64)
+        .ok_or_else(|| "past the end of the address space".to_string())?;
+    let local = |base: u64, kind: &str| {
+        let core = core.ok_or_else(|| {
+            format!("{address:#010x} is a core's local address: name the core (@0, @1, @2)")
+        })?;
+        let name = format!("{kind}{core}");
+        let ram = TC27X_RAM
+            .iter()
+            .find(|ram| ram.core == Some(core) && ram.name == name)
+            .ok_or_else(|| format!("core {core} has no {kind}"))?;
+        let size = ram.end - ram.start;
+        if address >= base && end <= base + size {
+            Ok(format!("{} (core {core}, local)", ram.name))
+        } else {
+            Err(format!(
+                "{address:#010x}..{end:#010x} leaves {} ({base:#010x}..{:#010x})",
+                ram.name,
+                base + size
+            ))
+        }
+    };
+    match address >> 28 {
+        0xd => return local(LOCAL_DSPR, "DSPR"),
+        0xc => return local(LOCAL_PSPR, "PSPR"),
+        _ => {}
+    }
+    let Some(ram) = TC27X_RAM
+        .iter()
+        .find(|ram| address >= ram.start && address < ram.end)
+    else {
+        let what = match address >> 28 {
+            0x8 | 0xa => "flash (program or data flash, UCBs)",
+            0xf => "a peripheral register",
+            _ => "not RAM",
+        };
+        return Err(format!("{address:#010x} is {what}: only RAM is written"));
+    };
+    if end > ram.end {
+        return Err(format!(
+            "{address:#010x}..{end:#010x} leaves {} (ends at {:#010x})",
+            ram.name, ram.end
+        ));
+    }
+    Ok(ram.name.to_string())
+}
+
+/// Bytes typed in hex: `2A 00 ff`, `2a00ff`, `0x2A,0x00`.
+pub fn parse_bytes(text: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    for word in text
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|w| !w.is_empty())
+    {
+        let digits = word
+            .strip_prefix("0x")
+            .or_else(|| word.strip_prefix("0X"))
+            .unwrap_or(word);
+        if digits.is_empty() || digits.len() % 2 != 0 {
+            return Err(format!("{word}: bytes are two hex digits each"));
+        }
+        for pair in digits.as_bytes().chunks(2) {
+            let pair = std::str::from_utf8(pair).unwrap_or_default();
+            bytes.push(u8::from_str_radix(pair, 16).map_err(|_| format!("{word}: not hex"))?);
+        }
+    }
+    if bytes.is_empty() {
+        return Err("bytes in hex, such as 2A 00".into());
+    }
+    Ok(bytes)
+}
+
+impl MemoryView {
+    /// The request that writes `bytes` at `address` through the core the view reads through,
+    /// if that is RAM; the RAM's name with it.
+    pub fn write_request(
+        &self,
+        address: u64,
+        bytes: &[u8],
+    ) -> Result<(WriteMemoryArguments, String), String> {
+        let ram = writable_ram(address, bytes.len(), self.core)?;
+        let reference = format!("{address:#010x}");
+        let memory_reference = match self.core {
+            Some(core) => with_core(&reference, core),
+            None => reference,
+        };
+        Ok((
+            WriteMemoryArguments {
+                memory_reference,
+                offset: None,
+                allow_partial: Some(false),
+                data: encode_base64(bytes),
+            },
+            ram,
+        ))
+    }
+}
+
+/// Standard base64 with padding.
+pub fn encode_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (ix, b)| n | (u32::from(*b) << (16 - 8 * ix)));
+        for ix in 0..=chunk.len() {
+            text.push(ALPHABET[((n >> (18 - 6 * ix)) & 63) as usize] as char);
+        }
+        for _ in chunk.len()..3 {
+            text.push('=');
+        }
+    }
+    text
+}
+
 /// The bytes of standard base64 (padding optional).
 pub fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
@@ -239,22 +430,73 @@ mod tests {
     }
 
     fn answer(bytes: &[u8]) -> Result<(Option<String>, Option<u64>), String> {
-        // Encodes as probe-rs does, through the decoder's inverse for these test bytes.
-        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut text = String::new();
-        for chunk in bytes.chunks(3) {
-            let n = chunk
-                .iter()
-                .enumerate()
-                .fold(0u32, |n, (ix, b)| n | u32::from(*b) << (16 - 8 * ix));
-            for ix in 0..=chunk.len() {
-                text.push(ALPHABET[(n >> (18 - 6 * ix) & 63) as usize] as char);
-            }
-            for _ in chunk.len()..3 {
-                text.push('=');
-            }
+        Ok((Some(encode_base64(bytes)), None))
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        assert_eq!(encode_base64(&[0, 1, 2, 255]), "AAEC/w==");
+        assert_eq!(encode_base64(b"hello"), "aGVsbG8=");
+        let bytes = (0..=255).collect::<Vec<u8>>();
+        assert_eq!(decode_base64(&encode_base64(&bytes)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn only_ram_is_written() {
+        assert_eq!(writable_ram(0x7000_a004, 4, None).unwrap(), "DSPR0");
+        assert_eq!(writable_ram(0x6000_0000, 1, Some(0)).unwrap(), "DSPR1");
+        assert_eq!(writable_ram(0x9000_7fff, 1, None).unwrap(), "LMU");
+        // Leaving the RAM, at its end.
+        assert!(writable_ram(0x7001_bffe, 4, None).is_err());
+        // Flash, the UCBs, peripheral registers, nothing.
+        for address in [
+            0x8021_c000,
+            0xa000_0000,
+            0xaf00_0000,
+            0xaf10_0000,
+            0xf000_0010,
+            0x1000,
+        ] {
+            let error = writable_ram(address, 1, None).unwrap_err();
+            assert!(error.contains("only RAM"), "{error}");
         }
-        Ok((Some(text), None))
+        assert!(
+            writable_ram(0x8021_c000, 1, None)
+                .unwrap_err()
+                .contains("flash")
+        );
+        // A local address is the RAM of the core it goes through, of that core's size.
+        assert!(writable_ram(0xd000_a000, 4, None).is_err());
+        assert_eq!(
+            writable_ram(0xd000_a000, 4, Some(1)).unwrap(),
+            "DSPR1 (core 1, local)"
+        );
+        // DSPR0 is 112 KiB, DSPR1 120 KiB.
+        assert!(writable_ram(0xd001_c000, 1, Some(0)).is_err());
+        assert!(writable_ram(0xd001_c000, 1, Some(1)).is_ok());
+        assert!(writable_ram(0xc000_0000, 2, Some(2)).is_ok());
+        assert!(writable_ram(0x7000_0000, 0, None).is_err());
+    }
+
+    #[test]
+    fn bytes_are_typed_in_hex() {
+        assert_eq!(parse_bytes("2A 00 ff").unwrap(), [0x2a, 0, 0xff]);
+        assert_eq!(parse_bytes("2a00ff").unwrap(), [0x2a, 0, 0xff]);
+        assert_eq!(parse_bytes("0x2A,0x00").unwrap(), [0x2a, 0]);
+        assert!(parse_bytes("2").is_err());
+        assert!(parse_bytes("zz").is_err());
+        assert!(parse_bytes("  ").is_err());
+    }
+
+    #[test]
+    fn a_write_goes_through_the_core_read_through() {
+        let mut view = MemoryView::default();
+        view.show(0xd000_a000, Some(1));
+        let (request, ram) = view.write_request(0xd000_a004, &[0x2a]).unwrap();
+        assert_eq!(request.memory_reference, "0xd000a004@1");
+        assert_eq!(request.data, "Kg==");
+        assert_eq!(ram, "DSPR1 (core 1, local)");
+        assert!(view.write_request(0x8021_c000, &[0]).is_err());
     }
 
     #[test]

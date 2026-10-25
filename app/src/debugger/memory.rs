@@ -2,9 +2,9 @@
 //! (hex, `@core` optional) or a variable's "mem", read again every 500 ms while the tab is
 //! shown, through the core chosen (a core's local addresses are its own memory).
 
-use aurix_debug_model::memory::{ROW, ROWS, parse_location};
+use aurix_debug_model::memory::{ROW, ROWS, parse_bytes, parse_location};
 use aurix_debug_model::reference::{parse_address, split_core};
-use dap_types::requests::ReadMemory;
+use dap_types::requests::{ReadMemory, WriteMemory};
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 use super::panels::BottomTab;
@@ -45,6 +45,35 @@ impl Debugger {
         } else {
             None
         }
+    }
+
+    /// The bytes typed into the write input: written at the selected address if it is RAM.
+    pub(super) fn memory_write(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(address) = self.memory_focus else {
+            return;
+        };
+        let prepared = parse_bytes(text).and_then(|bytes| {
+            let (request, ram) = self.memory.write_request(address, &bytes)?;
+            Ok((request, ram, bytes.len()))
+        });
+        let (request, ram, count) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.memory_write_note = Some(Err(error));
+                return;
+            }
+        };
+        let reference = request.memory_reference.clone();
+        self.request::<WriteMemory>(request, cx, move |this, result, _| {
+            let note = match result {
+                Ok(_) => Ok(format!("wrote {count} byte(s) to {ram} at {reference}")),
+                Err(error) => Err(format!("writeMemory: {error}")),
+            };
+            match &note {
+                Ok(note) | Err(note) => this.log(note.clone()),
+            }
+            this.memory_write_note = Some(note);
+        });
     }
 
     /// Sends the next read of the memory tab, if it is shown.
@@ -92,12 +121,21 @@ impl Debugger {
                         Some(byte) => (format!("{byte:02X}"), color::TEXT),
                         None => ("??".to_string(), color::MUTED),
                     };
-                    // The address asked for (typed, or the variable's).
-                    let focused = self.memory_focus == Some(address + ix as u64);
+                    // The address asked for (typed, the variable's, or clicked): writes go there.
+                    let at = address + ix as u64;
+                    let focused = self.memory_focus == Some(at);
                     hex = hex.child(
                         div()
+                            .id(SharedString::from(format!("byte-{at:x}")))
                             .when(ix == ROW / 2, |this| this.ml(px(8.)))
                             .when(focused, |this| this.bg(hsla(color::SELECTED)).rounded_sm())
+                            .cursor_pointer()
+                            .hover(|style| style.bg(hsla(color::BUTTON_HOVER)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.memory_focus = Some(at);
+                                this.memory_write_note = None;
+                                cx.notify();
+                            }))
                             .text_color(hsla(colour))
                             .child(text),
                     );
@@ -191,6 +229,33 @@ impl Debugger {
                         )
                     }),
             )
+            .when_some(self.memory_focus.filter(|_| shown), |this, at| {
+                let (note, colour) = match &self.memory_write_note {
+                    Some(Ok(note)) => (note.clone(), color::ACCENT),
+                    Some(Err(error)) => (error.clone(), color::CHANGED),
+                    None => (
+                        "RAM only (scratch-pad RAMs, LMU); flash, UCBs and registers are refused"
+                            .to_string(),
+                        color::MUTED,
+                    ),
+                };
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .pb_0p5()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family("Consolas")
+                                .child(format!("Write at {at:08X}")),
+                        )
+                        .child(div().w(px(220.)).child(self.memory_write_input.clone()))
+                        .child(div().text_xs().text_color(hsla(colour)).child(note)),
+                )
+            })
             .child(
                 div()
                     .id("memory-rows")
