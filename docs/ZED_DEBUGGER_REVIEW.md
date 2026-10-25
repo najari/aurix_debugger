@@ -18,7 +18,7 @@ A0(포크 없이 Zed를 probe-rs DAP 클라이언트로 쓰기)는 서버 수정
 | 디스어셈블리 뷰 | 기본 제공 | 없음. `debugger_ui`에 해당 소스가 없다 |
 | 주변장치 (SVD) | 변수 뷰의 `Peripherals` | 됨. 서버가 변수 범위로 준다 (실기 확인) |
 | 한 세션 멀티코어 | 됨 | 스레드 3개로 보임, 동시 정지 동작 (실기 확인) |
-| RTT 출력 | 확장이 `probe-rs-rtt-data` 이벤트를 터미널로 표시 | 표시할 수 없음 (사용자 정의 이벤트를 받을 확장 API 없음) |
+| RTT 출력 | 확장이 `probe-rs-rtt-data` 이벤트를 터미널로 표시 | 확장으로는 표시할 수 없음 (사용자 정의 이벤트를 받을 확장 API 없음). Zed 포크에 RTT 패널을 넣어 동작 확인(`7f255b4`) |
 | Live Watch (`liveWatch` 요청) | 확장 `najari.probe-rs-live-watch` | 확장으로는 만들 수 없음 (패널 추가 불가). Zed 포크에 패널을 넣어 동작 확인(`7648baf`) |
 | `tasks.json`의 `dependsOn` | 됨 | 읽지 못함 (시작 전 준비 작업은 직접 실행) |
 
@@ -145,7 +145,31 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 
 - `g_ticks`는 `0x7000a000`, 즉 각 코어가 자기 DSPR로 보는 로컬 주소에 있다. 그런데 코어 1·2에서 읽은 값도 CPU0의 카운터처럼 늘었다. 디버거 쪽 접근에서는 이 주소가 CPU0 DSPR로 가는 것으로 보인다. 코어별로 읽으려면 서버가 로컬 주소를 코어별 전역 주소(CPU1 DSPR `0x6000_0000` 등)로 바꿔야 한다(probe-rs 쪽 확인 필요).
 - Zed의 메뉴에는 어댑터와 상관없이 Live Watch가 나온다(어댑터 기능 표시가 없어 가릴 수 없음). probe-rs가 아니면 오류만 보인다.
-- RTT 터미널은 아직이다. 데모 프로그램에 RTT 제어 블록이 없어서, RTT를 쓰는 시험 프로그램(RAM이나 PF1 시험 섹터)이 먼저 필요하다.
+## RTT 패널 (Zed `7f255b4`)
+
+디버그 패널에 "RTT" 탭을 더했다. probe-rs는 RTT 채널마다 `probe-rs-rtt-channel-config` 이벤트를 보내고, 클라이언트가 `rttWindowOpened`로 답한 채널의 데이터만 `probe-rs-rtt-data` 이벤트로 보낸다(모두 DAP 밖).
+
+| 항목 | 내용 |
+| --- | --- |
+| 세션(`project`) | 채널 설정 이벤트를 받으면 채널을 기록하고 `rttWindowOpened`(`windowIsOpen: true`)를 보낸다. 데이터는 줄로 나눠 채널마다 최대 10,000줄(넘으면 오래된 줄부터 버림) |
+| 패널(`debugger_ui`) | 채널마다 버튼, 고른 채널의 줄을 목록으로 보여 주고 끝을 따라감, 지우기 버튼. `DebuggerPaneItem::Rtt` |
+
+시험 프로그램: 데모에 RTT가 없어 [`rtt_demo`](../zed/aurix_tcf_demo/src/rtt_demo.c)를 새로 만들었다. RAM 데모처럼 CPU0 PSPR(코드)과 DSPR(`0x7000a000`, 제어 블록 `_SEGGER_RTT`와 512바이트 버퍼)에만 올라가고, `start_in_flash`가 RAM에 써 준다(플래시는 건드리지 않음). SEGGER 소스 없이 제어 블록 구조만 맞춘 최소 구현이고, 0.5초마다(STM0 100 MHz 기준) `rtt_demo line N, ticks M` 한 줄을 쓴다. 링커 스크립트는 PHDRS로 ELF 헤더가 세그먼트에 들어가지 않게 했다(넣으면 DSPR `0x7000A000` 아래를 덮어씀). 빌드는 `build_rtt.ps1`, Zed 시나리오는 "TC275: probe-rs RTT RAM CPU0"(`rttEnabled: true`).
+
+실기(TC275, CPU0 한 세션, probe-rs `18f99ec`):
+
+| 시험 | 결과 |
+| --- | --- |
+| 서버만(DAP 스크립트) | 채널 0 "Terminal"(String) 설정 이벤트, `rttWindowOpened` 뒤 0.5초마다 한 줄 |
+| Zed | 채널 설정 이벤트 직후 Zed가 `rttWindowOpened`를 보냄, 패널에 `0: Terminal`과 줄 표시(142줄째까지 끝을 따라감) |
+| 지우기 | 이전 줄이 사라지고 새 줄부터 다시 쌓임 |
+| 일시정지 | 정지 뒤 RTT 데이터 이벤트 없음 |
+| Live Watch 동시 | 앞 세션에서 넣은 식(`g_ticks`, `g_result`)이 Zed를 다시 열어도 남아 있었고, 이 프로그램의 `g_ticks`를 읽음(`g_result`는 없어서 오류 표시) |
+
+남은 것:
+
+- RTT 이벤트에는 코어가 없다. 한 세션 멀티코어에서 여러 코어가 RTT를 쓰면 채널 번호가 겹치고 `rttWindowOpened`도 초점 코어로만 간다(서버 쪽 작업).
+- down 채널(입력)은 서버가 `probe-rs-create-prompt` 이벤트로 알리지만 Zed 패널은 아직 입력을 받지 않는다.
 
 ## 그 밖의 관찰
 
@@ -158,7 +182,8 @@ VS Code 1.143 재확인(같은 한 세션 구성): 콜스택의 `square`에서 "
 1. ~~VS Code 회귀 확인~~ 완료(`7b97cbb`)
 2. ~~A1: Zed 포크에 디스어셈블리 패널 시제품~~ 동작 확인(`39f53e4`), 명령 BP·명령 step·더 읽기(`db1bf8e`), 코어별 디스어셈블리(`82e6980`, probe-rs `18f99ec`), VS Code 디스어셈블리 뷰 재확인
 3. ~~Live Watch 패널~~ 동작 확인(`7648baf`). 코어별 로컬 주소 읽기는 서버 확인 필요
-4. RTT 터미널(RTT 시험 프로그램 필요), 이후 B로 옮길 공통 크레이트 분리
+4. ~~RTT 패널~~ 동작 확인(`7f255b4`, 시험 프로그램 `rtt_demo`). 멀티코어 RTT와 입력 채널은 남음
+5. B로 옮길 공통 크레이트 분리(DAP 클라이언트, 디스어셈블리 모델, Live Watch, RTT 수신)
 
 ## 출처
 
