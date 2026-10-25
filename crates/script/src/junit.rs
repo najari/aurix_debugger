@@ -1,7 +1,9 @@
-//! The JUnit XML report of a run: the script is a `testsuite`, each expectation a `testcase`.
+//! The JUnit XML report of a run: the script is a `testsuite`, each expectation that ran a
+//! `testcase` (one in a loop, each time: `#2`, `#3`, …), and so is each `fail` that ran.
 //! Expectations the run did not reach are `skipped`; an error that ended the run is the
 //! suite's `errors` and `system-err`.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::run::Outcome;
@@ -26,43 +28,59 @@ fn escape(text: &str) -> String {
 
 /// The report of `outcome`, the run of `script` named `name`.
 pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
-    let expectations: Vec<_> = script.expectations().collect();
+    let not_reached: Vec<_> = script
+        .expectations()
+        .filter(|line| !outcome.cases.iter().any(|c| c.line == line.number))
+        .collect();
     let failures = outcome.cases.iter().filter(|c| c.failure.is_some()).count();
-    let skipped = expectations.len().saturating_sub(outcome.cases.len());
     let errors = usize::from(outcome.error.is_some());
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let name = escape(name);
     writeln!(
         xml,
-        "<testsuites><testsuite name=\"{name}\" tests=\"{}\" failures=\"{failures}\" errors=\"{errors}\" skipped=\"{skipped}\" time=\"{:.3}\">",
-        expectations.len(),
+        "<testsuites><testsuite name=\"{name}\" tests=\"{}\" failures=\"{failures}\" errors=\"{errors}\" skipped=\"{}\" time=\"{:.3}\">",
+        outcome.cases.len() + not_reached.len(),
+        not_reached.len(),
         outcome.time.as_secs_f64()
     )
     .ok();
-    for line in expectations {
-        let case = outcome.cases.iter().find(|c| c.line == line.number);
-        let time = case.map_or(0.0, |c| c.time.as_secs_f64());
+    let mut runs: HashMap<usize, usize> = HashMap::new();
+    for case in &outcome.cases {
+        let run = runs.entry(case.line).or_insert(0);
+        *run += 1;
+        let repeated = if *run > 1 {
+            format!(" #{run}")
+        } else {
+            String::new()
+        };
         write!(
             xml,
-            "  <testcase classname=\"{name}\" name=\"line {}: {}\" time=\"{time:.3}\"",
+            "  <testcase classname=\"{name}\" name=\"line {}: {}{repeated}\" time=\"{:.3}\"",
+            case.line,
+            escape(&case.text),
+            case.time.as_secs_f64()
+        )
+        .ok();
+        match &case.failure {
+            Some(failure) => {
+                writeln!(
+                    xml,
+                    "><failure message=\"{}\"/></testcase>",
+                    escape(failure)
+                )
+                .ok();
+            }
+            None => xml.push_str("/>\n"),
+        }
+    }
+    for line in not_reached {
+        writeln!(
+            xml,
+            "  <testcase classname=\"{name}\" name=\"line {}: {}\" time=\"0.000\"><skipped/></testcase>",
             line.number,
             escape(&line.text)
         )
         .ok();
-        match case {
-            Some(case) => match &case.failure {
-                Some(failure) => {
-                    writeln!(
-                        xml,
-                        "><failure message=\"{}\"/></testcase>",
-                        escape(failure)
-                    )
-                    .ok();
-                }
-                None => xml.push_str("/>\n"),
-            },
-            None => xml.push_str("><skipped/></testcase>\n"),
-        }
     }
     if let Some(error) = &outcome.error {
         let at = error
@@ -84,8 +102,30 @@ pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
 mod tests {
     use super::*;
     use crate::run::{CaseResult, RunError};
-    use std::collections::HashMap;
     use std::time::Duration;
+
+    #[test]
+    fn a_check_in_a_loop_is_a_case_each_time() {
+        let script = Script::parse(
+            "let i = 0\nrepeat 2\ncheck i < 1\nlet i = i + 1\nend\n",
+            &HashMap::new(),
+        )
+        .unwrap();
+        let case = |failure: Option<&str>| CaseResult {
+            line: 3,
+            text: "check i < 1".into(),
+            failure: failure.map(str::to_string),
+            time: Duration::ZERO,
+        };
+        let outcome = Outcome {
+            cases: vec![case(None), case(Some("does not hold: i = 1"))],
+            error: None,
+            time: Duration::from_secs(1),
+        };
+        let xml = report("loop.aurix", &script, &outcome);
+        assert!(xml.contains("tests=\"2\" failures=\"1\" errors=\"0\" skipped=\"0\""));
+        assert!(xml.contains("name=\"line 3: check i &lt; 1 #2\""));
+    }
 
     #[test]
     fn one_testcase_per_expectation() {

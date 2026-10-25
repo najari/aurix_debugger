@@ -1,0 +1,30 @@
+# Script variables, a loop and a branch on the flash demo (start it first with start_in_flash):
+# step over through the loop of accumulate() (demo.c:31-32) until i reaches 3, counting the
+# steps, then check the sum: scale(i, 3) = 3 * i * i + 1, so 1 + 4 + 13 = 18 for i = 0, 1, 2.
+#
+# Each pass of the loop is 4 steps (32:16 the call of scale, 32:13 sum +=, 31:25 i++, 31:19
+# i < n); the first one starts at the breakpoint on 32, one step in.
+
+attach ../../dap-client/examples/tc275_demo_3cores.json
+pause all
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32 if i == 0
+continue 0
+wait stopped 0 reason breakpoint
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32
+
+let steps = 0
+let i = read i
+while i < 3
+  step over 0
+  wait stopped 0 reason step
+  let steps = steps + 1
+  let i = read i
+  # Not more than 4 steps a pass: step over must not run on past the loop.
+  if steps > 4 * (i + 1)
+    fail "i = ${i} after ${steps} steps"
+  end
+end
+
+let sum = read sum
+print i = ${i} after ${steps} step(s), sum = ${sum}
+check i == 3 && steps == 11 && sum == 18

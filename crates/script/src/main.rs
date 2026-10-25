@@ -117,9 +117,19 @@ fn main() -> ExitCode {
         .filter(|c| c.failure.is_some())
         .collect();
     let passed = outcome.cases.len() - failed.len();
-    let total = script.expectations().count();
+    // A loop runs an expectation more than once, a branch maybe not at all.
+    let not_reached = script
+        .expectations()
+        .filter(|line| !outcome.cases.iter().any(|c| c.line == line.number))
+        .count();
+    let not_reached = if not_reached > 0 {
+        format!(", {not_reached} not reached")
+    } else {
+        String::new()
+    };
     println!(
-        "{name}: {passed} of {total} expectation(s) held, {} failed, {:.2}s",
+        "{name}: {passed} of {} expectation(s) held, {} failed{not_reached}, {:.2}s",
+        outcome.cases.len(),
         failed.len(),
         outcome.time.as_secs_f64()
     );

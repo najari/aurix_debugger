@@ -2,10 +2,17 @@
 //! `${NAME}` is replaced by the value given with `--set NAME=value`, else by the environment
 //! variable, else by the default in `${NAME:-default}`.
 //!
+//! Script variables: `let NAME = <expression>` or `let NAME = read …` (a value of the target)
+//! gives `NAME` a value while the script runs. Expressions name them as they are (`n + 1`);
+//! other commands take their value with `${NAME}`, put in when the line runs. `if`/`else`/`end`,
+//! `while <condition>`/`end` and `repeat <count>`/`end` are the branches and loops; `check
+//! <condition>` is an expectation on script values, `fail <message>` a failed one, and `print
+//! <text>` writes a line.
+//!
 //! The whole file is read before anything runs: a mistake anywhere ends the run before the
-//! server is asked anything.
+//! server is asked anything. A line with a script variable is read again when it runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::Duration;
 
@@ -13,6 +20,7 @@ use aurix_debug_model::breakpoints::BreakpointSettings;
 use aurix_debug_model::memory::{parse_bytes, parse_location};
 
 use crate::compare::{Op, split_comparison};
+use crate::expr;
 
 /// How long a `wait` or `expect … within` waits when the script does not say.
 pub const DEFAULT_WAIT: Duration = Duration::from_secs(10);
@@ -118,6 +126,42 @@ pub enum Command {
     },
     Sleep(Duration),
     Disconnect,
+    /// `let <name> = …`.
+    Let {
+        name: String,
+        value: LetValue,
+    },
+    /// `if <condition>`: on to the `else` or `end` when it does not hold.
+    If(String),
+    Else,
+    /// `while <condition>`: past the `end` when it does not hold.
+    While(String),
+    /// `repeat <count>`: the lines up to the `end`, that many times.
+    Repeat(String),
+    /// The end of an `if`, `while` or `repeat`.
+    End,
+    /// An expectation on script values.
+    Check(String),
+    Print(String),
+    /// A failed expectation, with its message.
+    Fail(String),
+}
+
+/// Where a `let` takes its value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LetValue {
+    /// An expression of script values.
+    Expr(String),
+    /// `read <expression>`: evaluated in the halted core's top frame.
+    Read(String),
+    /// `read live <variable>[@core]`: read while the core runs.
+    Live { name: String, core: Option<u64> },
+    /// `read memory <address>[@core] <1|2|4|8>`: an unsigned little-endian integer.
+    Memory {
+        address: u64,
+        core: Option<u64>,
+        size: usize,
+    },
 }
 
 impl Command {
@@ -129,6 +173,51 @@ impl Command {
                 | Command::ExpectLive { .. }
                 | Command::ExpectMemory { .. }
                 | Command::RttExpect { .. }
+                | Command::Check(_)
+        )
+    }
+
+    /// Whether the command opens or closes a block (`if`, `else`, `while`, `repeat`, `end`).
+    pub fn is_block(&self) -> bool {
+        matches!(
+            self,
+            Command::If(_) | Command::Else | Command::While(_) | Command::Repeat(_) | Command::End
+        )
+    }
+
+    /// The expression the command evaluates, if it has one.
+    fn expression(&self) -> Option<&str> {
+        match self {
+            Command::Let {
+                value: LetValue::Expr(e),
+                ..
+            }
+            | Command::If(e)
+            | Command::While(e)
+            | Command::Repeat(e)
+            | Command::Check(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Whether the command needs the session (comes after `attach`).
+    fn needs_session(&self) -> bool {
+        !matches!(
+            self,
+            Command::Server(_)
+                | Command::Sleep(_)
+                | Command::Let {
+                    value: LetValue::Expr(_),
+                    ..
+                }
+                | Command::If(_)
+                | Command::Else
+                | Command::While(_)
+                | Command::Repeat(_)
+                | Command::End
+                | Command::Check(_)
+                | Command::Print(_)
+                | Command::Fail(_)
         )
     }
 }
@@ -137,14 +226,26 @@ impl Command {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
     pub number: usize,
-    /// The line as written, without its comment, after `${…}` replacement.
+    /// The line as written, without its comment, after `${…}` replacement (a script variable's
+    /// `${…}` stays until the line runs).
     pub text: String,
     pub command: Command,
+    /// Whether the line has a script variable's `${…}`: it is read again when it runs.
+    pub deferred: bool,
+    /// Where a block line goes on: for `if`, the line after its `else`, else its `end`, when
+    /// the condition does not hold; for `else`, its `end`; for `while` and `repeat`, the line
+    /// after the `end`, when done; for the `end` of a loop, the loop's first line. An index of
+    /// [`Script::lines`].
+    pub jump: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Script {
     pub lines: Vec<Line>,
+    /// The `--set` values: the first values of the script variables too.
+    pub vars: HashMap<String, String>,
+    /// The script variables: the names `let` gives a value.
+    pub names: HashSet<String>,
 }
 
 /// A mistake in the script.
@@ -165,6 +266,11 @@ impl std::error::Error for ParseError {}
 impl Script {
     /// Reads a whole script; `vars` are the `--set` values.
     pub fn parse(text: &str, vars: &HashMap<String, String>) -> Result<Script, ParseError> {
+        // The script variables, first: their `${…}` waits until the line runs.
+        let names: HashSet<String> = text
+            .lines()
+            .filter_map(|raw| let_target(strip_comment(raw)))
+            .collect();
         let mut lines = Vec::new();
         for (ix, raw) in text.lines().enumerate() {
             let number = ix + 1;
@@ -172,16 +278,42 @@ impl Script {
                 line: number,
                 message,
             };
-            let text = substitute(strip_comment(raw), vars).map_err(error)?;
+            let (text, deferred) = substitute(
+                strip_comment(raw),
+                &|name| vars.get(name).cloned().or_else(|| std::env::var(name).ok()),
+                &|name| names.contains(name),
+            )
+            .map_err(error)?;
             let text = text.trim();
             if text.is_empty() {
                 continue;
             }
-            let command = parse_command(text).map_err(error)?;
+            // A line with a script variable is read with 0 in its place, to find its mistakes.
+            let command = if deferred {
+                let (placeholder, _) =
+                    substitute(text, &|_| Some("0".into()), &|_| false).map_err(error)?;
+                parse_command(&placeholder)
+            } else {
+                parse_command(text)
+            }
+            .map_err(error)?;
+            if let Some(expression) = command.expression() {
+                let parsed = expr::parse(expression).map_err(error)?;
+                if let Some(name) = parsed.names().into_iter().find(|name| {
+                    !(names.contains(*name) || vars.contains_key(*name))
+                        && !matches!(*name, "true" | "false")
+                }) {
+                    return Err(error(format!(
+                        "`{name}` is not a script variable: give it a value with `let {name} = …` or --set {name}=…"
+                    )));
+                }
+            }
             lines.push(Line {
                 number,
                 text: text.to_string(),
                 command,
+                deferred,
+                jump: None,
             });
         }
         let attach = lines
@@ -189,8 +321,10 @@ impl Script {
             .position(|l| matches!(l.command, Command::Attach(_)));
         for line in &lines {
             let before_attach = attach.is_none_or(|at| lines[at].number > line.number);
-            let needs_session = !matches!(line.command, Command::Server(_) | Command::Sleep(_));
-            if needs_session && !matches!(line.command, Command::Attach(_)) && before_attach {
+            if line.command.needs_session()
+                && !matches!(line.command, Command::Attach(_))
+                && before_attach
+            {
                 return Err(ParseError {
                     line: line.number,
                     message: format!("`{}` comes before `attach`", line.text),
@@ -203,12 +337,112 @@ impl Script {
                 });
             }
         }
-        Ok(Script { lines })
+        match_blocks(&mut lines)?;
+        Ok(Script {
+            lines,
+            vars: vars.clone(),
+            names,
+        })
     }
 
     /// The expectations, in order.
     pub fn expectations(&self) -> impl Iterator<Item = &Line> {
         self.lines.iter().filter(|l| l.command.is_expectation())
+    }
+
+    /// A line as it runs now, `vars` holding the script variables: its text and its command,
+    /// read again when it has a script variable.
+    pub fn expand(
+        &self,
+        line: &Line,
+        vars: &HashMap<String, String>,
+    ) -> Result<(String, Command), String> {
+        if !line.deferred {
+            return Ok((line.text.clone(), line.command.clone()));
+        }
+        let (text, _) = substitute(
+            &line.text,
+            &|name| vars.get(name).cloned().or_else(|| std::env::var(name).ok()),
+            &|_| false,
+        )?;
+        let command = parse_command(&text)?;
+        // The blocks were matched when the script was read.
+        if std::mem::discriminant(&command) != std::mem::discriminant(&line.command) {
+            return Err(format!("`{text}` became another command"));
+        }
+        Ok((text, command))
+    }
+}
+
+/// The name a `let` line gives a value.
+fn let_target(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("let")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let (name, _) = rest.split_once('=')?;
+    let name = name.trim();
+    is_name(name).then(|| name.to_string())
+}
+
+/// A variable name: a letter or `_`, then letters, digits and `_`.
+fn is_name(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Sets the [`Line::jump`] of the block lines, and finds the blocks left open or closed twice.
+fn match_blocks(lines: &mut [Line]) -> Result<(), ParseError> {
+    enum Open {
+        If { at: usize, otherwise: Option<usize> },
+        Loop { at: usize },
+    }
+    let mut open: Vec<Open> = Vec::new();
+    for at in 0..lines.len() {
+        let error = |message: &str| ParseError {
+            line: lines[at].number,
+            message: message.into(),
+        };
+        match lines[at].command {
+            Command::If(_) => open.push(Open::If {
+                at,
+                otherwise: None,
+            }),
+            Command::While(_) | Command::Repeat(_) => open.push(Open::Loop { at }),
+            Command::Else => match open.last_mut() {
+                Some(Open::If { otherwise, .. }) if otherwise.is_none() => *otherwise = Some(at),
+                Some(Open::If { .. }) => return Err(error("a second `else` for one `if`")),
+                _ => return Err(error("`else` without its `if`")),
+            },
+            Command::End => match open.pop() {
+                Some(Open::If {
+                    at: start,
+                    otherwise,
+                }) => match otherwise {
+                    Some(otherwise) => {
+                        lines[start].jump = Some(otherwise + 1);
+                        lines[otherwise].jump = Some(at);
+                    }
+                    None => lines[start].jump = Some(at),
+                },
+                Some(Open::Loop { at: start }) => {
+                    lines[start].jump = Some(at + 1);
+                    lines[at].jump = Some(start);
+                }
+                None => return Err(error("`end` without its `if`, `while` or `repeat`")),
+            },
+            _ => {}
+        }
+    }
+    match open.pop() {
+        None => Ok(()),
+        Some(Open::If { at, .. } | Open::Loop { at }) => Err(ParseError {
+            line: lines[at].number,
+            message: format!("`{}` without its `end`", lines[at].text),
+        }),
     }
 }
 
@@ -227,9 +461,15 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
-/// Replaces each `${NAME}` and `${NAME:-default}`.
-fn substitute(line: &str, vars: &HashMap<String, String>) -> Result<String, String> {
+/// Replaces each `${NAME}` and `${NAME:-default}` by what `lookup` gives, else the default;
+/// leaves those `keep` names as they are. Also tells whether it left one.
+fn substitute(
+    line: &str,
+    lookup: &dyn Fn(&str) -> Option<String>,
+    keep: &dyn Fn(&str) -> bool,
+) -> Result<(String, bool), String> {
     let mut out = String::new();
+    let mut kept = false;
     let mut rest = line;
     while let Some(start) = rest.find("${") {
         out.push_str(&rest[..start]);
@@ -242,10 +482,13 @@ fn substitute(line: &str, vars: &HashMap<String, String>) -> Result<String, Stri
             Some((name, default)) => (name, Some(default)),
             None => (inner, None),
         };
-        let value = vars
-            .get(name)
-            .cloned()
-            .or_else(|| std::env::var(name).ok())
+        if keep(name) {
+            out.push_str(&rest[start..start + 2 + end + 1]);
+            kept = true;
+            rest = &after[end + 1..];
+            continue;
+        }
+        let value = lookup(name)
             .or_else(|| default.map(str::to_string))
             .ok_or_else(|| {
                 format!(
@@ -256,7 +499,7 @@ fn substitute(line: &str, vars: &HashMap<String, String>) -> Result<String, Stri
         rest = &after[end + 1..];
     }
     out.push_str(rest);
-    Ok(out)
+    Ok((out, kept))
 }
 
 /// `500ms`, `5s`, `1.5s`.
@@ -354,6 +597,47 @@ fn quoted(text: &str) -> Result<(String, &str), String> {
         }
     }
     Err(format!("`{text}` has no closing double quote"))
+}
+
+/// What comes after `let <name> =`.
+fn let_value(text: &str) -> Result<LetValue, String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    match words[..] {
+        ["read", "live", location] => {
+            let (name, core) = match location.split_once('@') {
+                Some((name, core)) => (name.to_string(), Some(parse_core(core)?)),
+                None => (location.to_string(), None),
+            };
+            Ok(LetValue::Live { name, core })
+        }
+        ["read", "live", ..] => Err("`read live` takes one <variable>[@core]".into()),
+        ["read", "memory", location, size] => {
+            let (address, core) = parse_location(location)?;
+            let size = match size {
+                "1" => 1,
+                "2" => 2,
+                "4" => 4,
+                "8" => 8,
+                _ => return Err(format!("`{size}`: `read memory` reads 1, 2, 4 or 8 bytes")),
+            };
+            Ok(LetValue::Memory {
+                address,
+                core,
+                size,
+            })
+        }
+        ["read", "memory", ..] => {
+            Err("`read memory` is `read memory <address>[@core] <1|2|4|8>`".into())
+        }
+        ["read"] => Err("`read` needs what to read".into()),
+        ["read", ..] => Ok(LetValue::Read(
+            text.strip_prefix("read").unwrap_or(text).trim().to_string(),
+        )),
+        _ => {
+            expr::parse(text)?;
+            Ok(LetValue::Expr(text.to_string()))
+        }
+    }
 }
 
 fn parse_command(text: &str) -> Result<Command, String> {
@@ -603,6 +887,69 @@ fn parse_command(text: &str) -> Result<Command, String> {
             no_more(0)?;
             Ok(Command::Disconnect)
         }
+        "let" => {
+            let (name, value) = after(1)
+                .split_once('=')
+                .ok_or("`let` is `let <name> = <value>`")?;
+            let name = name.trim();
+            if !is_name(name) {
+                return Err(format!(
+                    "`{name}` is not a variable name (letters, digits and _)"
+                ));
+            }
+            Ok(Command::Let {
+                name: name.to_string(),
+                value: let_value(value.trim())?,
+            })
+        }
+        "if" | "while" | "repeat" | "check" => {
+            let expression = after(1);
+            if expression.is_empty() {
+                return Err(format!(
+                    "`{keyword}` needs {}",
+                    if keyword == "repeat" {
+                        "a count"
+                    } else {
+                        "a condition"
+                    }
+                ));
+            }
+            expr::parse(expression)?;
+            let expression = expression.to_string();
+            Ok(match keyword {
+                "if" => Command::If(expression),
+                "while" => Command::While(expression),
+                "repeat" => Command::Repeat(expression),
+                _ => Command::Check(expression),
+            })
+        }
+        "else" | "end" => {
+            no_more(0)?;
+            Ok(if keyword == "else" {
+                Command::Else
+            } else {
+                Command::End
+            })
+        }
+        "print" | "fail" => {
+            let text = after(1);
+            let text = if text.starts_with('"') {
+                let (text, rest) = quoted(text)?;
+                if !rest.trim().is_empty() {
+                    return Err(format!("`{}` after the text", rest.trim()));
+                }
+                text
+            } else {
+                text.to_string()
+            };
+            Ok(if keyword == "print" {
+                Command::Print(text)
+            } else if text.is_empty() {
+                Command::Fail("fail".into())
+            } else {
+                Command::Fail(text)
+            })
+        }
         _ => Err(format!("`{keyword}` is not a command")),
     }
 }
@@ -787,6 +1134,123 @@ mod tests {
         );
         let error = Script::parse("attach ${AURIX_NO_SUCH_VARIABLE_42}", &vars).unwrap_err();
         assert!(error.message.contains("--set"), "{error}");
+    }
+
+    #[test]
+    fn blocks_jump() {
+        let script = parse(
+            "let n = 0\nrepeat 3\nif n % 2 == 0\nlet n = n + 1\nelse\nlet n = n + 2\nend\nend\n\
+             while n < 10\nlet n = n * 2\nend\ncheck n == 10\n",
+        )
+        .unwrap();
+        let jumps: Vec<_> = script.lines.iter().map(|l| l.jump).collect();
+        assert_eq!(
+            jumps,
+            [
+                None,
+                Some(8), // repeat: past its end
+                Some(5), // if: after the else
+                None,
+                Some(6), // else: its end
+                None,
+                None,     // the end of the if
+                Some(1),  // the end of the repeat: back to it
+                Some(11), // while: past its end
+                None,
+                Some(8), // back to the while
+                None,
+            ]
+        );
+        assert!(script.names.contains("n"));
+        assert_eq!(script.expectations().count(), 1);
+    }
+
+    #[test]
+    fn block_mistakes() {
+        assert_eq!(parse("if 1\nlet a = 1\n").unwrap_err().line, 1);
+        assert_eq!(parse("let a = 1\nend\n").unwrap_err().line, 2);
+        assert_eq!(parse("repeat 2\nelse\nend\n").unwrap_err().line, 2);
+        assert_eq!(parse("if 1\nelse\nelse\nend\n").unwrap_err().line, 3);
+        assert_eq!(parse("while\nend\n").unwrap_err().line, 1);
+        assert_eq!(parse("if 1 +\nend\n").unwrap_err().line, 1);
+        // A name nothing gives a value.
+        let error = parse("check m == 1\n").unwrap_err();
+        assert!(error.message.contains("let m"), "{error}");
+        // Reading the target needs the session.
+        assert_eq!(
+            parse("let a = read k\nattach a.json\n").unwrap_err().line,
+            1
+        );
+    }
+
+    #[test]
+    fn let_values() {
+        assert_eq!(
+            one("let a = read p->state"),
+            Command::Let {
+                name: "a".into(),
+                value: LetValue::Read("p->state".into())
+            }
+        );
+        assert_eq!(
+            one("let t = read live g_ticks@1"),
+            Command::Let {
+                name: "t".into(),
+                value: LetValue::Live {
+                    name: "g_ticks".into(),
+                    core: Some(1)
+                }
+            }
+        );
+        assert_eq!(
+            one("let w = read memory 0x7000A000@0 4"),
+            Command::Let {
+                name: "w".into(),
+                value: LetValue::Memory {
+                    address: 0x7000_a000,
+                    core: Some(0),
+                    size: 4
+                }
+            }
+        );
+        assert!(parse("attach a.json\nlet w = read memory 0x7000A000 3").is_err());
+        assert!(parse("attach a.json\nlet 2w = 1").is_err());
+        assert_eq!(
+            one("print \"n = 3\" # done"),
+            Command::Print("n = 3".into())
+        );
+        assert_eq!(one("fail"), Command::Fail("fail".into()));
+    }
+
+    #[test]
+    fn script_variables_wait_for_their_line() {
+        let vars = HashMap::from([("BASE".to_string(), "0x7000A000".to_string())]);
+        let script = Script::parse(
+            "attach a.json\nlet n = 2\nexpect memory ${BASE}@${n} 2A\nlet x = ${n:-5} + 1\n",
+            &vars,
+        )
+        .unwrap();
+        let line = &script.lines[2];
+        assert!(line.deferred);
+        assert_eq!(line.text, "expect memory 0x7000A000@${n} 2A");
+        let now = HashMap::from([("n".to_string(), "1".to_string())]);
+        let (text, command) = script.expand(line, &now).unwrap();
+        assert_eq!(text, "expect memory 0x7000A000@1 2A");
+        assert_eq!(
+            command,
+            Command::ExpectMemory {
+                address: 0x7000_a000,
+                core: Some(1),
+                bytes: vec![0x2a]
+            }
+        );
+        // A default when the variable has no value yet.
+        let (text, _) = script.expand(&script.lines[3], &HashMap::new()).unwrap();
+        assert_eq!(text, "let x = 5 + 1");
+        // Mistakes in such a line are found before the run too.
+        assert!(
+            Script::parse("let n = 1\nattach a.json\nexpect memory 0x0@${n}\n", &vars).is_err()
+        );
     }
 
     #[test]

@@ -78,11 +78,31 @@ server is asked anything.
 | `rtt send <core> <channel> <text>` | A line to the core's RTT down channel |
 | `rtt expect <core> <channel> "<regex>" [within <time>]` | A line on the up channel that matches, after the last one matched |
 | `sleep <time>`, `disconnect` | The run ends with `disconnect` anyway |
+| `let <name> = <expression>` | A script variable |
+| `let <name> = read <expression>` | `evaluate` in the top frame of the stopped core |
+| `let <name> = read live <global>[@core]` | One `liveWatch` |
+| `let <name> = read memory <address>[@core] 1\|2\|4\|8` | `readMemory`, an unsigned little-endian integer |
+| `if <condition>` … [`else` …] `end` | A branch |
+| `while <condition>` … `end`, `repeat <count>` … `end` | Loops |
+| `check <condition>` | An expectation on script variables (it shows their values) |
+| `fail [<message>]` | A failed expectation (after an `if`) |
+| `print <text>` | Writes a line |
+
+Script variables, PRACTICE's macros: expressions name them as they are (`steps + 1`,
+`i < 3 && sum == 18`), with C's integers (`0x2A`, `0b101`, `'a'`), operators and precedence,
+text in double quotes (`state == "Running"`) and decimals compared as numbers. Any other line
+takes a variable's value with `${name}` when it runs (`expect memory ${base}@0 2A`,
+`print i = ${i}`); a `--set` value is a variable's first value. A value read from the target is
+kept as an integer when it is one (`0x0000002A`, `97 'a'`), else as its text; one that cannot be
+read ends the run (exit 2).
 
 Exit code 0: every expectation held; 1: one did not (the run stops there, or goes on with
 `--keep-going` and lists them); 2: a mistake in the script, the server, a wait that ran out of
-time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation as a testcase
-(the ones not reached are skipped). Examples in `script/examples`: `demo_flash`, `conditions`
+time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation that ran as a
+testcase, in a loop each time (`#2`, `#3`, …), and a `fail` that ran too (expectations not reached
+are skipped). Examples in `script/examples`: `loop_until` (flash demo: step over through the loop
+of `accumulate()` with `while i < 3`, counting the steps, then `check i == 3 && steps == 11 &&
+sum == 18`), `demo_flash`, `conditions`
 and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
 `watch_after_break`, a data breakpoint next to an instruction breakpoint (it did not halt before
 probe-rs fork `149db65`), and `orti_paths` (the ORTI demo `zed/aurix_tcf_demo/build_orti.ps1`,

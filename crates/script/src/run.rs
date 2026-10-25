@@ -23,8 +23,9 @@ use aurix_debug_model::rtt::{ChannelKey, RttChannels, SENT_MARK};
 use aurix_debug_model::source_breakpoints::SourceBreakpoints;
 use serde_json::{Value, json};
 
-use crate::compare::Op;
-use crate::script::{Access, Command, Cores, Line, Script, Step};
+use crate::compare::{Op, parse_integer};
+use crate::expr::{self, Value as ScriptValue};
+use crate::script::{Access, Command, Cores, LetValue, Script, Step};
 
 /// The server when the script does not name one.
 pub const DEFAULT_SERVER: &str = "127.0.0.1:50000";
@@ -130,6 +131,16 @@ struct Session<'a> {
     rtt: RttChannels,
     /// Per RTT channel, the index (counting dropped lines) of the next line `rtt expect` reads.
     rtt_read: HashMap<ChannelKey, usize>,
+    /// The script variables (the `--set` values first).
+    vars: HashMap<String, String>,
+    /// Per `repeat` line being run, the times left.
+    repeats: HashMap<usize, i128>,
+}
+
+/// Where the run goes after a line.
+enum Next {
+    On,
+    To(usize),
 }
 
 /// Runs `script`, whose relative paths are relative to `base_dir`, printing what it does.
@@ -153,9 +164,12 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
         data_breakpoints: Vec::new(),
         rtt: RttChannels::default(),
         rtt_read: HashMap::new(),
+        vars: script.vars.clone(),
+        repeats: HashMap::new(),
     };
     let mut outcome = Outcome::default();
-    for line in &script.lines {
+    let mut at = 0;
+    while let Some(line) = script.lines.get(at) {
         if options.interrupted.load(Ordering::SeqCst) {
             outcome.error = Some(RunError {
                 line: Some(line.number),
@@ -164,34 +178,55 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
             break;
         }
         let started = Instant::now();
-        let result = session.execute(line);
+        let (text, result) = match script.expand(line, &session.vars) {
+            Ok((text, command)) => {
+                let result = if command.is_block() {
+                    session.block(at, line.jump, &command)
+                } else {
+                    session.execute(&command).map(|note| (note, Next::On))
+                };
+                (text, result)
+            }
+            Err(message) => (line.text.clone(), Err(Fail::Error(message))),
+        };
         let time = started.elapsed();
+        at += 1;
         match result {
-            Ok(note) => {
+            Ok((note, next)) => {
+                if let Next::To(to) = next {
+                    at = to;
+                }
                 if line.command.is_expectation() {
                     outcome.cases.push(CaseResult {
                         line: line.number,
-                        text: line.text.clone(),
+                        text: text.clone(),
                         failure: None,
                         time,
                     });
                 }
-                let note = note.map(|n| format!("  ({n})")).unwrap_or_default();
-                let took = if time >= Duration::from_millis(100) {
-                    format!("  [{:.2}s]", time.as_secs_f64())
-                } else {
-                    String::new()
-                };
-                session.say(&format!(
-                    "{:>4} ok    {}{note}{took}",
-                    line.number, line.text
-                ));
+                match &line.command {
+                    // The blocks run quietly; `print` writes its text.
+                    command if command.is_block() => {}
+                    Command::Print(_) => {
+                        let note = note.unwrap_or_default();
+                        session.say(&format!("{:>4} >     {note}", line.number));
+                    }
+                    _ => {
+                        let note = note.map(|n| format!("  ({n})")).unwrap_or_default();
+                        let took = if time >= Duration::from_millis(100) {
+                            format!("  [{:.2}s]", time.as_secs_f64())
+                        } else {
+                            String::new()
+                        };
+                        session.say(&format!("{:>4} ok    {text}{note}{took}", line.number));
+                    }
+                }
             }
             Err(Fail::Expectation(found)) => {
-                session.say(&format!("{:>4} FAIL  {}: {found}", line.number, line.text));
+                session.say(&format!("{:>4} FAIL  {text}: {found}", line.number));
                 outcome.cases.push(CaseResult {
                     line: line.number,
-                    text: line.text.clone(),
+                    text,
                     failure: Some(found),
                     time,
                 });
@@ -200,10 +235,7 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
                 }
             }
             Err(Fail::Error(message)) => {
-                session.say(&format!(
-                    "{:>4} ERROR {}: {message}",
-                    line.number, line.text
-                ));
+                session.say(&format!("{:>4} ERROR {text}: {message}", line.number));
                 outcome.error = Some(RunError {
                     line: Some(line.number),
                     message,
@@ -390,11 +422,79 @@ impl Session<'_> {
         }
     }
 
-    fn execute(&mut self, line: &Line) -> Result<Option<String>, Fail> {
+    /// The value of `text` with the script variables.
+    fn value(&self, text: &str) -> Result<ScriptValue, Fail> {
+        let vars = &self.vars;
+        expr::parse(text)
+            .and_then(|e| e.eval(&|name| vars.get(name).cloned()))
+            .map_err(Fail::Error)
+    }
+
+    /// Whether the condition `text` holds.
+    fn holds(&self, text: &str) -> Result<bool, Fail> {
+        self.value(text)?.truth().map_err(Fail::Error)
+    }
+
+    /// Runs an `if`, `else`, `while`, `repeat` or `end` at index `at`, whose jump is `jump`.
+    fn block(
+        &mut self,
+        at: usize,
+        jump: Option<usize>,
+        command: &Command,
+    ) -> Result<(Option<String>, Next), Fail> {
+        let to = || jump.ok_or_else(|| Fail::Error("a block without its end".into()));
+        let next = match command {
+            Command::If(condition) | Command::While(condition) => {
+                if self.holds(condition)? {
+                    Next::On
+                } else {
+                    Next::To(to()?)
+                }
+            }
+            Command::Else => Next::To(to()?),
+            Command::Repeat(count) => {
+                let left = match self.repeats.get(&at) {
+                    Some(left) => *left,
+                    None => match self.value(count)? {
+                        ScriptValue::Int(n) if n >= 0 => n,
+                        other => {
+                            return Err(Fail::Error(format!(
+                                "`repeat {count}`: the count is {other}, not 0 or more"
+                            )));
+                        }
+                    },
+                };
+                if left == 0 {
+                    self.repeats.remove(&at);
+                    Next::To(to()?)
+                } else {
+                    self.repeats.insert(at, left - 1);
+                    Next::On
+                }
+            }
+            // The end of a loop goes back to it; of an `if`, on.
+            _ => match jump {
+                Some(start) => Next::To(start),
+                None => Next::On,
+            },
+        };
+        Ok((None, next))
+    }
+
+    fn execute(&mut self, command: &Command) -> Result<Option<String>, Fail> {
         if self.client.is_some() {
             self.drain()?;
         }
-        match &line.command {
+        match command {
+            Command::Let { name, value } => self.set_variable(name, value),
+            Command::Check(condition) => self.check(condition),
+            Command::Print(text) => Ok(Some(text.clone())),
+            Command::Fail(message) => Err(Fail::Expectation(message.clone())),
+            Command::If(_)
+            | Command::Else
+            | Command::While(_)
+            | Command::Repeat(_)
+            | Command::End => Err(Fail::Error("a block line run as a command".into())),
             Command::Server(server) => {
                 self.server = server.clone();
                 Ok(None)
@@ -744,8 +844,10 @@ impl Session<'_> {
         }
     }
 
-    fn expect(&mut self, name: &str, op: Op, value: &str) -> Result<Option<String>, Fail> {
-        let core = self.stopped_core("expect")?;
+    /// `name` evaluated in the top frame of the core that stopped last, as probe-rs shows it. A
+    /// value that cannot be read is a failed expectation.
+    fn evaluate(&mut self, what: &str, name: &str) -> Result<String, Fail> {
+        let core = self.stopped_core(what)?;
         let frame = self.top_frame(core)?;
         let actual = match self.request(
             "evaluate",
@@ -760,6 +862,77 @@ impl Session<'_> {
         if actual.starts_with('<') {
             return Err(Fail::Expectation(format!("{name} is {actual}")));
         }
+        Ok(actual)
+    }
+
+    fn set_variable(&mut self, name: &str, value: &LetValue) -> Result<Option<String>, Fail> {
+        // A value that cannot be read ends the run: the lines after it would use it.
+        let unreadable = |fail: Fail| match fail {
+            Fail::Expectation(why) => Fail::Error(why),
+            other => other,
+        };
+        let text = match value {
+            LetValue::Expr(text) => self.value(text)?.to_string(),
+            LetValue::Read(expression) => variable_text(
+                &self
+                    .evaluate("let … = read", expression)
+                    .map_err(unreadable)?,
+            ),
+            LetValue::Live { name, core } => {
+                let core = self.live_core(*core)?;
+                match self.live_read(name, core)? {
+                    Ok(value) => variable_text(&value),
+                    Err(error) => {
+                        return Err(Fail::Error(format!("{name} cannot be read: {error}")));
+                    }
+                }
+            }
+            LetValue::Memory {
+                address,
+                core,
+                size,
+            } => {
+                let bytes = self.read_bytes(*address, *core, *size)?;
+                if bytes.len() != *size {
+                    return Err(Fail::Error(format!(
+                        "{} of {size} byte(s) readable at {address:#x}",
+                        bytes.len()
+                    )));
+                }
+                let n = bytes
+                    .iter()
+                    .rev()
+                    .fold(0u64, |n, byte| (n << 8) | u64::from(*byte));
+                n.to_string()
+            }
+        };
+        self.vars.insert(name.to_string(), text.clone());
+        Ok(Some(format!("{name} = {text}")))
+    }
+
+    fn check(&mut self, condition: &str) -> Result<Option<String>, Fail> {
+        let parsed = expr::parse(condition).map_err(Fail::Error)?;
+        // What the condition read, for the report.
+        let values = parsed
+            .names()
+            .iter()
+            .map(|name| match self.vars.get(*name) {
+                Some(value) => format!("{name} = {value}"),
+                None => format!("{name} has no value"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if self.holds(condition)? {
+            Ok((!values.is_empty()).then_some(values))
+        } else if values.is_empty() {
+            Err(Fail::Expectation("does not hold".into()))
+        } else {
+            Err(Fail::Expectation(format!("does not hold: {values}")))
+        }
+    }
+
+    fn expect(&mut self, name: &str, op: Op, value: &str) -> Result<Option<String>, Fail> {
+        let actual = self.evaluate("expect", name)?;
         if op.holds(&actual, value) {
             Ok(Some(format!("{name} = {actual}")))
         } else {
@@ -777,27 +950,10 @@ impl Session<'_> {
         value: &str,
         within: Duration,
     ) -> Result<Option<String>, Fail> {
-        let core = core
-            .or(self.last_stopped)
-            .or_else(|| self.threads.first().copied())
-            .ok_or_else(|| Fail::Error("no core".into()))?;
+        let core = self.live_core(core)?;
         let end = Instant::now() + within;
         loop {
-            let answer = self.client()?.request::<LiveWatch>(
-                LiveWatchArguments {
-                    expressions: vec![name.to_string()],
-                    core: Some(core),
-                },
-                TIMEOUT,
-            )?;
-            let read = answer.values.into_iter().next();
-            let actual = match read {
-                Some(read) => match read.value {
-                    Some(value) => Ok(value),
-                    None => Err(read.error.unwrap_or_else(|| "no value".into())),
-                },
-                None => Err("no value".into()),
-            };
+            let actual = self.live_read(name, core)?;
             match &actual {
                 Ok(actual) if op.holds(actual, value) => {
                     return Ok(Some(format!("{name} = {actual} on core {core}")));
@@ -817,26 +973,57 @@ impl Session<'_> {
         }
     }
 
+    /// The core a live read is for: the one named, else the one that stopped last, else the
+    /// first.
+    fn live_core(&self, core: Option<u64>) -> Result<u64, Fail> {
+        core.or(self.last_stopped)
+            .or_else(|| self.threads.first().copied())
+            .ok_or_else(|| Fail::Error("no core".into()))
+    }
+
+    /// One live read of `name` on `core`: the value, or why there is none.
+    fn live_read(&self, name: &str, core: u64) -> Result<Result<String, String>, Fail> {
+        let answer = self.client()?.request::<LiveWatch>(
+            LiveWatchArguments {
+                expressions: vec![name.to_string()],
+                core: Some(core),
+            },
+            TIMEOUT,
+        )?;
+        Ok(match answer.values.into_iter().next() {
+            Some(read) => match read.value {
+                Some(value) => Ok(value),
+                None => Err(read.error.unwrap_or_else(|| "no value".into())),
+            },
+            None => Err("no value".into()),
+        })
+    }
+
+    /// `count` bytes from `address`: fewer when not all can be read.
+    fn read_bytes(&self, address: u64, core: Option<u64>, count: usize) -> Result<Vec<u8>, Fail> {
+        let answer = self.request(
+            "readMemory",
+            json!({
+                "memoryReference": Self::memory_reference(address, core),
+                "offset": 0,
+                "count": count,
+            }),
+        )?;
+        Ok(answer["data"]
+            .as_str()
+            .map(decode_base64)
+            .transpose()
+            .map_err(Fail::Error)?
+            .unwrap_or_default())
+    }
+
     fn expect_memory(
         &mut self,
         address: u64,
         core: Option<u64>,
         bytes: &[u8],
     ) -> Result<Option<String>, Fail> {
-        let answer = self.request(
-            "readMemory",
-            json!({
-                "memoryReference": Self::memory_reference(address, core),
-                "offset": 0,
-                "count": bytes.len(),
-            }),
-        )?;
-        let read = answer["data"]
-            .as_str()
-            .map(decode_base64)
-            .transpose()
-            .map_err(Fail::Error)?
-            .unwrap_or_default();
+        let read = self.read_bytes(address, core, bytes.len())?;
         let hex = |bytes: &[u8]| {
             bytes
                 .iter()
@@ -973,5 +1160,87 @@ impl Session<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// What a script variable holds for a value probe-rs shows: the integer, in decimal, when the
+/// value is one (`0x0000002A`, `97 'a'`, `true`), else the text.
+fn variable_text(shown: &str) -> String {
+    let shown = shown.trim();
+    let first_word = shown.split_whitespace().next().unwrap_or(shown);
+    match parse_integer(shown).or_else(|| parse_integer(first_word)) {
+        Some(n) => n.to_string(),
+        None => shown.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs a script that needs no server.
+    fn run_text(text: &str, keep_going: bool) -> (Outcome, String) {
+        let script = Script::parse(text, &HashMap::new()).unwrap();
+        let options = Options {
+            keep_going,
+            ..Options::default()
+        };
+        let mut out = Vec::new();
+        let outcome = run(&script, Path::new("."), &options, &mut out);
+        (outcome, String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn loops_and_branches() {
+        let (outcome, out) = run_text(
+            "let n = 0\nlet odd = 0\nrepeat 5\n  if n % 2\n    let odd = odd + 1\n  end\n  let n = n + 1\nend\n\
+             while n < 40\n  let n = n * 2\nend\ncheck n == 40 && odd == 2\nprint n is ${n}\n",
+            false,
+        );
+        assert_eq!(outcome.exit_code(), 0, "{out}");
+        assert_eq!(outcome.cases.len(), 1);
+        assert!(out.contains("  13 >     n is 40"), "{out}");
+        assert!(out.contains("odd = 2"), "{out}");
+    }
+
+    #[test]
+    fn nested_repeats_count_anew() {
+        let (outcome, out) = run_text(
+            "let k = 0\nrepeat 3\nrepeat 2\nlet k = k + 1\nend\nend\ncheck k == 6\nrepeat 0\nfail never\nend\n",
+            false,
+        );
+        assert_eq!(outcome.exit_code(), 0, "{out}");
+    }
+
+    #[test]
+    fn checks_in_a_loop_are_cases_each() {
+        let (outcome, out) = run_text(
+            "let i = 0\nwhile i < 3\ncheck i != 1\nlet i = i + 1\nend\nif i == 3\nfail \"done at ${i}\"\nend\n",
+            true,
+        );
+        assert_eq!(outcome.exit_code(), 1, "{out}");
+        let failed: Vec<_> = outcome
+            .cases
+            .iter()
+            .filter_map(|c| c.failure.as_deref())
+            .collect();
+        assert_eq!(failed, ["does not hold: i = 1", "done at 3"]);
+        assert_eq!(outcome.cases.len(), 4);
+        assert!(out.contains("FAIL  fail \"done at 3\""), "{out}");
+    }
+
+    #[test]
+    fn a_bad_value_ends_the_run() {
+        let (outcome, out) = run_text("let s = \"Idle\"\nif s + 1\nend\n", false);
+        assert_eq!(outcome.exit_code(), 2, "{out}");
+        assert_eq!(outcome.error.unwrap().line, Some(2));
+    }
+
+    #[test]
+    fn values_as_variables_hold_them() {
+        assert_eq!(variable_text("0x0000002A"), "42");
+        assert_eq!(variable_text("97 'a'"), "97");
+        assert_eq!(variable_text("Running"), "Running");
+        assert_eq!(variable_text("2.5"), "2.5");
     }
 }

@@ -239,6 +239,40 @@ fn a_script_that_holds_passes() {
 }
 
 #[test]
+fn values_read_drive_loops_and_lines() {
+    let fake = fake(None);
+    let (outcome, out) = run_script(
+        &fake,
+        "continue\nwait stopped 0 reason breakpoint\nlet k = read k\n\
+         let w = read memory 0x7000A004@0 4\nlet t = read live g_ticks\ncheck k == 3 && w == 0x2E && t >= 0\n\
+         repeat k\n  step over\n  wait stopped reason step within 2s\nend\n\
+         let n = k + 1\nexpect s == ${n}\nif w != 46\n  fail \"w is ${w}\"\nend\n",
+        false,
+    );
+    assert_eq!(outcome.exit_code(), 0, "{out}");
+    assert_eq!(outcome.cases.len(), 2);
+    assert!(
+        out.contains("ok    let w = read memory 0x7000A004@0 4  (w = 46)"),
+        "{out}"
+    );
+    assert!(out.contains("ok    expect s == 4"), "{out}");
+    let seen = fake.seen.lock().unwrap();
+    assert_eq!(seen.commands.iter().filter(|c| *c == "next").count(), 3);
+}
+
+#[test]
+fn a_value_that_cannot_be_read_ends_the_run() {
+    let fake = fake(None);
+    let (outcome, out) = run_script(
+        &fake,
+        "continue\nwait stopped 0\nlet x = read nothing\ncheck x == 1\n",
+        false,
+    );
+    assert_eq!(outcome.exit_code(), 2, "{out}");
+    assert_eq!(outcome.error.unwrap().line, Some(4));
+}
+
+#[test]
 fn a_failed_expectation_stops_the_run_with_the_value_found() {
     let fake = fake(None);
     let (outcome, out) = run_script(

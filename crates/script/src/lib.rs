@@ -13,8 +13,10 @@
 //! - [`run`]: the run against the server, and its outcome (exit code 0, 1 or 2).
 //! - [`junit`]: the JUnit XML report.
 //! - [`compare`]: the comparison of a value read with the value expected.
+//! - [`expr`]: the expressions of `let`, `if`, `while`, `repeat` and `check`.
 
 pub mod compare;
+pub mod expr;
 pub mod junit;
 pub mod run;
 pub mod script;
