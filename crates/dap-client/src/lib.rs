@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -73,6 +73,9 @@ pub struct DapClient {
     writer: Arc<Mutex<TcpStream>>,
     seq: Arc<AtomicI64>,
     pending: Pending,
+    /// Set by the reader thread when the connection closes, under the lock of `pending`: a
+    /// request sent after that fails at once instead of waiting for an answer that cannot come.
+    closed: Arc<AtomicBool>,
     /// Behind a lock so that the client can be shared between threads (a UI's tasks).
     events: Mutex<Receiver<Event>>,
     _reader: JoinHandle<()>,
@@ -122,10 +125,12 @@ impl DapClient {
         let writer = Arc::new(Mutex::new(stream.try_clone()?));
         let seq = Arc::new(AtomicI64::new(1));
         let pending: Pending = Arc::default();
+        let closed = Arc::new(AtomicBool::new(false));
         let (event_sender, events) = mpsc::channel();
 
         let reader = {
             let pending = pending.clone();
+            let closed = closed.clone();
             let writer = writer.clone();
             let seq = seq.clone();
             std::thread::spawn(move || {
@@ -173,8 +178,10 @@ impl DapClient {
                         _ => {}
                     }
                 }
-                // The waiting requests see the connection close.
-                pending.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                // The waiting requests see the connection close, and so do the next ones.
+                let mut pending = pending.lock().unwrap_or_else(|e| e.into_inner());
+                closed.store(true, Ordering::SeqCst);
+                pending.clear();
             })
         };
 
@@ -182,6 +189,7 @@ impl DapClient {
             writer,
             seq,
             pending,
+            closed,
             events: Mutex::new(events),
             _reader: reader,
         })
@@ -230,10 +238,13 @@ impl DapClient {
     ) -> Result<Value, Error> {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel();
-        self.pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(seq, sender);
+        {
+            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(Error::Closed);
+            }
+            pending.insert(seq, sender);
+        }
         let message = json!({
             "seq": seq,
             "type": "request",
@@ -387,5 +398,23 @@ mod tests {
         }
         assert!(closed);
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_request_after_the_connection_closed_fails_at_once() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let _ = listener.accept().unwrap();
+        });
+        let client = DapClient::connect(address).unwrap();
+        while client.wait_event(Duration::from_secs(5)).is_ok() {}
+        // The write may still succeed: the socket closed on the other side only.
+        let start = std::time::Instant::now();
+        match client.request_raw("disconnect", json!({}), Duration::from_secs(5)) {
+            Err(Error::Closed | Error::Io(_)) => {}
+            other => panic!("expected a closed connection, got {other:?}"),
+        }
+        assert!(start.elapsed() < Duration::from_secs(1));
     }
 }
