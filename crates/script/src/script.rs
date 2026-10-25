@@ -14,6 +14,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Duration;
 
 use aurix_debug_model::breakpoints::BreakpointSettings;
@@ -357,6 +359,9 @@ impl Command {
 /// One command and where it is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
+    /// The included file the line is in (as the `include` named it); `None` for the script.
+    pub file: Option<String>,
+    /// The line in its file.
     pub number: usize,
     /// The line as written, without its comment, after `${…}` replacement (a script variable's
     /// `${…}` stays until the line runs).
@@ -383,36 +388,200 @@ pub struct Script {
 /// A mistake in the script.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseError {
+    /// The included file of the line; `None` for the script.
+    pub file: Option<String>,
     pub line: usize,
     pub message: String,
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {}: {}", self.line, self.message)
+        match &self.file {
+            Some(file) => write!(f, "{file}:{}: {}", self.line, self.message),
+            None => write!(f, "line {}: {}", self.line, self.message),
+        }
+    }
+}
+
+impl Line {
+    /// Where the line is: its number, or `file:number` in an included file.
+    pub fn label(&self) -> String {
+        match &self.file {
+            Some(file) => format!("{file}:{}", self.number),
+            None => self.number.to_string(),
+        }
     }
 }
 
 impl std::error::Error for ParseError {}
 
+/// How deep `include` goes at most.
+pub const MAX_INCLUDE_DEPTH: usize = 8;
+
+/// A line of a script file or of a file it includes, before it is read.
+struct RawLine {
+    /// The included file it is in (as the `include` named it); `None` for the script itself.
+    file: Option<Rc<str>>,
+    number: usize,
+    text: String,
+    /// The values the `include` gave, and `HERE`.
+    overlay: Rc<HashMap<String, String>>,
+}
+
+/// The lines of `text` (in `file`, in folder `dir`), the files it includes put in their place.
+fn expand(
+    text: &str,
+    file: Option<Rc<str>>,
+    dir: Option<&Path>,
+    overlay: Rc<HashMap<String, String>>,
+    vars: &HashMap<String, String>,
+    chain: &mut Vec<PathBuf>,
+) -> Result<Vec<RawLine>, ParseError> {
+    let mut out = Vec::new();
+    for (ix, raw) in text.lines().enumerate() {
+        let number = ix + 1;
+        let error = |message: String| ParseError {
+            file: file.as_deref().map(str::to_string),
+            line: number,
+            message,
+        };
+        let line = strip_comment(raw).trim();
+        let Some(rest) = line
+            .strip_prefix("include")
+            .filter(|r| r.is_empty() || r.starts_with(char::is_whitespace))
+        else {
+            out.push(RawLine {
+                file: file.clone(),
+                number,
+                text: raw.to_string(),
+                overlay: overlay.clone(),
+            });
+            continue;
+        };
+        // `include <file> [NAME=value]...`: the line's own `${…}` first.
+        let (rest, _) = substitute(
+            rest,
+            &|name| {
+                overlay
+                    .get(name)
+                    .or_else(|| vars.get(name))
+                    .cloned()
+                    .or_else(|| std::env::var(name).ok())
+            },
+            &|_| false,
+        )
+        .map_err(error)?;
+        let rest = rest.trim();
+        let (path, args) = if rest.starts_with('"') {
+            let (path, args) = quoted(rest).map_err(error)?;
+            (path, args.to_string())
+        } else {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            (rest[..end].to_string(), rest[end..].to_string())
+        };
+        if path.is_empty() {
+            return Err(error("`include` needs the file to include".into()));
+        }
+        let mut values = (*overlay).clone();
+        for arg in args.split_whitespace() {
+            let (name, value) = arg
+                .split_once('=')
+                .filter(|(name, _)| is_name(name))
+                .ok_or_else(|| error(format!("`{arg}`: after the file come NAME=value pairs")))?;
+            values.insert(name.to_string(), value.to_string());
+        }
+        let Some(dir) = dir else {
+            return Err(error(
+                "`include` needs the script read from its file".into(),
+            ));
+        };
+        let full = dir.join(&path);
+        let canonical = full.canonicalize().unwrap_or_else(|_| full.clone());
+        if chain.contains(&canonical) {
+            return Err(error(format!("`{path}` includes itself")));
+        }
+        if chain.len() > MAX_INCLUDE_DEPTH {
+            return Err(error(format!(
+                "`{path}`: includes more than {MAX_INCLUDE_DEPTH} deep"
+            )));
+        }
+        let text = std::fs::read_to_string(&full)
+            .map_err(|e| error(format!("{}: {e}", full.display())))?;
+        let folder = full.parent().map(Path::to_path_buf).unwrap_or_default();
+        values.insert("HERE".into(), folder.display().to_string());
+        chain.push(canonical);
+        let inner = expand(
+            &text,
+            Some(Rc::from(path.as_str())),
+            Some(&folder),
+            Rc::new(values),
+            vars,
+            chain,
+        )?;
+        chain.pop();
+        out.extend(inner);
+    }
+    Ok(out)
+}
+
 impl Script {
-    /// Reads a whole script; `vars` are the `--set` values.
+    /// Reads a whole script; `vars` are the `--set` values. A script read this way cannot
+    /// `include`: [`Self::parse_file`] can.
     pub fn parse(text: &str, vars: &HashMap<String, String>) -> Result<Script, ParseError> {
+        let raw = expand(text, None, None, Rc::default(), vars, &mut Vec::new())?;
+        Self::parse_lines(raw, vars)
+    }
+
+    /// Reads the script in `path`, and the files it includes (`include <file> [NAME=value]...`,
+    /// relative to the file the line is in). `${HERE}` is the folder of the file a line is in.
+    pub fn parse_file(path: &Path, vars: &HashMap<String, String>) -> Result<Script, ParseError> {
+        let text = std::fs::read_to_string(path).map_err(|e| ParseError {
+            file: None,
+            line: 0,
+            message: format!("{}: {e}", path.display()),
+        })?;
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let overlay = HashMap::from([("HERE".to_string(), dir.display().to_string())]);
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let raw = expand(
+            &text,
+            None,
+            Some(&dir),
+            Rc::new(overlay),
+            vars,
+            &mut vec![canonical],
+        )?;
+        Self::parse_lines(raw, vars)
+    }
+
+    fn parse_lines(
+        raw_lines: Vec<RawLine>,
+        vars: &HashMap<String, String>,
+    ) -> Result<Script, ParseError> {
         // The script variables, first: their `${…}` waits until the line runs.
-        let names: HashSet<String> = text
-            .lines()
-            .filter_map(|raw| let_target(strip_comment(raw)))
+        let names: HashSet<String> = raw_lines
+            .iter()
+            .filter_map(|raw| let_target(strip_comment(&raw.text)))
             .collect();
         let mut lines = Vec::new();
-        for (ix, raw) in text.lines().enumerate() {
-            let number = ix + 1;
+        for raw in &raw_lines {
+            let number = raw.number;
+            let file = raw.file.as_deref().map(str::to_string);
             let error = |message: String| ParseError {
+                file: file.clone(),
                 line: number,
                 message,
             };
+            let overlay = &raw.overlay;
             let (text, deferred) = substitute(
-                strip_comment(raw),
-                &|name| vars.get(name).cloned().or_else(|| std::env::var(name).ok()),
+                strip_comment(&raw.text),
+                &|name| {
+                    overlay
+                        .get(name)
+                        .or_else(|| vars.get(name))
+                        .cloned()
+                        .or_else(|| std::env::var(name).ok())
+                },
                 &|name| names.contains(name),
             )
             .map_err(error)?;
@@ -441,6 +610,7 @@ impl Script {
                 }
             }
             lines.push(Line {
+                file,
                 number,
                 text: text.to_string(),
                 command,
@@ -451,19 +621,22 @@ impl Script {
         let attach = lines
             .iter()
             .position(|l| matches!(l.command, Command::Attach(_)));
-        for line in &lines {
-            let before_attach = attach.is_none_or(|at| lines[at].number > line.number);
+        // In order of the lines (an included file's numbers are its own).
+        for (i, line) in lines.iter().enumerate() {
+            let before_attach = attach.is_none_or(|at| at > i);
             if line.command.needs_session()
                 && !matches!(line.command, Command::Attach(_))
                 && before_attach
             {
                 return Err(ParseError {
+                    file: line.file.clone(),
                     line: line.number,
                     message: format!("`{}` comes before `attach`", line.text),
                 });
             }
             if matches!(line.command, Command::Server(_)) && !before_attach {
                 return Err(ParseError {
+                    file: line.file.clone(),
                     line: line.number,
                     message: "`server` comes after `attach`".into(),
                 });
@@ -535,6 +708,7 @@ fn match_blocks(lines: &mut [Line]) -> Result<(), ParseError> {
     let mut open: Vec<Open> = Vec::new();
     for at in 0..lines.len() {
         let error = |message: &str| ParseError {
+            file: lines[at].file.clone(),
             line: lines[at].number,
             message: message.into(),
         };
@@ -572,6 +746,7 @@ fn match_blocks(lines: &mut [Line]) -> Result<(), ParseError> {
     match open.pop() {
         None => Ok(()),
         Some(Open::If { at, .. } | Open::Loop { at }) => Err(ParseError {
+            file: lines[at].file.clone(),
             line: lines[at].number,
             message: format!("`{}` without its `end`", lines[at].text),
         }),
@@ -1467,6 +1642,111 @@ mod tests {
         ] {
             assert!(parse(&format!("attach a.json\n{bad}")).is_err(), "{bad}");
         }
+    }
+
+    /// A folder of script files for a test, removed afterwards.
+    struct Files(PathBuf);
+
+    impl Files {
+        fn new(name: &str, files: &[(&str, &str)]) -> Files {
+            let dir =
+                std::env::temp_dir().join(format!("aurix-include-{name}-{}", std::process::id()));
+            for (path, text) in files {
+                let path = dir.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            Files(dir)
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for Files {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn includes_with_values() {
+        let files = Files::new(
+            "values",
+            &[
+                (
+                    "main.aurix",
+                    "include lib/setup.aurix CORE=1\nexpect k == ${N:-3}\ninclude lib/check.aurix\n",
+                ),
+                (
+                    "lib/setup.aurix",
+                    "attach ${HERE}/a.json\ncontinue ${CORE}\n",
+                ),
+                (
+                    "lib/check.aurix",
+                    "# a check\nexpect live g_ticks@${CORE:-0} > 1\n",
+                ),
+            ],
+        );
+        let script = Script::parse_file(&files.path("main.aurix"), &HashMap::new()).unwrap();
+        let texts: Vec<(String, &str)> = script
+            .lines
+            .iter()
+            .map(|l| (l.label(), l.text.as_str()))
+            .collect();
+        let here = files.path("lib").display().to_string();
+        assert_eq!(
+            texts,
+            [
+                (
+                    "lib/setup.aurix:1".to_string(),
+                    format!("attach {here}/a.json").as_str()
+                ),
+                ("lib/setup.aurix:2".to_string(), "continue 1"),
+                ("2".to_string(), "expect k == 3"),
+                // The value given to setup.aurix is not check.aurix's.
+                ("lib/check.aurix:2".to_string(), "expect live g_ticks@0 > 1"),
+            ]
+        );
+    }
+
+    #[test]
+    fn mistakes_in_an_included_file() {
+        let files = Files::new(
+            "mistakes",
+            &[
+                ("bad.aurix", "attach a.json\ninclude part.aurix\n"),
+                ("part.aurix", "continue\nfly away\n"),
+                ("loop.aurix", "attach a.json\ninclude again.aurix\n"),
+                ("again.aurix", "include loop.aurix\n"),
+                ("missing.aurix", "attach a.json\ninclude nothing.aurix\n"),
+                ("args.aurix", "attach a.json\ninclude part.aurix CORE\n"),
+                ("order.aurix", "include part2.aurix\nattach a.json\n"),
+                ("part2.aurix", "continue\n"),
+            ],
+        );
+        let error =
+            |name: &str| Script::parse_file(&files.path(name), &HashMap::new()).unwrap_err();
+        let bad = error("bad.aurix");
+        assert_eq!((bad.file.as_deref(), bad.line), (Some("part.aurix"), 2));
+        assert_eq!(bad.to_string(), "part.aurix:2: `fly` is not a command");
+        assert!(error("loop.aurix").message.contains("includes itself"));
+        assert!(error("missing.aurix").message.contains("nothing.aurix"));
+        assert!(error("args.aurix").message.contains("NAME=value"));
+        // `attach` checked in the order of the lines, across files.
+        let order = error("order.aurix");
+        assert_eq!(
+            (order.file.as_deref(), order.line),
+            (Some("part2.aurix"), 1)
+        );
+        // Text with no file cannot include.
+        assert!(
+            parse("include x.aurix\n")
+                .unwrap_err()
+                .message
+                .contains("from its file")
+        );
     }
 
     #[test]

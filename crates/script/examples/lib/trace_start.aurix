@@ -1,0 +1,7 @@
+# The start of a software trace test: attach (ATTACH, relative to the script that includes this
+# one, as every path of a command), run every core, wait for what the target kept while nobody
+# read (and its "dropped" record), and forget it.
+attach ${ATTACH}
+continue all
+sleep ${SETTLE:-1s}
+trace clear

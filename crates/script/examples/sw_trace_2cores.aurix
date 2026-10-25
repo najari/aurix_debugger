@@ -2,11 +2,7 @@
 # about 200 records a second) and trace_cpu1 on CPU1 (build_trace_cpu1.ps1, 2,200 records,
 # 17.6 KB a second), started with start_in_flash (CPU1 with --core 1), RAM only.
 
-attach ../../dap-client/examples/tc275_trace_2cores.json
-continue all
-# The backlog of the time nobody read comes first: forget it.
-sleep 1s
-trace clear
+include lib/trace_start.aurix ATTACH=../../dap-client/examples/tc275_trace_2cores.json
 
 trace expect 1 job count >= 500 within 2s
 trace expect 1 job interval avg >= 0.99ms

@@ -29,9 +29,19 @@ fn escape(text: &str) -> String {
 /// The report of `outcome`, the run of `script` named `name`.
 pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
     let not_reached: Vec<_> = script
-        .expectations()
-        .filter(|line| !outcome.cases.iter().any(|c| c.line == line.number))
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(i, line)| {
+            line.command.is_expectation() && !outcome.cases.iter().any(|c| c.index == *i)
+        })
+        .map(|(_, line)| line)
         .collect();
+    // `line 12` in the script, `common.aurix:3` in an included file.
+    let place = |file: &Option<String>, line: usize| match file {
+        Some(file) => format!("{file}:{line}"),
+        None => format!("line {line}"),
+    };
     let failures = outcome.cases.iter().filter(|c| c.failure.is_some()).count();
     let errors = usize::from(outcome.error.is_some());
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -46,7 +56,7 @@ pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
     .ok();
     let mut runs: HashMap<usize, usize> = HashMap::new();
     for case in &outcome.cases {
-        let run = runs.entry(case.line).or_insert(0);
+        let run = runs.entry(case.index).or_insert(0);
         *run += 1;
         let repeated = if *run > 1 {
             format!(" #{run}")
@@ -55,8 +65,8 @@ pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
         };
         write!(
             xml,
-            "  <testcase classname=\"{name}\" name=\"line {}: {}{repeated}\" time=\"{:.3}\"",
-            case.line,
+            "  <testcase classname=\"{name}\" name=\"{}: {}{repeated}\" time=\"{:.3}\"",
+            escape(&place(&case.file, case.line)),
             escape(&case.text),
             case.time.as_secs_f64()
         )
@@ -76,8 +86,8 @@ pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
     for line in not_reached {
         writeln!(
             xml,
-            "  <testcase classname=\"{name}\" name=\"line {}: {}\" time=\"0.000\"><skipped/></testcase>",
-            line.number,
+            "  <testcase classname=\"{name}\" name=\"{}: {}\" time=\"0.000\"><skipped/></testcase>",
+            escape(&place(&line.file, line.number)),
             escape(&line.text)
         )
         .ok();
@@ -85,7 +95,7 @@ pub fn report(name: &str, script: &Script, outcome: &Outcome) -> String {
     if let Some(error) = &outcome.error {
         let at = error
             .line
-            .map(|line| format!("line {line}: "))
+            .map(|line| format!("{}: ", place(&error.file, line)))
             .unwrap_or_default();
         writeln!(
             xml,
@@ -113,6 +123,8 @@ mod tests {
         .unwrap();
         let case = |failure: Option<&str>| CaseResult {
             line: 3,
+            file: None,
+            index: 2,
             text: "check i < 1".into(),
             failure: failure.map(str::to_string),
             time: Duration::ZERO,
@@ -138,12 +150,16 @@ mod tests {
             cases: vec![
                 CaseResult {
                     line: 2,
+                    file: None,
+                    index: 1,
                     text: "expect k == 3".into(),
                     failure: None,
                     time: Duration::from_millis(12),
                 },
                 CaseResult {
                     line: 3,
+                    file: None,
+                    index: 2,
                     text: "expect v < 4".into(),
                     failure: Some("expected v < 4, found <7>".into()),
                     time: Duration::from_millis(9),
@@ -151,6 +167,7 @@ mod tests {
             ],
             error: Some(RunError {
                 line: Some(4),
+                file: None,
                 message: "the server closed the connection".into(),
             }),
             time: Duration::from_secs(1),

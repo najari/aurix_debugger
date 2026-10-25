@@ -58,7 +58,11 @@ pub struct Options {
 /// What one expectation found.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CaseResult {
+    /// The line in its file, and the included file it is in (`None`: the script).
     pub line: usize,
+    pub file: Option<String>,
+    /// The line's index in [`Script::lines`]: which expectation it is.
+    pub index: usize,
     pub text: String,
     /// `None` when it passed, else what was found.
     pub failure: Option<String>,
@@ -68,8 +72,9 @@ pub struct CaseResult {
 /// Why the run ended early.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunError {
-    /// The line, `None` for the end of the run (disconnect).
+    /// The line, `None` for the end of the run (disconnect), and the included file it is in.
     pub line: Option<usize>,
+    pub file: Option<String>,
     pub message: String,
 }
 
@@ -174,9 +179,12 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
     let mut outcome = Outcome::default();
     let mut at = 0;
     while let Some(line) = script.lines.get(at) {
+        let index = at;
+        let label = line.label();
         if options.interrupted.load(Ordering::SeqCst) {
             outcome.error = Some(RunError {
                 line: Some(line.number),
+                file: line.file.clone(),
                 message: "interrupted".into(),
             });
             break;
@@ -203,6 +211,8 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
                 if line.command.is_expectation() {
                     outcome.cases.push(CaseResult {
                         line: line.number,
+                        file: line.file.clone(),
+                        index,
                         text: text.clone(),
                         failure: None,
                         time,
@@ -213,7 +223,7 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
                     command if command.is_block() => {}
                     Command::Print(_) => {
                         let note = note.unwrap_or_default();
-                        session.say(&format!("{:>4} >     {note}", line.number));
+                        session.say(&format!("{label:>4} >     {note}"));
                     }
                     _ => {
                         let note = note.map(|n| format!("  ({n})")).unwrap_or_default();
@@ -222,14 +232,16 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
                         } else {
                             String::new()
                         };
-                        session.say(&format!("{:>4} ok    {text}{note}{took}", line.number));
+                        session.say(&format!("{label:>4} ok    {text}{note}{took}"));
                     }
                 }
             }
             Err(Fail::Expectation(found)) => {
-                session.say(&format!("{:>4} FAIL  {text}: {found}", line.number));
+                session.say(&format!("{label:>4} FAIL  {text}: {found}"));
                 outcome.cases.push(CaseResult {
                     line: line.number,
+                    file: line.file.clone(),
+                    index,
                     text,
                     failure: Some(found),
                     time,
@@ -239,9 +251,10 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
                 }
             }
             Err(Fail::Error(message)) => {
-                session.say(&format!("{:>4} ERROR {text}: {message}", line.number));
+                session.say(&format!("{label:>4} ERROR {text}: {message}"));
                 outcome.error = Some(RunError {
                     line: Some(line.number),
+                    file: line.file.clone(),
                     message,
                 });
                 break;
@@ -252,6 +265,7 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
         session.say(&format!("     ERROR disconnect: {message}"));
         outcome.error.get_or_insert(RunError {
             line: None,
+            file: None,
             message,
         });
     }

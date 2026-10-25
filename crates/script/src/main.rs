@@ -75,17 +75,12 @@ fn main() -> ExitCode {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| args.script.display().to_string());
-    let text = match std::fs::read_to_string(&args.script) {
-        Ok(text) => text,
-        Err(error) => {
-            eprintln!("{}: {error}", args.script.display());
-            return ExitCode::from(2);
-        }
-    };
-    let script = match Script::parse(&text, &args.vars) {
+    // The script and the files it includes, read before anything runs.
+    let script = match Script::parse_file(&args.script, &args.vars) {
         Ok(script) => script,
         Err(error) => {
-            eprintln!("{name}:{}: {}", error.line, error.message);
+            let file = error.file.as_deref().unwrap_or(&name);
+            eprintln!("{file}:{}: {}", error.line, error.message);
             return ExitCode::from(2);
         }
     };
@@ -119,8 +114,12 @@ fn main() -> ExitCode {
     let passed = outcome.cases.len() - failed.len();
     // A loop runs an expectation more than once, a branch maybe not at all.
     let not_reached = script
-        .expectations()
-        .filter(|line| !outcome.cases.iter().any(|c| c.line == line.number))
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(i, line)| {
+            line.command.is_expectation() && !outcome.cases.iter().any(|c| c.index == *i)
+        })
         .count();
     let not_reached = if not_reached > 0 {
         format!(", {not_reached} not reached")
@@ -136,7 +135,8 @@ fn main() -> ExitCode {
     if options.keep_going && !failed.is_empty() {
         for case in &failed {
             println!(
-                "  {name}:{}: {}: {}",
+                "  {}:{}: {}: {}",
+                case.file.as_deref().unwrap_or(&name),
                 case.line,
                 case.text,
                 case.failure.as_deref().unwrap_or_default()
@@ -145,7 +145,8 @@ fn main() -> ExitCode {
     }
     if let Some(error) = &outcome.error {
         let at = error.line.map(|l| format!(":{l}")).unwrap_or_default();
-        println!("{name}{at}: error: {}", error.message);
+        let file = error.file.as_deref().unwrap_or(&name);
+        println!("{file}{at}: error: {}", error.message);
     }
     if let Some(path) = &args.junit
         && let Err(error) =

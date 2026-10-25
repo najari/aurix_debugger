@@ -62,6 +62,7 @@ server is asked anything.
 
 | Command | What it does |
 | --- | --- |
+| `include <file> [NAME=value]...` | The lines of another script file in its place (relative to the file the line is in, at most 8 deep, never itself), with `${NAME}` the values given; read with the script, before anything runs. Its lines report as `file:line`. `${HERE}` is the folder of the file a line is in; the paths of commands stay relative to the script run |
 | `server <host>:<port>` | The server (default `127.0.0.1:50000`), before `attach` |
 | `attach <attach.json>` | initialize, attach, configurationDone (the cores are left as they are). An attach file that turns flashing on is refused |
 | `break <file>:<line> [if <condition>] [hit <count>] [log <message>]` | A source breakpoint, with the probe-rs conditions (`v == 3 && k != 0`, `3`, `>= 3`, `% 4`) |
@@ -103,7 +104,7 @@ Exit code 0: every expectation held; 1: one did not (the run stops there, or goe
 `--keep-going` and lists them); 2: a mistake in the script, the server, a wait that ran out of
 time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation that ran as a
 testcase, in a loop each time (`#2`, `#3`, …), and a `fail` that ran too (expectations not reached
-are skipped). Examples in `script/examples`: `sw_trace` (the ORTI demo built with `build_orti.ps1 -Trace`: the timer ISR every 10 ms and 2.8 µs long, the task slices 400 ms, nothing dropped), `sw_trace_2cores` (with `trace_cpu1` on CPU1, `build_trace_cpu1.ps1`, 2,200 records a second: both cores at once, and how full each RTT buffer got, `aurix_trace_high`), `loop_until` (flash demo: step over through the loop
+are skipped). Examples in `script/examples` (`lib/trace_start.aurix` is the start both trace scripts include): `sw_trace` (the ORTI demo built with `build_orti.ps1 -Trace`: the timer ISR every 10 ms and 2.8 µs long, the task slices 400 ms, nothing dropped), `sw_trace_2cores` (with `trace_cpu1` on CPU1, `build_trace_cpu1.ps1`, 2,200 records a second: both cores at once, and how full each RTT buffer got, `aurix_trace_high`), `loop_until` (flash demo: step over through the loop
 of `accumulate()` with `while i < 3`, counting the steps, then `check i == 3 && steps == 11 &&
 sum == 18`), `demo_flash`, `conditions`
 and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
