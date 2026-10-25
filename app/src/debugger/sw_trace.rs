@@ -223,6 +223,30 @@ impl Debugger {
         self.sw_trace = SwTrace::new(names);
     }
 
+    /// Writes the events kept (as shown: frozen or not) as CSV next to the attach file,
+    /// `<attach>-trace.csv`.
+    fn save_sw_trace(&mut self) {
+        let Some(attach) = self.attach.clone() else {
+            return;
+        };
+        let attach = Path::new(&attach);
+        let stem = attach
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "session".into());
+        let path = attach.with_file_name(format!("{stem}-trace.csv"));
+        let trace = self.sw_trace_frozen.as_ref().unwrap_or(&self.sw_trace);
+        let note = match std::fs::write(&path, trace.to_csv()) {
+            Ok(()) => format!(
+                "SW Trace: {} event(s) saved to {}",
+                trace.events().len(),
+                path.display()
+            ),
+            Err(error) => format!("SW Trace: {}: {error}", path.display()),
+        };
+        self.log(note);
+    }
+
     /// Data of a binary RTT channel.
     pub(super) fn sw_trace_received(&mut self, data: RttData) {
         match binary_bytes(&data.data) {
@@ -292,6 +316,7 @@ impl Debugger {
             })
             .child(cell("Id".into(), 120., color::MUTED))
             .child(cell("Count".into(), 56., color::MUTED))
+            .child(cell("Load".into(), 64., color::MUTED))
             .child(cell("Interval min / avg / max".into(), 260., color::MUTED))
             .child(cell("Span last".into(), 80., color::MUTED))
             .child(cell("Span min / avg / max".into(), 260., color::MUTED));
@@ -306,6 +331,14 @@ impl Debugger {
                 })
                 .child(cell(row.name, 120., color::TEXT))
                 .child(cell(s.count.to_string(), 56., color::TEXT))
+                .child(cell(
+                    trace
+                        .load(row.core, row.id)
+                        .map(|share| format!("{:.2} %", share * 100.0))
+                        .unwrap_or_default(),
+                    64.,
+                    color::ACCENT,
+                ))
                 .child(cell(spread(&s.interval), 260., color::TEXT))
                 .child(cell(
                     if s.span.count > 0 {
@@ -402,6 +435,15 @@ impl Debugger {
                         cx.listener(|this, _, _, cx| {
                             this.sw_trace.clear();
                             this.sw_trace_frozen = None;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button(
+                        "sw-trace-save",
+                        "Save CSV",
+                        !empty,
+                        cx.listener(|this, _, _, cx| {
+                            this.save_sw_trace();
                             cx.notify();
                         }),
                     ))

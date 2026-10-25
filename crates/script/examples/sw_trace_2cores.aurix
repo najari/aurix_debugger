@@ -20,6 +20,15 @@ sleep 2s
 trace expect 0 dropped == 0
 trace expect 1 dropped == 0
 
+# The load: a job of 100 us every 1 ms is 10 % of CPU1; each task about a third of CPU0 (its
+# 0.4 s of every 1.2 s, measured over some seconds), the timer ISR (3 us every 10 ms) 0.03 %.
+trace expect 1 job load >= 9.5%
+trace expect 1 job load <= 10.5%
+trace expect 0 TaskA load >= 25%
+trace expect 0 TaskA load <= 42%
+trace expect 0 timer_isr load < 0.1%
+trace save ${TEMP}/sw_trace_2cores.csv
+
 # How full the buffers got while the debugger read them (since the drop of the backlog).
 let high0 = read live aurix_trace_high@0
 let high1 = read live aurix_trace_high@1

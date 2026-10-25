@@ -139,6 +139,8 @@ pub enum Command {
     },
     /// `trace clear`: the trace read so far is forgotten.
     TraceClear,
+    /// `trace save <file>`: the events kept as CSV (relative to the script).
+    TraceSave(String),
     /// `let <name> = …`.
     Let {
         name: String,
@@ -171,6 +173,8 @@ pub enum TraceMeasure {
     Span(TraceStat),
     /// From one record of the id to the next.
     Interval(TraceStat),
+    /// The share of the time in the id's spans, in hundredths of a percent.
+    Load,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,14 +219,14 @@ fn trace_expect(text: &str) -> Result<Command, String> {
     // A number first is the core, unless a measure follows it: then it is the id.
     let measure_next = words
         .get(1)
-        .is_some_and(|w| matches!(*w, "count" | "span" | "interval"));
+        .is_some_and(|w| matches!(*w, "count" | "span" | "interval" | "load"));
     let (core, words) = match words.first() {
         Some(word) if word.parse::<u64>().is_ok() && !measure_next => {
             (Some(parse_core(word)?), &words[1..])
         }
         _ => (None, &words[..]),
     };
-    let usage = "`trace expect` is `trace expect [core] <id> count|span <stat>|interval <stat> <op> <value>` \
+    let usage = "`trace expect` is `trace expect [core] <id> count|span <stat>|interval <stat>|load <op> <value>` \
                  or `trace expect [core] dropped <op> <count>`, stat min, max, avg or last";
     let stat = |word: Option<&&str>| match word.copied() {
         Some("min") => Ok(TraceStat::Min),
@@ -239,6 +243,7 @@ fn trace_expect(text: &str) -> Result<Command, String> {
             TraceMeasure::Span(stat(Some(s))?),
             tail,
         ),
+        [id, "load", tail @ ..] => (Some(id.to_string()), TraceMeasure::Load, tail),
         [id, "interval", s, tail @ ..] => (
             Some(id.to_string()),
             TraceMeasure::Interval(stat(Some(s))?),
@@ -252,6 +257,12 @@ fn trace_expect(text: &str) -> Result<Command, String> {
     let op = Op::parse(op).ok_or_else(|| format!("`{op}` is not ==, !=, <, <=, > or >="))?;
     let value = if measure.is_time() {
         parse_time_ns(value)?
+    } else if measure == TraceMeasure::Load {
+        let percent: f64 = value
+            .trim_end_matches('%')
+            .parse()
+            .map_err(|_| format!("`{value}` is not a percentage, such as 30% or 0.5%"))?;
+        (percent * 100.0).round() as u64
     } else {
         value
             .parse()
@@ -1004,7 +1015,14 @@ fn parse_command(text: &str) -> Result<Command, String> {
                 no_more(1)?;
                 Ok(Command::TraceClear)
             }
-            _ => Err("`trace` is `trace expect …` or `trace clear`".into()),
+            Some(&"save") => {
+                let file = after(2);
+                if file.is_empty() {
+                    return Err("`trace save` needs a file".into());
+                }
+                Ok(Command::TraceSave(file.trim_matches('"').to_string()))
+            }
+            _ => Err("`trace` is `trace expect …`, `trace clear` or `trace save <file>`".into()),
         },
         "sleep" => {
             no_more(1)?;
@@ -1425,6 +1443,19 @@ mod tests {
             }
         ));
         assert_eq!(one("trace clear"), Command::TraceClear);
+        assert!(matches!(
+            one("trace expect 0 TaskA load >= 33.3%"),
+            Command::TraceExpect {
+                core: Some(0),
+                measure: TraceMeasure::Load,
+                value: 3330,
+                ..
+            }
+        ));
+        assert_eq!(
+            one("trace save \"out/trace.csv\""),
+            Command::TraceSave("out/trace.csv".into())
+        );
         assert_eq!(parse_time_ns("2.75us").unwrap(), 2_750);
         assert_eq!(parse_time_ns("2.75µs").unwrap(), 2_750);
         for bad in [

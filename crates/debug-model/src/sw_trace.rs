@@ -167,6 +167,8 @@ pub struct IdStats {
     pub span: Spread,
     last_start: Option<u64>,
     open: Option<u64>,
+    /// The ticks in its spans since the core's last drop (for the load).
+    busy: u64,
 }
 
 /// One line of the statistics.
@@ -198,6 +200,9 @@ pub struct SwTrace {
     dropped: BTreeMap<Option<u64>, u64>,
     total: u64,
     first: Option<u64>,
+    /// Per core, the time the load is measured from (the first record, or the last drop) and
+    /// the last record's.
+    period: BTreeMap<Option<u64>, (u64, u64)>,
 }
 
 impl Default for SwTrace {
@@ -217,7 +222,49 @@ impl SwTrace {
             dropped: BTreeMap::new(),
             total: 0,
             first: None,
+            period: BTreeMap::new(),
         }
+    }
+
+    /// The share of the time `id` spent in its spans on `core`, 0 to 1, since the core's first
+    /// record or last drop (nested spans count in each: an ISR inside a task counts for both).
+    /// `None` before two records, or for an id that was never ended.
+    pub fn load(&self, core: Option<u64>, id: u16) -> Option<f64> {
+        let stats = self.stats.get(&(core, id))?;
+        let (from, to) = *self.period.get(&core)?;
+        let mut busy = stats.busy;
+        // A span begun and not ended counts up to now.
+        if let Some(begin) = stats.open
+            && stats.span.count > 0
+        {
+            busy += to - begin.max(from);
+        }
+        (to > from && stats.span.count > 0).then(|| busy as f64 / (to - from) as f64)
+    }
+
+    /// The events kept as CSV: time since the first event (ns), core, id, name, kind, arg and
+    /// the span an `end` closes (ns).
+    pub fn to_csv(&self) -> String {
+        let ns = |ticks: u64| (ticks as u128 * 1_000_000_000 / self.tick_hz as u128) as u64;
+        let mut out = String::from("time_ns,core,id,name,kind,arg,span_ns\n");
+        for event in &self.events {
+            let kind = match self.kind(event) {
+                Kind::Begin => "begin",
+                Kind::End => "end",
+                Kind::Event => "event",
+                Kind::Dropped => "dropped",
+            };
+            let name = self.names.name(event.id).replace(['"', ','], "_");
+            out.push_str(&format!(
+                "{},{},{},{name},{kind},{},{}\n",
+                ns(self.since_start(event.time)),
+                event.core.map(|c| c.to_string()).unwrap_or_default(),
+                event.id,
+                event.arg,
+                event.span.map(|s| ns(s).to_string()).unwrap_or_default(),
+            ));
+        }
+        out
     }
 
     pub fn names(&self) -> &Names {
@@ -266,6 +313,7 @@ impl SwTrace {
         self.dropped.clear();
         self.total = 0;
         self.first = None;
+        self.period.clear();
     }
 
     /// Bytes of the channel of `core`; returns how many events they made.
@@ -298,21 +346,28 @@ impl SwTrace {
         let end = word & END_BIT != 0;
         let id = word & !END_BIT;
         let mut span = None;
+        let period = self.period.entry(core).or_insert((time, time));
+        period.1 = time;
         if id == ID_DROPPED && !end {
             *self.dropped.entry(core).or_default() += u64::from(arg);
-            // Records are missing here: no interval or span of this core reaches across.
+            // Records are missing here: no interval or span of this core reaches across, and
+            // the load is measured from here on.
+            *period = (time, time);
             for ((c, _), stats) in self.stats.iter_mut() {
                 if *c == core {
                     stats.last_start = None;
                     stats.open = None;
+                    stats.busy = 0;
                 }
             }
         } else {
+            let from = period.0;
             let stats = self.stats.entry((core, id)).or_default();
             if end {
                 if let Some(begin) = stats.open.take() {
                     let length = time - begin;
                     stats.span.add(length);
+                    stats.busy += time - begin.max(from);
                     span = Some(length);
                 }
             } else {
@@ -637,6 +692,38 @@ mod tests {
         let task = narrow.rows.iter().find(|r| r.name == "task").unwrap();
         assert_eq!(task.segments, [(0, 2)]);
         assert!(SwTrace::default().chart(10, 10).is_none());
+    }
+
+    #[test]
+    fn load_and_csv() {
+        let mut trace = SwTrace::new(Names::parse("1 = task\n10 = isr\n20 = dispatch").unwrap());
+        let mut bytes = Vec::new();
+        // Before a drop: a task of 900 ticks, not counted.
+        bytes.extend(record(0, 1, 0));
+        bytes.extend(record(900, 1 | END_BIT, 0));
+        bytes.extend(record(1000, ID_DROPPED, 5));
+        // From 1000 to 2000: the task 1000..1300 and 1500..2000 (open), an ISR of 10 ticks.
+        bytes.extend(record(1000, 1, 0));
+        bytes.extend(record(1100, 10, 0));
+        bytes.extend(record(1110, 10 | END_BIT, 0));
+        bytes.extend(record(1300, 1 | END_BIT, 0));
+        bytes.extend(record(1500, 1, 0));
+        bytes.extend(record(1600, 20, 7));
+        bytes.extend(record(2000, 10, 0));
+        bytes.extend(record(2000, 10 | END_BIT, 0));
+        trace.received(Some(0), &bytes);
+        // 300 + 500 of 1000 ticks.
+        assert_eq!(trace.load(Some(0), 1), Some(0.8));
+        assert_eq!(trace.load(Some(0), 10), Some(0.01));
+        assert_eq!(trace.load(Some(0), 20), None);
+        let csv = trace.to_csv();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], "time_ns,core,id,name,kind,arg,span_ns");
+        // 100 MHz: a tick is 10 ns.
+        assert_eq!(lines[2], "9000,0,1,task,end,0,9000");
+        assert_eq!(lines[3], "10000,0,32767,(dropped),dropped,5,");
+        assert_eq!(lines[9], "16000,0,20,dispatch,event,7,");
+        assert_eq!(lines.len(), 1 + 11);
     }
 
     #[test]

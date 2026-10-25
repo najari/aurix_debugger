@@ -79,7 +79,8 @@ server is asked anything.
 | `rtt expect <core> <channel> "<regex>" [within <time>]` | A line on the up channel that matches, after the last one matched |
 | `sleep <time>`, `disconnect` | The run ends with `disconnect` anyway |
 | `trace expect [core] <id> count\|span <stat>\|interval <stat> <op> <value> [within <time>]` | The software trace (`aurix_trace.h` records on an RTT channel whose `dataFormat` is `BinaryLE`): the records of an id, its spans or the interval between its records, `<stat>` min, max, avg or last, times as `750ns`, `2.5us`, `10ms`, `1s`; the ids named in `<attach>.trace` (`id = name`) or by number. Waits until it holds (default 10 s) |
-| `trace expect [core] dropped <op> <count>`, `trace clear` | The records the target dropped (its buffer full); forget what was read so far (the backlog of a target nobody read) |
+| `trace expect [core] <id> load <op> <percent>` | The share of the time in the id's spans since the core's first record or last drop (`30%`, nested spans count in each) |
+| `trace expect [core] dropped <op> <count>`, `trace clear`, `trace save <file>` | The records the target dropped (its buffer full); forget what was read so far (the backlog of a target nobody read); the events kept as CSV (`time_ns,core,id,name,kind,arg,span_ns`) |
 | `let <name> = <expression>` | A script variable |
 | `let <name> = read <expression>` | `evaluate` in the top frame of the stopped core |
 | `let <name> = read live <global>[@core]` | One `liveWatch` |

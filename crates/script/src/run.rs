@@ -575,6 +575,17 @@ impl Session<'_> {
                 value,
                 within,
             } => self.trace_expect(*core, id.as_deref(), *measure, *op, *value, *within),
+            Command::TraceSave(file) => {
+                self.drain()?;
+                let path = self.path(file);
+                std::fs::write(&path, self.sw_trace.to_csv())
+                    .map_err(|error| Fail::Error(format!("{}: {error}", path.display())))?;
+                Ok(Some(format!(
+                    "{} event(s) to {}",
+                    self.sw_trace.events().len(),
+                    path.display()
+                )))
+            }
             Command::TraceClear => {
                 self.drain()?;
                 let records = self.sw_trace.total();
@@ -1208,6 +1219,19 @@ impl Session<'_> {
             })
         };
         Ok(match measure {
+            TraceMeasure::Load => {
+                let core = core.or_else(|| {
+                    // One core with this id: its load.
+                    let mut cores = self.sw_trace.stats().into_iter().filter(|r| r.id == id);
+                    match (cores.next(), cores.next()) {
+                        (Some(row), None) => row.core,
+                        _ => None,
+                    }
+                });
+                self.sw_trace
+                    .load(core, id)
+                    .map(|share| (share * 10_000.0).round() as u64)
+            }
             TraceMeasure::Count => Some(stats.count),
             TraceMeasure::Span(stat) => pick(&stats.span, stat),
             TraceMeasure::Interval(stat) => pick(&stats.interval, stat),
@@ -1227,6 +1251,8 @@ impl Session<'_> {
         let shown = |n: u64| {
             if measure.is_time() {
                 format_ns(n)
+            } else if measure == TraceMeasure::Load {
+                format!("{:.2}%", n as f64 / 100.0)
             } else {
                 n.to_string()
             }
