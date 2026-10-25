@@ -9,6 +9,12 @@
 //! <condition>` is an expectation on script values, `fail <message>` a failed one, and `print
 //! <text>` writes a line.
 //!
+//! Files (relative to the script, in double quotes when the name has spaces): `file write
+//! <file> <text>` makes the file anew with the text as its line (none: empty), `file append
+//! <file> <text>` adds a line, `file delete <file>` removes it. `let NAME = file read <file>`
+//! (all of it), `file lines <file>` (how many), `file line <file> <n>` (line n, from 1) and `file
+//! exists <file>` (1 or 0) read one.
+//!
 //! The whole file is read before anything runs: a mistake anywhere ends the run before the
 //! server is asked anything. A line with a script variable is read again when it runs.
 
@@ -143,6 +149,14 @@ pub enum Command {
     TraceClear,
     /// `trace save <file>`: the events kept as CSV (relative to the script).
     TraceSave(String),
+    /// `file write|append <file> <text>`: the text as a line, the file made anew or added to.
+    FileWrite {
+        path: String,
+        text: String,
+        append: bool,
+    },
+    /// `file delete <file>`.
+    FileDelete(String),
     /// `let <name> = …`.
     Let {
         name: String,
@@ -295,6 +309,28 @@ pub enum LetValue {
         core: Option<u64>,
         size: usize,
     },
+    /// `file read|lines|exists|line …`: from a file (relative to the script).
+    File { path: String, what: FileValue },
+}
+
+/// What a `let … = file …` takes from the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileValue {
+    /// `file read <file>`: all of it, without the last line end.
+    Text,
+    /// `file lines <file>`: the number of lines.
+    Lines,
+    /// `file exists <file>`: 1 or 0.
+    Exists,
+    /// `file line <file> <n>`: line `n`, from 1.
+    Line(u64),
+}
+
+impl LetValue {
+    /// Whether the value comes from the target.
+    fn needs_session(&self) -> bool {
+        !matches!(self, LetValue::Expr(_) | LetValue::File { .. })
+    }
 }
 
 impl Command {
@@ -336,14 +372,15 @@ impl Command {
 
     /// Whether the command needs the session (comes after `attach`).
     fn needs_session(&self) -> bool {
+        if let Command::Let { value, .. } = self {
+            return value.needs_session();
+        }
         !matches!(
             self,
             Command::Server(_)
                 | Command::Sleep(_)
-                | Command::Let {
-                    value: LetValue::Expr(_),
-                    ..
-                }
+                | Command::FileWrite { .. }
+                | Command::FileDelete(_)
                 | Command::If(_)
                 | Command::Else
                 | Command::While(_)
@@ -906,10 +943,46 @@ fn quoted(text: &str) -> Result<(String, &str), String> {
     Err(format!("`{text}` has no closing double quote"))
 }
 
+/// A file name at the start of `text` (in double quotes when it has spaces) and what follows.
+fn file_name(text: &str) -> Result<(String, &str), String> {
+    let text = text.trim_start();
+    let (path, rest) = if text.starts_with('"') {
+        quoted(text)?
+    } else {
+        let end = text.find(char::is_whitespace).unwrap_or(text.len());
+        (text[..end].to_string(), &text[end..])
+    };
+    if path.is_empty() {
+        return Err("a file name is missing".into());
+    }
+    Ok((path, rest.trim()))
+}
+
+/// The words after `let <name> = file`.
+fn file_value(text: &str) -> Result<LetValue, String> {
+    let usage = "`file` is `file read <file>`, `file lines <file>`, `file exists <file>` or `file line <file> <n>`";
+    let text = text.trim_start();
+    let (what, rest) = text.split_once(char::is_whitespace).ok_or(usage)?;
+    let (path, rest) = file_name(rest)?;
+    let what = match (what, rest) {
+        ("read", "") => FileValue::Text,
+        ("lines", "") => FileValue::Lines,
+        ("exists", "") => FileValue::Exists,
+        // 0 is the placeholder of a `${…}` while the script is read; it is refused when it runs.
+        ("line", n) => FileValue::Line(
+            n.parse()
+                .map_err(|_| format!("`{n}`: `file line` takes the line number, from 1"))?,
+        ),
+        _ => return Err(usage.into()),
+    };
+    Ok(LetValue::File { path, what })
+}
+
 /// What comes after `let <name> =`.
 fn let_value(text: &str) -> Result<LetValue, String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     match words[..] {
+        ["file", ..] => file_value(text.strip_prefix("file").unwrap_or(text)),
         ["read", "live", location] => {
             let (name, core) = match location.split_once('@') {
                 Some((name, core)) => (name.to_string(), Some(parse_core(core)?)),
@@ -1198,6 +1271,39 @@ fn parse_command(text: &str) -> Result<Command, String> {
                 Ok(Command::TraceSave(file.trim_matches('"').to_string()))
             }
             _ => Err("`trace` is `trace expect …`, `trace clear` or `trace save <file>`".into()),
+        },
+        "file" => match args.first() {
+            Some(&kind @ ("write" | "append")) => {
+                let (path, text) = file_name(after(2))?;
+                let text = if text.starts_with('"') {
+                    let (text, rest) = quoted(text)?;
+                    if !rest.trim().is_empty() {
+                        return Err(format!("`{}` after the text", rest.trim()));
+                    }
+                    text
+                } else {
+                    text.to_string()
+                };
+                Ok(Command::FileWrite {
+                    path,
+                    text,
+                    append: kind == "append",
+                })
+            }
+            Some(&"delete") => {
+                let (path, rest) = file_name(after(2))?;
+                if !rest.is_empty() {
+                    return Err(format!("`{rest}` after the file"));
+                }
+                Ok(Command::FileDelete(path))
+            }
+            Some(&("read" | "lines" | "exists" | "line")) => Err(format!(
+                "`{text}` gives a value: write `let <name> = {text}`"
+            )),
+            _ => Err(
+                "`file` is `file write <file> <text>`, `file append <file> <text>` or `file delete <file>`"
+                    .into(),
+            ),
         },
         "sleep" => {
             no_more(1)?;
@@ -1641,6 +1747,70 @@ mod tests {
             "trace look",
         ] {
             assert!(parse(&format!("attach a.json\n{bad}")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn file_commands() {
+        assert_eq!(
+            one("file write out.txt n = 3"),
+            Command::FileWrite {
+                path: "out.txt".into(),
+                text: "n = 3".into(),
+                append: false
+            }
+        );
+        assert_eq!(
+            one("file append \"my log.txt\" \"  two  spaces\""),
+            Command::FileWrite {
+                path: "my log.txt".into(),
+                text: "  two  spaces".into(),
+                append: true
+            }
+        );
+        assert_eq!(
+            one("file delete out.txt"),
+            Command::FileDelete("out.txt".into())
+        );
+        assert_eq!(
+            one("let t = file read \"in put.txt\""),
+            Command::Let {
+                name: "t".into(),
+                value: LetValue::File {
+                    path: "in put.txt".into(),
+                    what: FileValue::Text
+                }
+            }
+        );
+        assert!(matches!(
+            one("let n = file line in.txt 4"),
+            Command::Let {
+                value: LetValue::File {
+                    what: FileValue::Line(4),
+                    ..
+                },
+                ..
+            }
+        ));
+        // Files need no session: before `attach` too.
+        let script = parse(
+            "file write a.txt 1\nlet n = file lines a.txt\nlet e = file exists a.txt\n\
+             let k = 1\nlet l = file line a.txt ${k}\nfile delete a.txt\n",
+        )
+        .unwrap();
+        assert_eq!(script.lines.len(), 6);
+        assert!(script.lines[4].deferred);
+        for bad in [
+            "file",
+            "file write",
+            "file read a.txt",
+            "file delete a.txt b",
+            "let x = file line a.txt",
+            "let x = file line a.txt two",
+            "let x = file lines a.txt b",
+            "let x = file size a.txt",
+        ] {
+            assert!(parse(bad).is_err(), "{bad}");
         }
     }
 

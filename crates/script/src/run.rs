@@ -25,7 +25,9 @@ use serde_json::{Value, json};
 
 use crate::compare::{Op, parse_integer};
 use crate::expr::{self, Value as ScriptValue};
-use crate::script::{Access, Command, Cores, LetValue, Script, Step, TraceMeasure, TraceStat};
+use crate::script::{
+    Access, Command, Cores, FileValue, LetValue, Script, Step, TraceMeasure, TraceStat,
+};
 use aurix_debug_model::sw_trace::{Names, SwTrace, binary_bytes, format_ns};
 
 /// The server when the script does not name one.
@@ -600,6 +602,33 @@ impl Session<'_> {
                     path.display()
                 )))
             }
+            Command::FileWrite { path, text, append } => {
+                let path = self.path(path);
+                let failed =
+                    |error: std::io::Error| Fail::Error(format!("{}: {error}", path.display()));
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .append(*append)
+                    .truncate(!*append)
+                    .open(&path)
+                    .map_err(failed)?;
+                // `file write <file>` alone leaves the file empty.
+                if *append || !text.is_empty() {
+                    writeln!(file, "{text}").map_err(failed)?;
+                }
+                Ok(Some(path.display().to_string()))
+            }
+            Command::FileDelete(path) => {
+                let path = self.path(path);
+                match std::fs::remove_file(&path) {
+                    Ok(()) => Ok(Some(format!("{} deleted", path.display()))),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        Ok(Some(format!("{} was not there", path.display())))
+                    }
+                    Err(error) => Err(Fail::Error(format!("{}: {error}", path.display()))),
+                }
+            }
             Command::TraceClear => {
                 self.drain()?;
                 let records = self.sw_trace.total();
@@ -966,9 +995,45 @@ impl Session<'_> {
                     .fold(0u64, |n, byte| (n << 8) | u64::from(*byte));
                 n.to_string()
             }
+            LetValue::File { path, what } => self.file_value(path, *what)?,
         };
         self.vars.insert(name.to_string(), text.clone());
         Ok(Some(format!("{name} = {text}")))
+    }
+
+    /// What a `let … = file …` takes from the file `path`.
+    fn file_value(&self, path: &str, what: FileValue) -> Result<String, Fail> {
+        let path = self.path(path);
+        let read = || {
+            std::fs::read_to_string(&path)
+                .map_err(|error| Fail::Error(format!("{}: {error}", path.display())))
+        };
+        Ok(match what {
+            FileValue::Exists => u8::from(path.is_file()).to_string(),
+            FileValue::Text => {
+                let text = read()?;
+                text.strip_suffix('\n')
+                    .map(|t| t.strip_suffix('\r').unwrap_or(t))
+                    .unwrap_or(&text)
+                    .to_string()
+            }
+            FileValue::Lines => read()?.lines().count().to_string(),
+            FileValue::Line(n) => {
+                let text = read()?;
+                let count = text.lines().count();
+                let line = usize::try_from(n)
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|at| text.lines().nth(at))
+                    .ok_or_else(|| {
+                        Fail::Error(format!(
+                            "{} has {count} line(s), no line {n} (lines count from 1)",
+                            path.display()
+                        ))
+                    })?;
+                line.to_string()
+            }
+        })
     }
 
     fn check(&mut self, condition: &str) -> Result<Option<String>, Fail> {

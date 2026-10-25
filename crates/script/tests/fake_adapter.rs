@@ -261,6 +261,40 @@ fn values_read_drive_loops_and_lines() {
 }
 
 #[test]
+fn files_are_written_and_read_without_a_session() {
+    let dir = std::env::temp_dir().join(format!("aurix-run-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "file write data.txt 3\nfile append data.txt 5\nfile append data.txt \"seven and more\"\n\
+                let n = file lines data.txt\nlet k = 1\nlet sum = 0\n\
+                while k <= 2\n  let v = file line data.txt ${k}\n  let sum = sum + v\n  let k = k + 1\nend\n\
+                let last = file line data.txt 3\ncheck n == 3 && sum == 8 && last == \"seven and more\"\n\
+                let e = file exists data.txt\nfile delete data.txt\nlet gone = file exists data.txt\n\
+                check e == 1 && gone == 0\n\
+                file write \"out file.txt\" sum = ${sum}\nlet all = file read \"out file.txt\"\n\
+                check all == \"sum = 8\"\n";
+    let script = Script::parse(text, &HashMap::new()).unwrap();
+    let mut out = Vec::new();
+    let outcome = run(&script, &dir, &Options::default(), &mut out);
+    let out = String::from_utf8(out).unwrap();
+    assert_eq!(outcome.exit_code(), 0, "{out}");
+    assert_eq!(outcome.cases.len(), 3, "{out}");
+    assert!(!dir.join("data.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("out file.txt")).unwrap(),
+        "sum = 8\n"
+    );
+
+    // A line past the end ends the run.
+    let script = Script::parse("let x = file line \"out file.txt\" 2\n", &HashMap::new()).unwrap();
+    let mut out = Vec::new();
+    let outcome = run(&script, &dir, &Options::default(), &mut out);
+    let out = String::from_utf8(out).unwrap();
+    assert_eq!(outcome.exit_code(), 2, "{out}");
+    assert!(out.contains("has 1 line(s), no line 2"), "{out}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_value_that_cannot_be_read_ends_the_run() {
     let fake = fake(None);
     let (outcome, out) = run_script(

@@ -90,6 +90,10 @@ server is asked anything.
 | `let <name> = read <expression>` | `evaluate` in the top frame of the stopped core |
 | `let <name> = read live <global>[@core]` | One `liveWatch` |
 | `let <name> = read memory <address>[@core] 1\|2\|4\|8` | `readMemory`, an unsigned little-endian integer |
+| `file write <file> [<text>]`, `file append <file> <text>` | A line to a file (relative to the script, in double quotes when the name has spaces): `write` makes the file anew (without text: empty), `append` adds to it. Before `attach` too |
+| `file delete <file>` | Removes it (a file not there is no error) |
+| `let <name> = file read\|lines\|exists <file>` | All of the file (without its last line end), the number of lines, or 1/0 |
+| `let <name> = file line <file> <n>` | Line `n`, from 1 (`${k}` in a loop); a line past the end ends the run |
 | `if <condition>` … [`else` …] `end` | A branch |
 | `while <condition>` … `end`, `repeat <count>` … `end` | Loops |
 | `check <condition>` | An expectation on script variables (it shows their values) |
@@ -110,7 +114,8 @@ time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation
 testcase, in a loop each time (`#2`, `#3`, …), and a `fail` that ran too (expectations not reached
 are skipped). Examples in `script/examples` (`lib/trace_start.aurix` is the start both trace scripts include): `sw_trace` (the ORTI demo built with `build_orti.ps1 -Trace`: the timer ISR every 10 ms and 2.8 µs long, the task slices 400 ms, nothing dropped), `sw_trace_2cores` (with `trace_cpu1` on CPU1, `build_trace_cpu1.ps1`, 2,200 records a second: both cores at once, and how full each RTT buffer got, `aurix_trace_high`), `loop_until` (flash demo: step over through the loop
 of `accumulate()` with `while i < 3`, counting the steps, then `check i == 3 && steps == 11 &&
-sum == 18`), `demo_flash`, `conditions`
+sum == 18`), `file_table` (flash demo: the sums before each pass of that loop from
+`data/accumulate_sums.txt`, one a line, checked and logged as CSV to `${TEMP}`), `demo_flash`, `conditions`
 and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
 `watch_after_break`, a data breakpoint next to an instruction breakpoint (it did not halt before
 probe-rs fork `149db65`), and `orti_paths` (the ORTI demo `zed/aurix_tcf_demo/build_orti.ps1`,

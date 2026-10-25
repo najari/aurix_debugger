@@ -1,0 +1,36 @@
+# A test driven by a file, on the flash demo (start it first with start_in_flash): the sum of
+# accumulate() (demo.c:31-32) before each pass of its loop comes from data/accumulate_sums.txt,
+# one a line; what the board shows goes to a CSV log in the temporary folder.
+#
+# scale(i, 3) = 3 * i * i + 1, so the sums before the passes i = 0..3 are 0, 1, 5 and 18.
+
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
+pause all
+let passes = file lines data/accumulate_sums.txt
+file write ${TEMP}/accumulate_log.csv i,sum
+
+# The first pass of a call, then every pass.
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32 if i == 0
+continue 0
+wait stopped 0 reason breakpoint
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32
+
+let k = 1
+while k <= passes
+  let i = read i
+  let sum = read sum
+  file append ${TEMP}/accumulate_log.csv ${i},${sum}
+  let want = file line data/accumulate_sums.txt ${k}
+  check i == k - 1 && sum == want
+  let k = k + 1
+  if k <= passes
+    continue 0
+    wait stopped 0 reason breakpoint
+  end
+end
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32
+
+let rows = file lines ${TEMP}/accumulate_log.csv
+check rows == passes + 1
+print log: ${TEMP}/accumulate_log.csv

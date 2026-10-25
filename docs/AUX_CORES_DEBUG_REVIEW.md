@@ -75,7 +75,15 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 | SCR | "SCR (Standby Controller) (reserved)" 설정칸만 | 에이전트에 SCR 디스어셈블리, DAS에 `Core %d: XC800` | 준비 중. DAS는 SCR을 MCD 코어로 안다 |
 | GTM·HSM·CSRM | 없음 | 없음 | 지원하지 않음 |
 
-우리에게의 뜻: 우리 MCD 프로브는 지금 `mcdxdas`의 메모리 접근(`mcd_execute_txlist`)과 리셋만 쓴다. Infineon MCD가 보조 코어를 코어로 내주는 칩(TC4x의 PPU·CDSP, SCR이 있는 칩)에서는, MCD의 실행 제어·레지스터 함수를 쓰는 "MCD 코어" 유형 하나로 PPU·CDSP·SCR을 함께 다룰 수 있다. 레지스터 자료 없이도 된다는 점에서, 코어마다 디버그 장치를 직접 구현하는 것보다 빠르다. 대신 TAS 경로가 아니라 MCD 경로(Windows, DAS 설치)에 묶인다. 이 TC275에서 `mcdxdas`(1.14.12)가 내주는 코어는 TriCore 3개뿐이다.
+우리에게의 뜻: 우리 MCD 프로브는 probe-rs 세션에서 `mcdxdas`의 메모리 접근(`mcd_execute_txlist`)과 리셋만 쓴다. Infineon MCD가 보조 코어를 코어로 내주는 칩(TC4x의 PPU·CDSP, SCR이 있는 칩)에서는, MCD의 실행 제어·레지스터 함수를 쓰는 "MCD 코어" 유형 하나로 PPU·CDSP·SCR을 함께 다룰 수 있다. 레지스터 자료 없이도 된다는 점에서, 코어마다 디버그 장치를 직접 구현하는 것보다 빠르다. 대신 TAS 경로가 아니라 MCD 경로(Windows, DAS 설치)에 묶인다. 이 TC275에서 `mcdxdas`(1.14.12)가 내주는 코어는 TriCore 3개뿐이다.
+
+2026-10-26: 그 MCD 실행 제어 계층을 probe-rs 포크에 넣었다(`probe-rs-infineon/src/mcd/control.rs`, 예제 `mcd_core`). MCD 프로브가 연 코어에 대해 상태(`mcd_qry_state_f`), 실행·정지·명령어 단위 한 단계(`mcd_run_f`·`mcd_stop_f`·`mcd_step_f`), 라이브러리가 알려 주는 레지스터 맵 읽기·쓰기(`mcd_qry_reg_groups_f`·`mcd_qry_reg_map_f`), MCD 트리거로 하드웨어 BP(`mcd_create_trig_f`·`mcd_remove_trig_f`·`mcd_activate_trig_set_f`)를 한다. OCDS 레지스터는 건드리지 않으므로 코어 종류를 가리지 않는다. 함수가 없는 라이브러리에서는 "has no … functions"로 알린다. 보드(TC275, flash 데모, CPU0):
+
+- `mcdxdas`는 실행 제어·레지스터·트리거 함수를 모두 내준다. 레지스터 그룹 하나(`CPU Registers`, 40개: PCXI·PSW·PC·BIV·BTV·ISP·ICR·FCX·D0–D15·A0–A15)는 CSFR 주소(`0xF881FE08` 등)에 메모리 공간 0으로 매핑돼 있다. 트리거는 8개, 종류 0xF(명령 주소·읽기·쓰기·둘 다), 동작은 이 코어 정지, 소프트웨어 BP도 된다.
+- MCD로 읽은 PC(0x8021c0aa)와 A10(0x7000c000)이 CSFR을 버스로 읽은 값, `start_in_flash`가 알려 준 값과 같았다. 3명령 한 단계 뒤 PC 0x8021c080.
+- `break 0x8021c04e`(demo.c:32) → 실행 → 1 ms 안에 그 트리거로 정지(PC 0x8021c04e, D4 = 4 = n), 다시 실행해도 같은 곳. 지우고 실행하면 g_ticks가 늘고(0x1e472 → 0x4b775), 정지·레지스터 쓰기(D15)도 됐다. 트리거 ID는 라이브러리 값(0xda500000)이다. CPU1·CPU2도 같은 방법으로 상태와 PC를 읽었다.
+
+남은 것: 이 계층을 probe-rs의 코어 유형(`CoreType`·아키텍처, 세션·DAP 서버)으로 올리는 일. 코어마다 레지스터 표(DWARF 번호), 디스어셈블러, 콜스택 풀이가 필요해 실제 보조 코어(TC4x의 PPU·CDSP, SCR)가 있어야 검증할 수 있다. 이 보드의 TriCore에는 이미 OCDS 경로가 있어 MCD 코어로 올릴 까닭이 없다.
 
 ## 우리 구조에 붙이는 방법
 
@@ -99,7 +107,7 @@ flowchart TB
 - **세션:** probe-rs는 아직 한 세션에 서로 다른 아키텍처를 섞지 못한다(`session.rs`의 "we still don't support mixed architectures"). 보조 코어를 넣으려면 `ArchitectureInterface::TriCore`가 코어마다 다른 코어 구현을 돌려주게 해야 한다. 타깃 YAML에 보조 코어를 코어로 적고, `CoreType`을 더한다.
 - **재사용:** HSM은 probe-rs의 Cortex-M(Armv7m) 구현을 그대로 쓸 수 있다. 필요한 것은 Cortex-M 디버그 레지스터(`DHCSR` 등)에 닿는 ARM 메모리 인터페이스를 TriCore 버스 위에 만드는 것뿐이다. GTM·SCR·PPU는 probe-rs에 없는 명령어 구조라 코어 구현, 디스어셈블러, 콜스택(DWARF 레지스터 번호)을 새로 만든다.
 - **화면:** DAP 서버와 앱 B는 코어를 스레드로 보여 주므로, 코어 구현이 있으면 스레드·콜스택·BP·메모리 보기는 거의 그대로 된다. 다른 것은 코어마다 ELF가 따로인 것(GTM MCS 코드, HSM 펌웨어)과 디스어셈블리다.
-- **MCD 코어 경로:** Infineon MCD가 보조 코어를 코어로 내주는 칩(TC4x의 PPU·CDSP, SCR)에서는 그림의 "버스 위 새 코어 유형" 대신, MCD의 실행 제어·레지스터 함수를 부르는 코어 유형 하나로 될 수 있다. Infineon TCF 에이전트가 이 방식이다(위 "다른 도구"). 코어별 디스어셈블러와 DWARF 레지스터 번호는 여전히 필요하다.
+- **MCD 코어 경로:** Infineon MCD가 보조 코어를 코어로 내주는 칩(TC4x의 PPU·CDSP, SCR)에서는 그림의 "버스 위 새 코어 유형" 대신, MCD의 실행 제어·레지스터 함수를 부르는 코어 유형 하나로 될 수 있다. Infineon TCF 에이전트가 이 방식이다(위 "다른 도구"). 그 아래 계층(실행 제어·레지스터 맵·트리거)은 2026-10-26에 만들어 TC275에서 확인했다(위). 코어별 디스어셈블러와 DWARF 레지스터 번호는 여전히 필요하다.
 
 ## 보드에서 확인한 것
 
