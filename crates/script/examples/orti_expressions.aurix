@@ -1,0 +1,25 @@
+# C expressions of ORTI files read by liveWatch (probe-rs fork c_expr): casts, arithmetic, &,
+# *(type *), an index read from the target. The ORTI test program as for orti_paths.aurix
+# (zed/aurix_tcf_demo/build_orti.ps1, started with start_in_flash, RAM only). In `expect live` the
+# expression comes before the comparison, without spaces or comparison operators of its own.
+
+attach ../../dap-client/examples/tc275_orti_demo.json
+continue all
+# A cast and a division: OsTicks counts up.
+expect live (unsigned)OsTicks/2 > 5 within 2s
+# A pointer cast, read through the address of OsTicks.
+expect live *(unsigned*)&OsTicks > 10
+# Truncated to 8 bits.
+expect live (uint8)OsTicks <= 255
+expect live (unsigned)OsTcb[0].prio*10+OsTcb[2].prio == 31
+# The running TCB as an offset into the table: 0, 8 or 16 bytes (an OsTcbType is 8).
+expect live OsRunningTcb-&OsTcb[0] >= 0
+expect live (OsRunningTcb-&OsTcb[0])%8 == 0
+expect live OsRunningTcb-&OsTcb[0] <= 16
+
+pause 0
+wait stopped 0
+# An index read from the target: the running task's priority (TaskA 3, TaskB 2, TaskC 1).
+expect live OsTcb[OsCurrentTask].prio >= 1
+expect live OsTcb[OsCurrentTask].prio+OsCurrentTask == 3
+expect live OsRunningTcb->prio+OsCurrentTask == 3

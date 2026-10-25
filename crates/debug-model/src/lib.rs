@@ -18,7 +18,8 @@
 //! - [`memory`]: a memory window read again and again, and what changed.
 //! - [`rtt`]: the lines of the RTT channels of every core.
 //! - [`orti`]: ORTI files and the OS view (tasks, ISRs) built on them.
-//! - [`path_expr`]: the path expressions the server reads (`a.b`, `a[n]`, `p->b`, `*p`).
+//! - [`path_expr`]: the first check of the C expressions the server reads (paths, `&`, casts,
+//!   operators).
 //! - [`gtm`]: the GTM's MCS channels and memory, their instructions as text, the GTM view.
 //! - [`cache`]: the cores' caches, the segments they cache, their hit and miss counts.
 

@@ -24,8 +24,11 @@ use crate::protocol::LiveWatchValue;
 pub struct EnumItem {
     pub name: String,
     pub object: Option<String>,
-    /// `None` when the value is not a number (an expression, which this module does not read).
+    /// The value, when it is a number.
     pub value: Option<i128>,
+    /// The value, when it is an expression read from the target (`"&OsTcb[0]"`: the item names
+    /// the attribute's value that equals it).
+    pub expression: Option<String>,
 }
 
 /// The kind of an attribute.
@@ -357,9 +360,9 @@ impl Parser {
                 None
             };
             self.punct('=')?;
-            let value = match self.next() {
-                Some(Token::Number(n)) => Some(n),
-                Some(Token::Str(_)) => None,
+            let (value, expression) = match self.next() {
+                Some(Token::Number(n)) => (Some(n), None),
+                Some(Token::Str(text)) => (None, Some(text)),
                 _ => {
                     self.at -= 1;
                     return self.error("an ENUM value expected");
@@ -369,6 +372,7 @@ impl Parser {
                 name,
                 object,
                 value,
+                expression,
             });
             if !self.eat(',') {
                 self.punct(']')?;
@@ -559,17 +563,29 @@ impl Orti {
     }
 
     /// The expressions to read: those of the CTYPE and ENUM attributes that [`path_expr`] can
-    /// read, each once.
+    /// read, and the expression values of the ENUM items of those attributes, each once.
     pub fn expressions(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
+        let mut add = |value: &String| {
+            if path_expr::is_supported(value) && !out.contains(value) {
+                out.push(value.clone());
+            }
+        };
         for object in &self.objects {
             for (attr, value) in &object.values {
-                let read = self
-                    .decl(&object.kind, attr)
-                    .is_some_and(|d| d.kind != AttrKind::String);
-                if read && path_expr::is_supported(value) && !out.contains(value) {
-                    out.push(value.clone());
+                let Some(decl) = self.decl(&object.kind, attr) else {
+                    continue;
+                };
+                match &decl.kind {
+                    AttrKind::String => continue,
+                    AttrKind::CType(_) => {}
+                    AttrKind::Enum { items, .. } => {
+                        for expression in items.iter().filter_map(|i| i.expression.as_ref()) {
+                            add(expression);
+                        }
+                    }
                 }
+                add(value);
             }
         }
         out
@@ -607,11 +623,13 @@ fn integer_of(value: &str) -> Option<i128> {
         "false" => return Some(0),
         _ => {}
     }
-    let word = value.split_whitespace().next()?;
-    match word.strip_prefix("0x").or_else(|| word.strip_prefix("0X")) {
+    let number = |word: &str| match word.strip_prefix("0x").or_else(|| word.strip_prefix("0X")) {
         Some(hex) => i128::from_str_radix(hex, 16).ok(),
         None => word.parse().ok(),
-    }
+    };
+    let word = value.split_whitespace().next()?;
+    // A pointer reads as its target's type and the address it holds: `*OsTcb @ 0x70000034`.
+    number(word).or_else(|| number(value.rsplit_once(" @ ")?.1.trim()))
 }
 
 /// One cell of an OS table.
@@ -742,9 +760,17 @@ impl OsView {
                 error: true,
             },
             Some(Ok(text)) => {
+                // An item's value: its number, or what its expression read.
+                let item_value = |item: &EnumItem| {
+                    item.value
+                        .or_else(|| match self.values.get(item.expression.as_ref()?) {
+                            Some(Ok(text)) => integer_of(text),
+                            _ => None,
+                        })
+                };
                 let shown = match &decl.kind {
                     AttrKind::Enum { items, .. } => integer_of(text)
-                        .and_then(|n| items.iter().find(|item| item.value == Some(n)))
+                        .and_then(|n| items.iter().find(|item| item_value(item) == Some(n)))
                         .map(|item| item.name.clone())
                         .unwrap_or_else(|| {
                             integer_of(text).map_or_else(|| text.clone(), |n| n.to_string())
@@ -832,10 +858,19 @@ mod tests {
         }
         assert_eq!(orti.objects.len(), 5);
         assert_eq!(orti.objects[1].name, "TaskA");
-        // The cast is not read; the pointer path is.
+        // The pointer path, the cast, and the ENUM items' addresses are read.
         let expressions = orti.expressions();
-        assert!(expressions.contains(&"OsRunningTcb->state".to_string()));
-        assert!(!expressions.iter().any(|e| e.contains("(unsigned)")));
+        for expression in [
+            "OsRunningTcb->state",
+            "(unsigned)OsTicks / 2",
+            "&OsTcb[1]",
+            "OsCurrentTask < 3 ? OsTcb[OsCurrentTask].prio : 0",
+        ] {
+            assert!(
+                expressions.contains(&expression.to_string()),
+                "{expression}"
+            );
+        }
         // OsTicks once, for the OS and the ISR.
         assert_eq!(expressions.iter().filter(|e| *e == "OsTicks").count(), 1);
     }
@@ -850,14 +885,20 @@ mod tests {
             value("OsTaskState[2]", "'\\u{3}'"),
             value("OsTcb[0].prio", "3"),
             value("OsTicks", "100"),
+            value("(unsigned)OsTicks / 2", "50"),
+            value("OsRunningTcb", "*OsTcbType @ 0x70000034"),
+            value("&OsTcb[0]", "0x70000020"),
+            value("&OsTcb[1]", "0x70000034"),
+            value("&OsTcb[2]", "0x70000048"),
         ]);
         let tables = view.tables();
         let os = &tables[0];
         assert_eq!(os.kind, "OS");
         assert_eq!(os.columns[0], "Running task");
         assert_eq!(os.rows[0].cells[0].text, "TaskB");
-        assert!(os.rows[0].cells[4].error, "{:?}", os.rows[0].cells[4]);
-        assert!(os.rows[0].cells[4].text.starts_with("not supported"));
+        assert_eq!(os.rows[0].cells[4].text, "50");
+        // A pointer shown by the ENUM item whose address it holds.
+        assert_eq!(os.rows[0].cells[5].text, "TCB of TaskB");
         let tasks = &tables[1];
         assert_eq!(tasks.rows[0].cells[0].text, "READY");
         assert_eq!(tasks.rows[1].cells[0].text, "RUNNING");
@@ -930,6 +971,23 @@ mod tests {
         assert_eq!(integer_of("'\\u{ff}'"), Some(255));
         assert_eq!(integer_of("'\\0'"), Some(0));
         assert_eq!(integer_of("0x2A"), Some(42));
+        assert_eq!(integer_of("*OsTcbType @ 0x70000034"), Some(0x7000_0034));
         assert_eq!(integer_of("Idle"), None);
+    }
+
+    #[test]
+    fn an_expression_the_server_never_reads_is_marked() {
+        let text = r#"
+            IMPLEMENTATION x { OS { CTYPE vs_A; CTYPE vs_B; }; };
+            OS os { vs_A = "GetTaskState(1)"; vs_B = "a = 1"; };
+        "#;
+        let view = OsView::new(Orti::parse(text).unwrap());
+        assert!(view.expressions().is_empty());
+        let cells = &view.tables()[0].rows[0].cells;
+        assert!(
+            cells
+                .iter()
+                .all(|c| c.error && c.text.starts_with("not supported"))
+        );
     }
 }

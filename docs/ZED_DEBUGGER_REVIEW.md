@@ -385,11 +385,18 @@ TRACE32 갭 보완 개발지시서의 WP-3이다. ORTI 파일이 적은 C 경로
 | T-O1 파싱 | 공통 크레이트 테스트(데모 ORTI 파일, 깨진 파일, ENUM·STRING·문자 상수) 통과 |
 | T-O2 Pause 뒤 OS 탭과 메모리 탭 | 같음: `A000` 00 = TaskA, `A002` 00 01 02, activations 3F·3E·3E, 포인터 `0x7000A008`, ticks `0x1C9F` = 7327 |
 | T-O3 태스크가 바뀔 때까지 step | `os_dispatch`(task 2, previous 1)에서: 84번 줄 Running task TaskC·상태 WAITING → 85번 줄 TaskC activations 87(빨간색) → 86번 줄 TaskC RUNNING, 실행 중 태스크 상태 RUNNING(빨간색) |
-| T-O4 지원하지 않는 식 | 캐스트 칸만 "not supported", 나머지 속성은 값이 나옴 |
+| T-O4 지원하지 않는 식 | 캐스트 칸만 "not supported", 나머지 속성은 값이 나옴(2026-10-26부터 캐스트도 읽음: 아래) |
 | T-O5 실행 중 | 표가 0.5초마다 바뀜. `aurix-run script/examples/orti_paths.aurix` 15/15(경로 `expect`·`expect live`, `OsRunningTcb->prio == 2` 태스크 BP) |
 | T-O6 ORTI 없음·깨진 ORTI | 없으면 "No ORTI file", 깨지면 "line 2: `0x1G` is not a number"(콘솔에도). 두 경우 모두 attach, Pause, 콜스택, 변수, step 정상 |
 
 회귀: probe-rs 바이너리 테스트 235개, lib 566개, probe-rs-debug, 공통 크레이트(debug-model 32개), 앱 9개, clippy(mcd 있고 없고). 실제 AUTOSAR OS가 낸 ORTI 파일로는 아직 시험하지 못했다. T-O6 중 Pause 직후의 Step Over 한 번이 다른 태스크의 같은 함수(66 → 67번 줄, task 2 → 0)에서 멈췄다. ORTI와는 상관없는 Step Over의 문제였고, 아래 "Step Over와 루프"에서 고쳤다.
+
+**ORTI의 C 식 (probe-rs `1839a18`, 2026-10-26).** 실제 AUTOSAR OS의 ORTI 파일은 경로만 쓰지 않는다. 캐스트, 산술, TCB 주소, 대상에서 읽은 값을 인덱스로 쓰는 식이 흔하다. 서버 `liveWatch`에 작은 C 식 계산기(`rpc/functions/debug_vars/c_expr.rs`)를 넣었다.
+- **읽는 것:** 경로(잎), 인덱스 식 `OsTcb[OsCurrentTask].prio`, 정수(`0x`·`0b`·8진·`u`/`l`·`'a'`), `&경로`, 포인터 캐스트와 그 `*`(`*(uint32 *)0x70001000`), C·`<stdint.h>`·AUTOSAR 정수형 캐스트(잘라내고 부호 확장), C의 단항·이항 연산자와 우선순위, `?:`.
+- **결과:** 경로 하나는 전과 같이 변수가 보이는 대로, 그 밖의 식은 정수(주소면 16진)다. 모르는 typedef 캐스트(`(TaskType)x`)는 값을 그대로 두고, 함수 호출이나 크기를 모르는 타입의 `*`는 이유를 답한다.
+- **클라이언트:** `path_expr`는 글자만 먼저 거른다(호출·대입·`++`·`,`·`sizeof`·문자열). `orti`는 값이 식인 ENUM 항목(`"TaskA" = "&OsTcb[0]"`)도 읽어, 속성 값과 같은 항목의 이름을 보인다. 포인터 값 `OsTcbType* @ 0x7000A01C`는 `@` 뒤 주소로 맞춘다.
+
+실기: `script/examples/orti_expressions.aurix` 10/10(실행 중·멈춤, `(unsigned)OsTicks/2`, `*(unsigned*)&OsTicks`, `(uint8)OsTicks`, `OsRunningTcb-&OsTcb[0]` = 16, `OsTcb[OsCurrentTask].prio+OsCurrentTask == 3`), `orti_paths.aurix` 15/15. 앱 B OS 탭에서 데모 ORTI에 더한 속성 셋이 값으로 나왔다: Ticks / 2 = 2606(Ticks 5213), 주소 ENUM "TCB of TaskC", 실행 중 태스크의 우선순위 1. T-O4의 캐스트 칸도 이제 값이 나온다. 회귀: probe-rs 바이너리 테스트 242개, debug-model 42개, clippy(mcd 있고 없고).
 
 ### 속도: 어댑터 클럭 (probe-rs `86680be`)
 

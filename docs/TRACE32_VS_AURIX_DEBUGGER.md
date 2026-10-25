@@ -41,7 +41,7 @@ TRACE32는 AURIX 전 제품군을 다루는 상용 디버거·트레이스 시�
 | 트레이스 | MCDS 온칩 트레이스(최대 6코어, TC275TF는 동시 2코어), AGBT·SGBT, DAP 스트리밍(CombiProbe 2), 복합 트리거 언어(CTL) | `probe-rs mcds record`·`timestamp` CLI. 기록은 이 어댑터가 맵 1을 막아 미검증. VS Code 연동 없음 |
 | 성능 측정 | 벤치마크 카운터: CCNT, ICNT, M1–M3CNT, OTGS·MCDS 카운터, BP 사이 구간 측정(A-to-B) | CCNT, ICNT, M1–M3CNT를 레지스터 뷰에 표시, 두 주소 사이 구간 측정(`perfWindow`), 실행 중 읽기. MCDS 타임스탬프 CLI |
 | 플래시 | `FLASH.ReProgram`, 장치별 스크립트, HSM 플래시 | TC27x와 TC36x의 PFLASH. 같은 섹터는 건너뛰고, 지워진 페이지는 ECC로 판별. 지우기 전 섹터 백업 옵션 |
-| OS 인식 | AUTOSAR Classic(ORTI)의 태스크·ISR·runnable, ARTI 프로파일링 | ORTI 2.1·2.2의 태스크·ISR 표(앱 B OS 탭, 멈춤·실행 중 0.5초, 2026-10-25, probe-rs `d8954dd`). 캐스트·산술 식, runnable, ARTI는 없음 |
+| OS 인식 | AUTOSAR Classic(ORTI)의 태스크·ISR·runnable, ARTI 프로파일링 | ORTI 2.1·2.2의 태스크·ISR 표(앱 B OS 탭, 멈춤·실행 중 0.5초, 2026-10-25, probe-rs `d8954dd`). C 식(캐스트·산술·`&`·인덱스 식)은 2026-10-26에 됨. runnable, ARTI는 없음 |
 | 캐시·오버레이·MPU | 캐시 라인 보기, 데이터 오버레이(OVC), 코드 오버레이, MPU 디버깅 | 없음 |
 | 커버리지·인증 | 객체 커버리지부터 MC/DC까지, 도구 인정 키트(TQSK, ISO 26262) | 없음 |
 | IDE | PowerView. VS Code는 `t32debugadapter`(Remote API 프록시, R.2024.09 이후)로 연결하고, 변수는 정지했을 때만 갱신 | VS Code 네이티브 DAP. 실행 중 Live Watch, SVD 주변장치 읽기·쓰기, GDB 서버 |
@@ -73,7 +73,7 @@ aurix_debugger가 앞서는 점은 비용, VS Code에서의 사용성, 직접 �
 | 4 | 앱이 일으킨 리셋 처리 — **완료** `fbf362f` | 검토 때: 다른 세션의 리셋만 버틴다. 워치독·소프트 리셋 뒤에는 동작을 고를 수 없다 | 리셋을 감지(`SCU_RSTSTAT`, 부트 정지 상태)하고, 멈춤 또는 BP 복원 뒤 실행을 고르는 설정을 더한다. 플래시 쓰기 직후 리셋의 0x44 오류도 같이 다룬다 | 중 | 없음 |
 | 5 | MCDS 트레이스 검증과 VS Code 표시 | CLI만 있고 기록(T-15)은 미검증. 2026-10-24에 Infineon의 MCDS 기록 라이브러리로도 이 어댑터에서는 맵 1을 읽지 못함을 확인했다([DAS 분석](DAS_DLL_ANALYSIS.md) 부록 D) | 맵 1을 여는 어댑터로 기록을 확인한다. 그다음 프로그램 흐름을 소스 줄로 풀어 VS Code에 보인다 | 대 | DAP miniWiggler 등 맵 1 어댑터 |
 | 6 | 칩·플래시 범위(TC3xx, DFLASH, UCB) — **TC36x 완료** `e1f1952` | TC27x와 TC36x의 PFLASH, TC27x의 DFLASH(DF0). TC36x DFLASH, UCB, 다른 TC3xx(TC37x 등)는 없음 | TC36x는 타깃 정의와 TC3xx 플래시 로더로 구현했다. TC27x DFLASH는 로더의 8 B 페이지 쓰기와 8 KiB 섹터 맵으로 더했다. 나머지 TC3xx는 칩별 타깃 정의를 더하고(WP-9), TC3xx DFLASH·UCB는 따로 만든다 | 대 | TC37x 등 해당 보드(TC36x는 TriBoard에서 확인) |
-| 7 | AUTOSAR OS 인식(ORTI) | 태스크·ISR 표 됨(2026-10-25, 직접 만든 데모 OS로 시험) | 실제 AUTOSAR OS의 ORTI 파일로 확인, 캐스트·산술 식 | 작음 | ORTI를 내는 OS의 앱 |
+| 7 | AUTOSAR OS 인식(ORTI) | 태스크·ISR 표 됨(2026-10-25, 직접 만든 데모 OS로 시험) | 실제 AUTOSAR OS의 ORTI 파일로 확인(C 식은 2026-10-26에 됨) | 작음 | ORTI를 내는 OS의 앱 |
 | 8 | DAP 스트리밍·ARTI — **조사 완료**(2026-10-24) | 없음 | 경로는 있다. TAS의 트레이스 채널(`CTasClientTrc`의 `subscribe`·`get_trace`, TasServer V2.0 이상)로 서버가 트레이스를 보내고, miniMCDS는 연속 트레이스를 지원하지 않는다. 이 어댑터는 연속 트레이스 등급 8(불안정, 대역폭 0 kB/s)이고 맵 1을 막아 쓸 수 없다. 구현하려면 DAP 기반 툴 하드웨어(등급 12)에서 트레이스 클라이언트를 더한다([DAS 분석](DAS_DLL_ANALYSIS.md) 부록 D) | 대 | DAP 기반 어댑터 |
 | 9 | 한 세션 멀티코어(SMP 보기) — **완료** `763c12a`–`84a45aa` | 검토 때: 코어별 세션 3개 | DAP 서버 하나가 `coreConfigs`의 코어를 모두 맡고 코어마다 스레드 하나로 보인다. 요청은 스레드·프레임·변수로 그 코어에 가고, 소스 BP 하나가 코어마다 걸리며, 상태 확인은 TAS 요청 하나다. VS Code에서 확인했다([한 세션 멀티코어 PRD](ONE_SESSION_MULTICORE_PRD.md)) | 대 | 없음 |
 | 10 | 캐시·데이터 오버레이(OVC)·MPU 인식 | 없음 | OVC 설정을 읽어 메모리 읽기를 CPU 주소 기준으로 바로잡는다 | 중 | 오버레이를 쓰는 앱 |

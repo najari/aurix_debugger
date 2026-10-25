@@ -71,7 +71,7 @@ TRACE32를 직접 돌려 본 수치(속도, 지연)는 없다. 속도 비교는 
 | 터미널·RTT | TERM 창(타깃 메모리 버퍼 등 자체 방식). SEGGER RTT는 설명서에 없음 | SEGGER RTT 출력·입력, 코어별 채널 | 우리가 나음 |
 | 트레이스 | 온칩(ED), MCDS로 최대 6코어의 프로그램·데이터·버스, 타임스탬프, AGBT 최대 8 GB, DAP 스트리밍, 트리거 언어 | MCDS 기록을 `.mcds`로 저장하는 명령만(이 어댑터가 맵 1을 막아 미검증), 해독은 Infineon 도구 | 없음 |
 | 성능 분석 | BenchMarkCounter, AUTOSAR 프로파일링, 코드 커버리지(MC/DC까지) | 성능 카운터(CCNT·ICNT·M1–M3), 두 주소 사이 구간 | 모자람 |
-| OS 인식 | ORTI로 태스크·ISR·runnable, 멀티 OS, TC4x 하이퍼바이저 | ORTI 2.1·2.2 파일을 읽어 앱 B의 OS 탭에 객체 종류별 표(ENUM 이름, 바뀐 값 표시), 멈춤·실행 중 0.5초 갱신. 경로 `a.b`·`a[n]`·`p->b`·`*p`만(캐스트·산술 없음), runnable·멀티 OS 없음(probe-rs `d8954dd`, 2026-10-25) | 모자람 |
+| OS 인식 | ORTI로 태스크·ISR·runnable, 멀티 OS, TC4x 하이퍼바이저 | ORTI 2.1·2.2 파일을 읽어 앱 B의 OS 탭에 객체 종류별 표(ENUM 이름, 바뀐 값 표시), 멈춤·실행 중 0.5초 갱신. 경로 `a.b`·`a[n]`·`p->b`·`*p`(probe-rs `d8954dd`, 2026-10-25)에 더해 C 식(인덱스에 식, `&`, 캐스트, `*(uint32 *)주소`, 연산자, `?:`)과 주소로 된 ENUM 항목(probe-rs `1839a18`, 2026-10-26). runnable·멀티 OS 없음 | 모자람 |
 | 자동화 | PRACTICE 스크립트(`.cmm`), 데모 스크립트, GUI 간 InterCom | `aurix-run` 명령 파일(attach, BP·조건, 실행 제어, 기대값, RTT, JUnit, 종료 코드 0·1·2, 2026-10-25; 변수 `let`·`read`, `if`·`while`·`repeat`, `check`, 2026-10-26), DAP·GDB 서버, Rust 크레이트 | 비슷(GUI 창·대화상자 조작은 없음) |
 | 다른 도구와 연결 | ETAS ETK·dSPACE·Vector VX1000과 포트 공유, XCP | 표준 DAP·GDB로 여러 IDE, TAS 서버를 여러 클라이언트가 함께 씀 | 비슷 |
 | 지원 칩 | AURIX TC4x·TC3xx·TC2xx, AUDO | TC27x(TC275), TC36x | 모자람 |
@@ -123,7 +123,7 @@ TRACE32 수치는 이번에 재지 않았다. 메모리 속도는 크기와 경�
 | --- | --- | --- | --- |
 | 트레이스(MCDS·AGBT) | 멈추지 않고 타이밍 문제, 간헐 버그, 코어 간 상호작용을 본다 | 이 어댑터가 주소 맵 1(EEC·MCDS)을 막는다(0x8D). Infineon의 기록 라이브러리도 읽지 못한다. AGBT는 전용 수신 하드웨어가 필요하다 | 큼 |
 | 커버리지·프로파일링 | 안전 프로젝트의 커버리지 증빙, 함수·태스크 실행 시간 | 트레이스가 먼저다 | 큼 |
-| OS 인식(ORTI) | AUTOSAR 태스크·ISR 상태를 한눈에 본다 | 태스크·ISR 표는 됨(2026-10-25). 캐스트·산술이 든 ORTI 식, runnable, 멀티 OS, 실제 AUTOSAR OS(직접 만든 데모 OS로만 시험) | 작음 |
+| OS 인식(ORTI) | AUTOSAR 태스크·ISR 상태를 한눈에 본다 | 태스크·ISR 표는 됨(2026-10-25), 캐스트·산술·`&`가 든 ORTI 식도 됨(2026-10-26). runnable, 멀티 OS, 실제 AUTOSAR OS(직접 만든 데모 OS로만 시험) | 작음 |
 | 조건·횟수 BP | "1000번째 호출", "값이 0이 될 때" 멈추기 | 소프트웨어 조건은 됨(2026-10-25). 멈추지 않는 하드웨어 조건은 ED의 MCDS가 필요하다 | 작음(남은 것은 MCDS) |
 | 스크립트 자동화 | 보드 설정·반복 시험을 한 번에 재현 | `aurix-run`으로 명령 파일 시험(2026-10-25), 변수·반복·분기(2026-10-26)는 됨. PRACTICE의 GUI 창 조작, 파일 입출력, 서브루틴은 없다 | 작음 |
 | 칩·보조 코어 | TC3xx·TC4x 프로젝트, GTM·HSM 코드 | TC27x·TC36x만, TriCore 코어만 | 중간 |

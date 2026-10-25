@@ -25,7 +25,15 @@ IMPLEMENTATION orti_demo_ORTI {
             "WAITING" = 2,
             "SUSPENDED" = 3
         ] vs_RUNNING_STATE, "State of the running task";
-        CTYPE "unsigned int" vs_TICKS_HALF, "Ticks / 2 (a cast, not supported)";
+        CTYPE "unsigned int" vs_TICKS_HALF, "Ticks / 2 (a cast)";
+        ENUM "unsigned int" [
+            "NONE" = 0,
+            "TCB of TaskA" = "&OsTcb[0]",
+            "TCB of TaskB" = "&OsTcb[1]",
+            "TCB of TaskC" = "&OsTcb[2]"
+        ] vs_RUNNING_TCB, "Running TCB (ENUM of addresses)";
+        CTYPE "unsigned char" vs_RUNNING_PRIO, "Priority of the running task (index read)";
+        CTYPE "unsigned int" vs_ISR_ACTIVE, "ISR2 active (a condition)";
     }, "OS";
     TASK {
         ENUM "unsigned char" [
@@ -49,6 +57,9 @@ OS orti_demo_os {
     vs_TICKS = "OsTicks";
     vs_RUNNING_STATE = "OsRunningTcb->state";
     vs_TICKS_HALF = "(unsigned)OsTicks / 2";
+    vs_RUNNING_TCB = "OsRunningTcb";
+    vs_RUNNING_PRIO = "OsCurrentTask < 3 ? OsTcb[OsCurrentTask].prio : 0";
+    vs_ISR_ACTIVE = "OsCurrentIsr != 0 && OsCurrentTask == 0xFF";
 };
 
 TASK TaskA {
