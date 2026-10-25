@@ -10,6 +10,7 @@
     "cwd": "C:\\work\\aurix_tcf_demo",
     "chip": "TC275",
     "probe": "058b:0000",
+    "speed": 6000,
     "allStop": true,
     "coreConfigs": [
       { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" },
@@ -26,6 +27,7 @@
     "cwd": "C:\\work\\aurix_tcf_demo",
     "chip": "TC275",
     "probe": "058b:0000",
+    "speed": 6000,
     "coreConfigs": [
       { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash.elf" }
     ],
@@ -41,6 +43,7 @@
     "cwd": "C:\\work\\aurix_tcf_demo",
     "chip": "TC275",
     "probe": "058b:0000",
+    "speed": 6000,
     "coreConfigs": [
       {
         "coreIndex": 0,
@@ -61,6 +64,7 @@
     "cwd": "C:\\work\\aurix_tcf_demo",
     "chip": "TC275",
     "probe": "058b:0000",
+    "speed": 6000,
     "coreConfigs": [
       {
         "coreIndex": 0,

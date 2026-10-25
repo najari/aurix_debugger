@@ -9,6 +9,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connects to the server (`DAP_SERVER`, default 127.0.0.1:50000), attaches with the arguments
 /// in the JSON file `attach`, ends the configuration and lets every thread run.
+#[allow(dead_code, reason = "dap_measure starts its sessions itself")]
 pub fn start(attach: &str) -> Result<DapClient, Box<dyn std::error::Error>> {
     let server = std::env::var("DAP_SERVER").unwrap_or_else(|_| "127.0.0.1:50000".into());
     let arguments: Value = serde_json::from_str(&std::fs::read_to_string(attach)?)?;

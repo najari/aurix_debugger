@@ -58,13 +58,42 @@ TC36x 커밋(`a876a99`, `d155494`, `e1f1952`)을 받은 뒤 같은 TC275 보드�
 | 상태 확인(`DBGSR`와 타이머) | 2.6 ms(정지), 2.7 ms(실행) | 폴링 1회 |
 | halt / run | 9.2 ms / 8.1 ms | halt는 요청부터 정지 확인까지 |
 | 단일 step | 30.9 ms | p95 32.7 ms |
-| 메모리 읽기·쓰기 | 19.4 KiB/s | 256 B 13.5 ms, 4 KiB 206 ms, 32 KiB 1.65 s. PFLASH 읽기와 PSPR 쓰기(16 KiB, 826 ms)도 같다. 크기와 무관해 어댑터 링크가 한계다. PFLASH 4 MB 전체 읽기는 약 3.5분 |
+| 메모리 읽기·쓰기 | 19.4 KiB/s | 256 B 13.5 ms, 4 KiB 206 ms, 32 KiB 1.65 s. PFLASH 읽기와 PSPR 쓰기(16 KiB, 826 ms)도 같다. 크기와 무관해 어댑터 링크가 한계다. PFLASH 4 MB 전체 읽기는 약 3.5분. 한계는 어댑터 클럭(400 kHz)이었다: 6 MHz에서 131 KiB/s(아래, 2026-10-25) |
 | DAP: attach | 약 3.0 s | `initialized` 이벤트까지 |
 | DAP: stepIn / next(소스 줄) / stepOut | 176 / 114 / 122 ms | 요청부터 `stopped` 이벤트까지. 개선 전 287 / 223 / 214 ms |
 | DAP: continue → BP 정지 | 131 ms | 개선 전 236 ms. 코어가 도는 동안 상태 확인 주기(50 ms)가 남은 몫 |
 | DAP: scopes, variables, evaluate | 5~6 ms | 개선 전 3~4 ms에 가끔 약 110 ms |
 | DAP: stackTrace(1프레임) | 8 ms | 개선 전 중앙값 109 ms |
 | DAP: readMemory 64 B / 4 KiB | 14 ms / 240 ms | 개선 전 126 ms / 238 ms |
+
+**어댑터 클럭과 경로별 속도** (2026-10-25, TRACE32 갭 보완 개발지시서 WP-4, probe-rs `86680be`). 위 표의 19.4 KiB/s는 TAS 연결이 아니라 DAS JTAG 어댑터의 클럭이 한계였다. 클럭은 TAS 서버의 맵 15 `0x000C0100` 레지스터(Hz, Infineon `tas_perfmeter`의 "TAS Access HW Control")이고, 아무도 바꾸지 않으면 400 kHz다. 어댑터는 6 MHz까지 받고 요청값을 가진 단계로 내린다(5 MHz → 3 MHz, 10·20 MHz → 6 MHz). TAS 프로브는 이제 probe-rs의 속도(`--speed`, DAP attach의 `speed`, 프로브 설정 파일, kHz)를 연결 직후 이 레지스터에 쓰고, 끝날 때 원래 클럭으로 되돌린다. 예제 attach 파일·Zed·VS Code 설정의 기본은 `"speed": 6000`이다.
+
+측정: TC275 + DAS JTAG AURDUINO, 로컬 TasServer, 릴리스 빌드, `perf_measure`(각 항목 20회 이상, 단일 step 200회)와 `dap_measure`(공통 크레이트 예제, 각 20회, 세 코어 플래시 데모, `demo.c:22`). 값은 중앙값, 괄호는 p95다.
+
+| 항목 | TAS 400 kHz | TAS 6 MHz | MCD(`mcdxdas.dll`) 400 kHz | MCD 6 MHz |
+| --- | --- | --- | --- | --- |
+| 레지스터 하나 읽기 | 0.88 (1.05) ms | 0.27 (0.32) ms | 0.85 (0.91) ms | 0.27 (0.35) ms |
+| 상태 확인(정지 / 실행) | 4.3 / 4.5 ms | 1.2 / 1.2 ms | 4.5 / 4.2 ms | 1.2 / 1.2 ms |
+| halt / run | 12.2 / 8.0 ms | 4.0 / 2.3 ms | 13.1 / 8.5 ms | 4.6 / 2.4 ms |
+| 단일 step | 41.5 (44.3) ms | 10.3 (11.6) ms | 42.0 (44.5) ms | 10.6 (11.5) ms |
+| 읽기 256 B / 4 KiB / 32 KiB | 13.4 / 206 / 1,646 ms | 1.9 / 30.5 / 244 ms | 13.4 / 206 / 1,645 ms | 2.0 / 30.2 / 245 ms |
+| 읽기 처리량(32 KiB, DSPR·PFLASH) | 19.4 KiB/s | 131 KiB/s | 19.5 KiB/s | 130 KiB/s |
+| 쓰기 256 B / 4 KiB / 16 KiB(CPU0 PSPR) | 13.6 / 206 / 825 ms | 2.4 / 31.0 / 123 ms | 13.6 / 206 / 826 ms | 2.1 / 31.1 / 124 ms |
+
+| DAP 항목(요청부터 응답 또는 `stopped`까지) | 400 kHz | 6 MHz |
+| --- | --- | --- |
+| attach | 1,861 (1,928) ms | 1,760 (1,844) ms |
+| stepIn / next / stepOut | 150 / 146 / 147 ms | 38 / 48 / 49 ms |
+| continue → BP 정지 | 121 (128) ms | 42 (48) ms |
+| stackTrace(1프레임) | 117 (227) ms | 42 (93) ms |
+| scopes / variables | 33 / 36 ms | 9.3 / 10.0 ms |
+| readMemory 64 B / 4 KiB | 41 / 264 ms | 11 / 45 ms |
+| liveWatch 전역 2개 × 세 코어 | 115 ms | 30 ms |
+
+- **경로:** MCD 경로는 같은 TAS 서버를 거치므로 클럭마다 TAS와 같다. 빠른 경로는 따로 없고, 6 MHz 클럭이 기본을 바꿀 이유였다(FR-4.3). MCD 라이브러리는 클럭을 스스로 바꾸지 않으므로, MCD를 6 MHz로 쓰려면 `tas_clock set 6000000`으로 먼저 정한다. MCD의 제한(맵 1·15 불가, 로컬 주소가 CPU0으로)은 그대로다.
+- **묶음 전송(FR-4.4):** 서버가 알려 주는 응답 한도가 1,040 B라 프레임 하나에 1 KiB 블록 하나만 실린다. 6 MHz에서 1 KiB 블록은 약 7.6 ms이고 요청 왕복은 약 0.25 ms라, 요청을 겹쳐 보내도 3% 넘게 얻을 수 없어 넣지 않았다.
+- **확인:** 클럭마다 PFLASH 16 KiB를 400 kHz에서 읽은 값과 비교해 모두 같았다(`tas_clock`). 6 MHz에서 `hw_smoke` 16/16(리셋 포함), `aurix-run` 보드 스크립트 6개(플래시 데모 4개, RTT, ORTI) 모두 통과. 측정 뒤 PSPR은 되돌려졌고, 세션이 끝난 뒤 클럭은 400 kHz였다.
+- **이전 표와 다른 점:** 400 kHz의 halt(9.2 → 12.2 ms), 상태 확인(2.6 → 4.3 ms), 단일 step(30.9 → 41.5 ms)이 2026-10-24 측정보다 느리다. 그 사이의 변경(데이터 BP 고침 등)으로 한 동작의 접근 수가 늘었을 수 있으나 원인은 따로 확인하지 않았다. DAP 수치는 세 코어가 같은 BP에 멈추는 세션이라 위 표(한 코어)와 조건이 다르다.
 
 DAP 응답이 약 100 ms 단위로 늘어난 원인은 DAP 서버가 모든 코어가 정지한 동안 요청 사이에 100 ms씩 쉬는 코드(`debugger.rs`의 `no_request_poll`, 업스트림 동작)였다. 쉬는 동안 도착한 요청이 그 시간이 끝나야 처리됐다. 쉬는 동안 입력이 오면 바로 끝나도록 고쳤다(0.6). 남은 100 ms대 지연은 step 여러 번(단일 step 약 31 ms)의 실제 작업 시간과, 코어가 도는 동안 50 ms마다 하는 상태 확인이다. 그 주기를 줄이면 느린 링크(요청당 1~3 ms)에 폴링 부하가 늘어서 건드리지 않았다.
 

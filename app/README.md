@@ -35,7 +35,9 @@ cargo run -- ..\crates\dap-client\examples\tc275_demo_3cores.json
 
 Both arguments are optional: without an attach file the window opens on the attach page; the
 second argument names another server (default `127.0.0.1:50000`). Any attach arguments of the
-probe-rs fork work, `rttEnabled` included (`tc275_rtt_cpu0_cpu1.json`).
+probe-rs fork work, `rttEnabled` included (`tc275_rtt_cpu0_cpu1.json`), and `speed` (kHz): the
+example attach files ask for 6000, the fastest clock of the ShieldBuddy's DAS adapter (the TAS
+server's own is 400 kHz, about a third of the speed of steps and memory views).
 
 ## GPUI and licenses
 

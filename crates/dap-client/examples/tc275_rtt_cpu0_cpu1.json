@@ -3,6 +3,7 @@
   "cwd": "C:\\work\\aurix_tcf_demo",
   "chip": "TC275",
   "probe": "058b:0000",
+  "speed": 6000,
   "coreConfigs": [
     { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\rtt_demo.elf", "rttEnabled": true },
     { "coreIndex": 1, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\rtt_demo_cpu1.elf", "rttEnabled": true }

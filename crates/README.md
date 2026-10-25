@@ -29,6 +29,19 @@ cargo run --example break_when -- dap-client/examples/tc275_demo_3cores.json 10 
 `-Core 1`, started with `start_in_flash`, RAM only); `live_watch` and `break_when` the flash
 demo started with `start_in_flash`. They leave the target halted: reset it afterwards.
 
+`dap_measure` times the requests a debugger makes (attach, stepIn, next, stepOut, continue to
+a breakpoint, stackTrace, scopes, variables, readMemory 64 B and 4 KiB, liveWatch on every core),
+each 20 times, median and 95th percentile:
+
+```text
+cargo run --release --example dap_measure -- dap-client/examples/tc275_demo_3cores.json C:\work\aurix_tcf_demo\src\demo.c:22
+```
+
+The attach files here set `"speed": 6000`: the probe-rs fork's TAS probe sets the clock of the
+DAS JTAG adapter from it (the TAS server starts at 400 kHz; the ShieldBuddy's adapter takes up
+to 6 MHz, which makes memory 6.7 times and steps about 3 times faster). Leave it out to keep the
+server's clock.
+
 `break_when` sets one breakpoint with a condition (`if=`), hit count (`hit=`) or log message
 (`log=`) on a source line or a variable (`data:g_result`), continues at each stop and prints it
 with the values of `show=`; `from=<file>:<line>` stops there first so that the hits count from a

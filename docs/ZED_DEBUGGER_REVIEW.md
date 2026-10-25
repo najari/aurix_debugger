@@ -391,6 +391,10 @@ TRACE32 갭 보완 개발지시서의 WP-3이다. ORTI 파일이 적은 C 경로
 
 회귀: probe-rs 바이너리 테스트 235개, lib 566개, probe-rs-debug, 공통 크레이트(debug-model 32개), 앱 9개, clippy(mcd 있고 없고). 실제 AUTOSAR OS가 낸 ORTI 파일로는 아직 시험하지 못했다. T-O6 중 Pause 직후의 Step Over 한 번이 다른 태스크의 같은 함수(66 → 67번 줄, task 2 → 0)에서 멈췄다. ORTI 없이 생긴 일이라 이번 변경과 상관없고, 루프 안 step over의 기존 동작으로 보인다.
 
+### 속도: 어댑터 클럭 (probe-rs `86680be`)
+
+TRACE32 갭 보완 개발지시서의 WP-4다. 메모리 19.4 KiB/s는 TAS 연결이나 MCD 경로가 아니라 DAS JTAG 어댑터의 클럭(TAS 서버 기본 400 kHz)이 한계였다. TAS 프로브가 probe-rs의 `speed`(DAP attach의 `"speed"`, kHz)로 클럭을 정하고 끝날 때 되돌리게 했고, 예제 attach 파일, Zed 시나리오(`zed/aurix_tcf_demo/debug.json`), VS Code 설정에 `"speed": 6000`을 넣었다. 6 MHz에서 메모리 131 KiB/s, DAP stepIn·next·stepOut 150 ms대 → 38–49 ms, continue → BP 121 → 42 ms, 메모리 보기 4 KiB 264 → 45 ms, Live Watch(전역 2개 × 세 코어) 115 → 30 ms(중앙값, 각 20회, 공통 크레이트 예제 `dap_measure`). 6 MHz에서 `hw_smoke` 16/16, `aurix-run` 보드 스크립트 6개가 모두 통과했다. 경로별 전체 표는 [PRD](PROBE_RS_TRICORE_PRD.md)의 성능 측정에 있다. Zed와 VS Code 화면에서는 이번에 확인하지 않았다(같은 DAP `speed` 필드를 보낸다).
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -414,7 +418,8 @@ TRACE32 갭 보완 개발지시서의 WP-3이다. ORTI 파일이 적은 C 경로
 13. ~~RTT 입력 채널~~ 보드에서 확인(두 코어)
 14. ~~조건·횟수 BP와 로그 지점~~ 보드에서 확인(probe-rs `c18738d`, 앱 B). VS Code 화면 확인은 남음
 15. ~~ORTI 태스크 보기~~ 보드에서 확인(probe-rs `d8954dd`, 앱 B OS 탭). 실제 AUTOSAR OS의 ORTI 파일 시험은 남음
-16. 크레이트·앱 라이선스 결정
+16. ~~속도(어댑터 클럭)~~ 6 MHz 기본, 보드 회귀 통과(probe-rs `86680be`). 더 빠른 어댑터는 남음
+17. 크레이트·앱 라이선스 결정
 
 ## 출처
 
