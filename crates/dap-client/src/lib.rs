@@ -197,6 +197,21 @@ impl DapClient {
             .ok()
     }
 
+    /// Like [`Self::next_event`], but tells a closed connection (`Err(Error::Closed)`, at once)
+    /// from no event in time (`Ok(None)`).
+    pub fn wait_event(&self, timeout: Duration) -> Result<Option<Event>, Error> {
+        match self
+            .events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .recv_timeout(timeout)
+        {
+            Ok(event) => Ok(Some(event)),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => Err(Error::Closed),
+        }
+    }
+
     /// The adapter's next event if one is waiting.
     pub fn try_event(&self) -> Option<Event> {
         self.events
@@ -347,5 +362,30 @@ mod tests {
             Err(Error::Failed { message, .. }) => assert_eq!(message, "nope"),
             other => panic!("expected a failure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_closed_connection_ends_the_wait_for_an_event() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            // Accept and close at once.
+            let _ = listener.accept().unwrap();
+        });
+        let client = DapClient::connect(address).unwrap();
+        let start = std::time::Instant::now();
+        let mut closed = false;
+        while start.elapsed() < Duration::from_secs(5) {
+            match client.wait_event(Duration::from_secs(5)) {
+                Err(Error::Closed) => {
+                    closed = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(other) => panic!("{other}"),
+            }
+        }
+        assert!(closed);
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 }

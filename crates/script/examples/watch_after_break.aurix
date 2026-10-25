@@ -1,0 +1,19 @@
+# Known problem (probe-rs fork c18738d, TriCore): once the core runs on from an instruction
+# breakpoint (which steps over it first), a data breakpoint no longer halts it. This script
+# shows it: it ends with exit code 2 at line 19 until that is fixed.
+#
+# The flash demo (start_in_flash): compute() writes g_result before it returns, so from the
+# breakpoint at its first line (38) the next stop is the data breakpoint.
+
+attach ../../dap-client/examples/tc275_demo_3cores.json
+continue all
+pause 0
+wait stopped 0
+watch g_result write
+continue 0
+wait stopped 0 reason data breakpoint within 3s
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:38
+continue 0
+wait stopped 0 reason breakpoint within 3s
+continue 0
+wait stopped 0 reason data breakpoint within 3s

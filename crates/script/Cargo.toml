@@ -1,0 +1,18 @@
+[package]
+name = "aurix-script"
+description = "Board tests from a command file: attach, breakpoints, run control and expectations against the probe-rs DAP server (the aurix-run tool)."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "aurix-run"
+path = "src/main.rs"
+
+[dependencies]
+aurix-dap-client.workspace = true
+aurix-debug-model.workspace = true
+ctrlc = "3.4"
+dap-types.workspace = true
+regex = "1.10"
+serde_json.workspace = true

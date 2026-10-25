@@ -1,0 +1,10 @@
+# The RTT test program on CPU0 and CPU1 (zed/aurix_tcf_demo/build_rtt.ps1, -Core 1, started
+# with start_in_flash, RAM only): a line sent to the down channel "Input" comes back on the up
+# channel as "rtt_demo CPUn got: <line>".
+
+attach ../../dap-client/examples/tc275_rtt_cpu0_cpu1.json
+continue all
+rtt send 1 0 ping
+rtt expect 1 0 "CPU1 got: ping" within 2s
+rtt send 0 0 hello 42
+rtt expect 0 0 "CPU0 got: hello 42" within 2s

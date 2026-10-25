@@ -10,6 +10,7 @@ dependencies are serde, serde_json and [dap-types](https://github.com/zed-indust
 | --- | --- |
 | `aurix-debug-model` | State without I/O or UI: `reference` (addresses, the probe-rs `@core` suffix), `protocol` (probe-rs `liveWatch`, `rttWindowOpened`, the RTT events, `disassemble` with signed offsets), `disassembly` (the window around a program counter, read further on either side), `breakpoints` (instruction breakpoints, and the condition, hit count and log message of any breakpoint), `source_breakpoints` (source line breakpoints per file, with their conditions), `variables` (scopes and variables as a tree read on demand, expanded nodes kept across stops, changed values marked), `live_watch` (expressions read on every core), `memory` (a memory window read again and again through one core, changed bytes marked, base64; writes only to the TC27x RAMs), `rtt` (RTT lines per core and channel, the down channels and the `rtt write` command that sends a line to one) |
 | `aurix-dap-client` | A DAP client over TCP: requests typed with dap-types, events on a channel; threads only, no async runtime |
+| `aurix-script` | Board tests from a command file without a screen: the `aurix-run` tool (below) |
 
 The license of these crates is not decided yet (`publish = false`).
 
@@ -33,6 +34,44 @@ demo started with `start_in_flash`. They leave the target halted: reset it after
 with the values of `show=`; `from=<file>:<line>` stops there first so that the hits count from a
 known place; `running=g_ticks` tells at the end whether each core still runs;
 `tc275_demo_3cores_allstop.json` is the same session with all-stop.
+
+## aurix-run: board tests from a script
+
+```text
+cargo run -p aurix-script --bin aurix-run -- script/examples/demo_flash.aurix
+aurix-run <script> [--server HOST:PORT] [--keep-going] [--junit FILE] [--set NAME=VALUE]... [--verbose]
+```
+
+One command a line, `#` starts a comment, times are `500ms` or `5s`, paths are relative to the
+script. `${NAME}` takes the value of `--set NAME=…`, else of the environment variable, else the
+default of `${NAME:-default}`. The whole file is read first: a mistake ends the run before the
+server is asked anything.
+
+| Command | What it does |
+| --- | --- |
+| `server <host>:<port>` | The server (default `127.0.0.1:50000`), before `attach` |
+| `attach <attach.json>` | initialize, attach, configurationDone (the cores are left as they are). An attach file that turns flashing on is refused |
+| `break <file>:<line> [if <condition>] [hit <count>] [log <message>]` | A source breakpoint, with the probe-rs conditions (`v == 3 && k != 0`, `3`, `>= 3`, `% 4`) |
+| `break-at <address>[@core]` | An instruction breakpoint |
+| `watch <variable> read\|write\|access [if …] [hit …]` | A data breakpoint (needs a halted core for the variable's frame) |
+| `continue [core\|all]`, `pause [core\|all]` | Without a core: the core that stopped last, else every core |
+| `step over\|into\|out\|instruction [core]` | One step |
+| `wait stopped [core] [reason <reason>] [within <time>]` | Waits for a stop since the last run command (default 10 s) |
+| `expect <name> <op> <value>` | `evaluate` in the top frame of the stopped core, compared like the conditions |
+| `expect live <global>[@core] <op> <value> [within <time>]` | `liveWatch` every 0.5 s until it holds |
+| `expect memory <address>[@core] <bytes>` | `readMemory` compared |
+| `write <address>[@core] <bytes>` | `writeMemory`, RAM of the TC27x only |
+| `rtt send <core> <channel> <text>` | A line to the core's RTT down channel |
+| `rtt expect <core> <channel> "<regex>" [within <time>]` | A line on the up channel that matches, after the last one matched |
+| `sleep <time>`, `disconnect` | The run ends with `disconnect` anyway |
+
+Exit code 0: every expectation held; 1: one did not (the run stops there, or goes on with
+`--keep-going` and lists them); 2: a mistake in the script, the server, a wait that ran out of
+time, or Ctrl+C. `--junit` writes the script as a testsuite and each expectation as a testcase
+(the ones not reached are skipped). Examples in `script/examples`: `demo_flash`, `conditions`
+and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU1), and
+`watch_after_break`, which shows a known problem of the probe-rs fork (a data breakpoint no
+longer halts after the core ran on from an instruction breakpoint; exit code 2).
 
 ```text
 cargo test

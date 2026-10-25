@@ -1,0 +1,26 @@
+# Breakpoint conditions, a step, memory and a live global on the flash demo (start it first
+# with start_in_flash). Each compute() calls scale() with v = 0, 1, 2, 3 and writes g_result = 46.
+
+attach ../../dap-client/examples/tc275_demo_3cores.json
+continue all
+expect live g_ticks > 0 within 2s
+
+# A hit count, counted from the start of compute().
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:38
+wait stopped 0 reason breakpoint
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23 hit 3
+continue 0
+wait stopped 0 reason breakpoint
+expect v == 2
+
+# A condition.
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23 if v == 3
+continue 0
+wait stopped 0 reason breakpoint
+expect v == 3
+step over
+wait stopped 0 reason step
+expect s == 9
+
+# The global in memory (g_result = 46).
+expect memory 0x7000A004@0 2E 00 00 00

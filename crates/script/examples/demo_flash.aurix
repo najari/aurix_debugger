@@ -1,0 +1,12 @@
+# The flash demo on CPU0-CPU2 in one session (start it first with start_in_flash).
+# scale() is called with v = 0, 1, 2, 3 and k = 3 by each compute().
+#
+#   aurix-run demo_flash.aurix                 -> 0
+#   aurix-run demo_flash.aurix --set K=4       -> 1 (expect k == 4 does not hold)
+
+attach ../../dap-client/examples/tc275_demo_3cores.json
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23
+continue all
+wait stopped 0 reason breakpoint
+expect k == ${K:-3}
+expect v < 4
