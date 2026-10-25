@@ -171,6 +171,18 @@ pub struct IdStats {
     busy: u64,
 }
 
+/// What the trace says of one named id ([`SwTrace::timing_of`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
+    pub core: Option<u64>,
+    /// The share of the time in its spans, 0 to 1.
+    pub load: Option<f64>,
+    /// The last span, in ticks.
+    pub last_span: Option<u64>,
+    /// The records that began a span or were one.
+    pub runs: u64,
+}
+
 /// One line of the statistics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatRow {
@@ -240,6 +252,23 @@ impl SwTrace {
             busy += to - begin.max(from);
         }
         (to > from && stats.span.count > 0).then(|| busy as f64 / (to - from) as f64)
+    }
+
+    /// The timing of the id named `name` (an OS object of the ORTI file, say): its load, its last
+    /// span and how many records began one. On several cores, the core with spans first.
+    pub fn timing_of(&self, name: &str) -> Option<Timing> {
+        let id = self.names.names.iter().find(|(_, n)| n.as_str() == name)?.0;
+        let ((core, _), stats) = self
+            .stats
+            .iter()
+            .filter(|((_, i), _)| i == id)
+            .max_by_key(|(_, s)| s.span.count)?;
+        Some(Timing {
+            core: *core,
+            load: self.load(*core, *id),
+            last_span: (stats.span.count > 0).then_some(stats.span.last),
+            runs: stats.count,
+        })
     }
 
     /// The events kept as CSV: time since the first event (ns), core, id, name, kind, arg and
@@ -716,6 +745,13 @@ mod tests {
         assert_eq!(trace.load(Some(0), 1), Some(0.8));
         assert_eq!(trace.load(Some(0), 10), Some(0.01));
         assert_eq!(trace.load(Some(0), 20), None);
+        let task = trace.timing_of("task").unwrap();
+        assert_eq!(
+            (task.core, task.load, task.last_span, task.runs),
+            (Some(0), Some(0.8), Some(300), 3)
+        );
+        assert_eq!(trace.timing_of("dispatch").unwrap().last_span, None);
+        assert!(trace.timing_of("TaskZ").is_none());
         let csv = trace.to_csv();
         let lines: Vec<&str> = csv.lines().collect();
         assert_eq!(lines[0], "time_ns,core,id,name,kind,arg,span_ns");

@@ -166,6 +166,31 @@ impl Debugger {
             ),
         };
         let tables = self.os.as_ref().map(|os| os.tables()).unwrap_or_default();
+        // The software trace of an object of the same name: its load and last run, two columns
+        // more for a table with at least one such object.
+        let trace = &self.sw_trace;
+        let timing: Vec<Option<Vec<(String, String)>>> = tables
+            .iter()
+            .map(|table| {
+                let cells: Vec<(String, String)> = table
+                    .rows
+                    .iter()
+                    .map(|row| match trace.timing_of(&row.object) {
+                        Some(t) => (
+                            t.load
+                                .map(|l| format!("{:.2} %", l * 100.0))
+                                .unwrap_or_default(),
+                            t.last_span.map(|s| trace.format(s)).unwrap_or_default(),
+                        ),
+                        None => Default::default(),
+                    })
+                    .collect();
+                cells
+                    .iter()
+                    .any(|(load, last)| !load.is_empty() || !last.is_empty())
+                    .then_some(cells)
+            })
+            .collect();
         div()
             .flex()
             .flex_col()
@@ -198,63 +223,97 @@ impl Debugger {
                     .overflow_y_scroll()
                     .px_2()
                     .gap_2()
-                    .children(tables.into_iter().enumerate().map(|(t, table)| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(hsla(color::ACCENT))
-                                    .child(format!("{} ({})", table.title, table.kind)),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .text_xs()
-                                    .text_color(hsla(color::MUTED))
-                                    .child(div().w(px(150.)).flex_none().child("Object"))
-                                    .children(table.columns.iter().map(|column| {
+                    .children(tables.into_iter().zip(timing).enumerate().map(
+                        |(t, (table, timing))| {
+                            let traced = timing.is_some();
+                            let mut timing = timing.unwrap_or_default().into_iter();
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(hsla(color::ACCENT))
+                                        .child(format!("{} ({})", table.title, table.kind)),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .text_xs()
+                                        .text_color(hsla(color::MUTED))
+                                        .child(div().w(px(150.)).flex_none().child("Object"))
+                                        .children(table.columns.iter().map(|column| {
+                                            div()
+                                                .w(px(170.))
+                                                .flex_none()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .child(column.clone())
+                                        }))
+                                        .when(traced, |this| {
+                                            this.child(
+                                                div().w(px(110.)).flex_none().child("Load (trace)"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(110.))
+                                                    .flex_none()
+                                                    .child("Last run (trace)"),
+                                            )
+                                        }),
+                                )
+                                .children(table.rows.into_iter().enumerate().map(
+                                    move |(r, row)| {
+                                        let (load, last) = timing.next().unwrap_or_default();
                                         div()
-                                            .w(px(170.))
-                                            .flex_none()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
-                                            .child(column.clone())
-                                    })),
-                            )
-                            .children(table.rows.into_iter().enumerate().map(move |(r, row)| {
-                                div()
-                                    .id(SharedString::from(format!("os-{t}-{r}")))
-                                    .flex()
-                                    .font_family("Consolas")
-                                    .text_sm()
-                                    .hover(|style| style.bg(hsla(color::SELECTED)))
-                                    .child(
-                                        div()
-                                            .w(px(150.))
-                                            .flex_none()
-                                            .text_color(hsla(color::TEXT))
-                                            .child(row.object),
-                                    )
-                                    .children(row.cells.into_iter().map(|cell| {
-                                        let colour = if cell.error {
-                                            color::MUTED
-                                        } else if cell.changed {
-                                            color::CHANGED
-                                        } else {
-                                            color::TEXT
-                                        };
-                                        div()
-                                            .w(px(170.))
-                                            .flex_none()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
-                                            .text_color(hsla(colour))
-                                            .child(cell.text)
-                                    }))
-                            }))
-                    })),
+                                            .id(SharedString::from(format!("os-{t}-{r}")))
+                                            .flex()
+                                            .font_family("Consolas")
+                                            .text_sm()
+                                            .hover(|style| style.bg(hsla(color::SELECTED)))
+                                            .child(
+                                                div()
+                                                    .w(px(150.))
+                                                    .flex_none()
+                                                    .text_color(hsla(color::TEXT))
+                                                    .child(row.object),
+                                            )
+                                            .children(row.cells.into_iter().map(|cell| {
+                                                let colour = if cell.error {
+                                                    color::MUTED
+                                                } else if cell.changed {
+                                                    color::CHANGED
+                                                } else {
+                                                    color::TEXT
+                                                };
+                                                div()
+                                                    .w(px(170.))
+                                                    .flex_none()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .text_color(hsla(colour))
+                                                    .child(cell.text)
+                                            }))
+                                            .when(traced, |this| {
+                                                this.child(
+                                                    div()
+                                                        .w(px(110.))
+                                                        .flex_none()
+                                                        .text_color(hsla(color::ACCENT))
+                                                        .child(load),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(110.))
+                                                        .flex_none()
+                                                        .text_color(hsla(color::ACCENT))
+                                                        .child(last),
+                                                )
+                                            })
+                                    },
+                                ))
+                        },
+                    )),
             )
             .into_any_element()
     }

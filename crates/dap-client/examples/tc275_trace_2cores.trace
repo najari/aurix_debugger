@@ -3,7 +3,7 @@
 1 = TaskA
 2 = TaskB
 3 = TaskC
-10 = timer_isr
+10 = TimerIsr
 20 = dispatch
 30 = job
 31 = sample

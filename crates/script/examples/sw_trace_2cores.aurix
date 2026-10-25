@@ -14,8 +14,8 @@ trace expect 1 job interval avg <= 1.01ms
 trace expect 1 job span max <= 120us
 trace expect 1 sample interval avg >= 4.9ms
 trace expect 1 sample interval avg <= 5.1ms
-trace expect 0 timer_isr interval avg >= 9.9ms
-trace expect 0 timer_isr interval avg <= 10.1ms
+trace expect 0 TimerIsr interval avg >= 9.9ms
+trace expect 0 TimerIsr interval avg <= 10.1ms
 sleep 2s
 trace expect 0 dropped == 0
 trace expect 1 dropped == 0
@@ -26,7 +26,7 @@ trace expect 1 job load >= 9.5%
 trace expect 1 job load <= 10.5%
 trace expect 0 TaskA load >= 25%
 trace expect 0 TaskA load <= 42%
-trace expect 0 timer_isr load < 0.1%
+trace expect 0 TimerIsr load < 0.1%
 trace save ${TEMP}/sw_trace_2cores.csv
 
 # How full the buffers got while the debugger read them (since the drop of the backlog).

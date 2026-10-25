@@ -8,10 +8,10 @@ continue all
 sleep 1s
 trace clear
 
-trace expect timer_isr count >= 50 within 2s
-trace expect timer_isr interval avg >= 9.9ms
-trace expect timer_isr interval avg <= 10.1ms
-trace expect timer_isr span max < 20us
+trace expect TimerIsr count >= 50 within 2s
+trace expect TimerIsr interval avg >= 9.9ms
+trace expect TimerIsr interval avg <= 10.1ms
+trace expect TimerIsr span max < 20us
 trace expect dispatch count >= 3 within 2s
 trace expect TaskA span last >= 399ms within 3s
 trace expect TaskA span last <= 401ms
