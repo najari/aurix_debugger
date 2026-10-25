@@ -21,3 +21,4 @@ out/
 
 # runtime logs
 *.log
+/app/target/

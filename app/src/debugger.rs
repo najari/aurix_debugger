@@ -1,0 +1,945 @@
+//! The debugger window: a session with the probe-rs DAP server and its views.
+//!
+//! Requests run on GPUI's background executor (the DAP client blocks until the answer) and
+//! their answers come back to the window's entity. The adapter's events are taken every
+//! [`EVENT_POLL`]. The state and rules of the views (disassembly window, instruction
+//! breakpoints, RTT channels) are the shared `aurix-debug-model` crate's.
+
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
+
+use aurix_dap_client::{DapClient, Event};
+use aurix_debug_model::breakpoints::InstructionBreakpoints;
+use aurix_debug_model::disassembly::{BEFORE, COUNT, DisassemblyWindow, MORE, Side, is_filler};
+use aurix_debug_model::protocol::{
+    DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RttChannelConfig, RttData,
+    RttWindowOpened,
+};
+use aurix_debug_model::rtt::RttChannels;
+use dap_types::requests::{Request, SetInstructionBreakpoints, StackTrace, Threads};
+use dap_types::{StackFrame, StackTraceArguments, ThreadsArgument};
+use gpui::{
+    AnyElement, ClickEvent, Context, Hsla, ScrollStrategy, SharedString, UniformListScrollHandle,
+    Window, div, prelude::*, px, rgb, uniform_list,
+};
+use serde_json::{Value, json};
+
+/// How long a request may take.
+const TIMEOUT: Duration = Duration::from_secs(10);
+/// How often the adapter's events are taken.
+const EVENT_POLL: Duration = Duration::from_millis(30);
+/// The console keeps at most this many lines.
+const MAX_CONSOLE_LINES: usize = 5_000;
+
+mod color {
+    pub const BACKGROUND: u32 = 0x1e1e1e;
+    pub const PANEL: u32 = 0x252526;
+    pub const BORDER: u32 = 0x3c3c3c;
+    pub const TEXT: u32 = 0xd4d4d4;
+    pub const MUTED: u32 = 0x8a8a8a;
+    pub const ACCENT: u32 = 0x569cd6;
+    pub const SELECTED: u32 = 0x37373d;
+    pub const PC_LINE: u32 = 0x4b4b18;
+    pub const PC_MARK: u32 = 0xffcc00;
+    pub const BREAKPOINT: u32 = 0xe51400;
+    pub const BUTTON: u32 = 0x3a3d41;
+    pub const BUTTON_HOVER: u32 = 0x45494e;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ThreadState {
+    Unknown,
+    Running,
+    Stopped(String),
+}
+
+#[derive(Clone, Debug)]
+struct ThreadRow {
+    id: i64,
+    name: String,
+    state: ThreadState,
+}
+
+pub struct Debugger {
+    server: String,
+    attach: Option<String>,
+    client: Option<Arc<DapClient>>,
+    status: SharedString,
+    threads: Vec<ThreadRow>,
+    selected_thread: Option<i64>,
+    frames: Vec<StackFrame>,
+    selected_frame: usize,
+    disassembly: DisassemblyWindow,
+    disassembly_scroll: UniformListScrollHandle,
+    /// Scroll the disassembly to the program counter at the next render.
+    scroll_to_pc: bool,
+    breakpoints: InstructionBreakpoints,
+    rtt: RttChannels,
+    console: Vec<SharedString>,
+    console_scroll: UniformListScrollHandle,
+}
+
+impl Debugger {
+    pub fn new(attach: Option<String>, server: String, cx: &mut Context<Self>) -> Self {
+        let mut this = Self {
+            server,
+            attach,
+            client: None,
+            status: "Not connected".into(),
+            threads: Vec::new(),
+            selected_thread: None,
+            frames: Vec::new(),
+            selected_frame: 0,
+            disassembly: DisassemblyWindow::default(),
+            disassembly_scroll: UniformListScrollHandle::new(),
+            scroll_to_pc: false,
+            breakpoints: InstructionBreakpoints::default(),
+            rtt: RttChannels::default(),
+            console: Vec::new(),
+            console_scroll: UniformListScrollHandle::new(),
+        };
+        this.connect(cx);
+        this
+    }
+
+    /// Ends the session (the window closes), so that the server takes the next one. The target
+    /// is left as it is.
+    pub fn disconnect(&mut self) {
+        if let Some(client) = self.client.take() {
+            client
+                .request_raw(
+                    "disconnect",
+                    json!({ "terminateDebuggee": false }),
+                    Duration::from_secs(2),
+                )
+                .ok();
+        }
+    }
+
+    fn log(&mut self, line: impl Into<SharedString>) {
+        let line = line.into();
+        // A stop's description often comes as an output event as well.
+        if self.console.last() == Some(&line) {
+            return;
+        }
+        self.console.push(line);
+        if self.console.len() > MAX_CONSOLE_LINES {
+            self.console.drain(..self.console.len() - MAX_CONSOLE_LINES);
+        }
+        self.console_scroll
+            .scroll_to_item(self.console.len().saturating_sub(1), ScrollStrategy::Bottom);
+    }
+
+    /// Connects, attaches and ends the configuration, then reads the threads and takes the
+    /// adapter's events.
+    fn connect(&mut self, cx: &mut Context<Self>) {
+        let Some(attach) = self.attach.clone() else {
+            self.status = "Usage: aurix-debugger <attach.json> [server]".into();
+            return;
+        };
+        let server = self.server.clone();
+        self.status = format!("Connecting to {server}…").into();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { start_session(&server, &attach) })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(client) => {
+                        this.status = format!("Attached ({})", this.server).into();
+                        this.client = Some(client);
+                        this.take_events(cx);
+                        this.read_threads(cx);
+                    }
+                    Err(error) => {
+                        this.status = format!("Not attached: {error}").into();
+                        this.log(format!("error: {error}"));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Sends request `R` on the background executor; `done` gets the answer on the window's
+    /// entity.
+    fn request<R>(
+        &self,
+        arguments: R::Arguments,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Result<R::Response, String>, &mut Context<Self>) + 'static,
+    ) where
+        R: Request + 'static,
+    {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    client
+                        .request::<R>(arguments, TIMEOUT)
+                        .map_err(|error| error.to_string())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                done(this, result, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Sends a request without a typed answer (execution control); a failure goes to the
+    /// console.
+    fn request_raw(&self, command: &'static str, arguments: Value, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { client.request_raw(command, arguments, TIMEOUT) })
+                .await;
+            if let Err(error) = result {
+                this.update(cx, |this, cx| {
+                    this.log(format!("{command}: {error}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn take_events(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(EVENT_POLL).await;
+                let alive = this
+                    .update(cx, |this, cx| {
+                        let Some(client) = this.client.clone() else {
+                            return false;
+                        };
+                        let mut any = false;
+                        while let Some(event) = client.try_event() {
+                            this.handle_event(event, cx);
+                            any = true;
+                        }
+                        if any {
+                            cx.notify();
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if !alive {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        let body = &event.body;
+        match event.event.as_str() {
+            "stopped" => {
+                let reason = body
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("stopped")
+                    .to_string();
+                let thread = body.get("threadId").and_then(Value::as_i64);
+                if body.get("allThreadsStopped").and_then(Value::as_bool) == Some(true) {
+                    for row in &mut self.threads {
+                        if !matches!(row.state, ThreadState::Stopped(_)) {
+                            row.state = ThreadState::Stopped("stopped".into());
+                        }
+                    }
+                }
+                if let Some(thread) = thread {
+                    self.set_state(thread, ThreadState::Stopped(reason.clone()));
+                    let keep_focus =
+                        body.get("preserveFocusHint").and_then(Value::as_bool) == Some(true);
+                    if !keep_focus || self.selected_thread.is_none() {
+                        self.selected_thread = Some(thread);
+                    }
+                }
+                if let Some(description) = body.get("description").and_then(Value::as_str) {
+                    self.log(description.to_string());
+                }
+                self.read_threads(cx);
+                if thread.is_some() && thread == self.selected_thread {
+                    self.read_stack(cx);
+                }
+            }
+            "continued" => {
+                if body.get("allThreadsContinued").and_then(Value::as_bool) == Some(true) {
+                    for row in &mut self.threads {
+                        row.state = ThreadState::Running;
+                    }
+                } else if let Some(thread) = body.get("threadId").and_then(Value::as_i64) {
+                    self.set_state(thread, ThreadState::Running);
+                }
+                if self
+                    .selected_thread
+                    .is_some_and(|id| self.state(id) == Some(&ThreadState::Running))
+                {
+                    self.frames.clear();
+                }
+            }
+            "output" => {
+                if let Some(output) = body.get("output").and_then(Value::as_str) {
+                    for line in output.lines() {
+                        self.log(line.to_string());
+                    }
+                }
+            }
+            "probe-rs-show-message" => {
+                if let Some(message) = body.get("message").and_then(Value::as_str) {
+                    self.log(format!("message: {message}"));
+                }
+            }
+            RTT_CHANNEL_CONFIG_EVENT => {
+                if let Ok(config) = serde_json::from_value::<RttChannelConfig>(event.body) {
+                    let open = self.rtt.announced(config);
+                    let key = (open.core, open.channel_number);
+                    if let Some(channel) = self.rtt.get(key) {
+                        self.log(format!("RTT [{}] opened", channel.label()));
+                    }
+                    self.request::<RttWindowOpened>(open, cx, |this, result, _| {
+                        if let Err(error) = result {
+                            this.log(format!("rttWindowOpened: {error}"));
+                        }
+                    });
+                }
+            }
+            RTT_DATA_EVENT => {
+                if let Ok(data) = serde_json::from_value::<RttData>(event.body) {
+                    let key = (data.core, data.channel_number);
+                    let new = self.rtt.received(data);
+                    let lines = self
+                        .rtt
+                        .get(key)
+                        .map(|channel| {
+                            let label = channel.label();
+                            channel
+                                .lines
+                                .iter()
+                                .skip(channel.lines.len() - new)
+                                .map(|line| format!("RTT [{label}] {line}"))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    for line in lines {
+                        self.log(line);
+                    }
+                }
+            }
+            "terminated" | "exited" => {
+                self.status = format!("Session ended ({})", event.event).into();
+                self.log(format!("session {}", event.event));
+            }
+            _ => {}
+        }
+    }
+
+    fn state(&self, thread: i64) -> Option<&ThreadState> {
+        self.threads
+            .iter()
+            .find(|t| t.id == thread)
+            .map(|t| &t.state)
+    }
+
+    fn set_state(&mut self, thread: i64, state: ThreadState) {
+        match self.threads.iter_mut().find(|t| t.id == thread) {
+            Some(row) => row.state = state,
+            None => self.threads.push(ThreadRow {
+                id: thread,
+                name: format!("thread {thread}"),
+                state,
+            }),
+        }
+    }
+
+    fn read_threads(&mut self, cx: &mut Context<Self>) {
+        self.request::<Threads>(ThreadsArgument {}, cx, |this, result, cx| {
+            let threads = match result {
+                Ok(response) => response.threads,
+                Err(error) => {
+                    this.log(format!("threads: {error}"));
+                    return;
+                }
+            };
+            let old = std::mem::take(&mut this.threads);
+            this.threads = threads
+                .into_iter()
+                .map(|thread| ThreadRow {
+                    state: old
+                        .iter()
+                        .find(|row| row.id == thread.id)
+                        .map(|row| row.state.clone())
+                        .unwrap_or(ThreadState::Unknown),
+                    id: thread.id,
+                    name: thread.name,
+                })
+                .collect();
+            if this.selected_thread.is_none()
+                && let Some(first) = this.threads.first()
+            {
+                this.selected_thread = Some(first.id);
+                this.read_stack(cx);
+            }
+        });
+    }
+
+    fn select_thread(&mut self, thread: i64, cx: &mut Context<Self>) {
+        self.selected_thread = Some(thread);
+        self.read_stack(cx);
+    }
+
+    /// Forgets the call stack and disassembly shown (the selected thread runs or changed).
+    fn clear_stack(&mut self) {
+        self.frames.clear();
+        self.selected_frame = 0;
+        self.disassembly = DisassemblyWindow::default();
+    }
+
+    /// Reads the call stack of the selected thread. A running core has none (it would answer
+    /// with an error); a thread of unknown state is asked.
+    fn read_stack(&mut self, cx: &mut Context<Self>) {
+        self.clear_stack();
+        let Some(thread) = self.selected_thread else {
+            return;
+        };
+        if self.state(thread) == Some(&ThreadState::Running) {
+            return;
+        }
+        let arguments = StackTraceArguments {
+            thread_id: thread,
+            start_frame: None,
+            levels: Some(32),
+            format: None,
+        };
+        self.request::<StackTrace>(arguments, cx, move |this, result, cx| {
+            if this.selected_thread != Some(thread) {
+                return;
+            }
+            match result {
+                Ok(response) => {
+                    if !response.stack_frames.is_empty()
+                        && this.state(thread) == Some(&ThreadState::Unknown)
+                    {
+                        this.set_state(thread, ThreadState::Stopped("halted".into()));
+                    }
+                    this.frames = response.stack_frames;
+                    this.select_frame(0, cx);
+                }
+                Err(error) => {
+                    this.clear_stack();
+                    if this.state(thread) == Some(&ThreadState::Unknown) {
+                        // Asked to find out: a running core has no stack.
+                        this.set_state(thread, ThreadState::Running);
+                    } else {
+                        this.log(format!("stackTrace: {error}"));
+                    }
+                }
+            }
+        });
+    }
+
+    fn select_frame(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.selected_frame = ix;
+        let Some(reference) = self
+            .frames
+            .get(ix)
+            .and_then(|frame| frame.instruction_pointer_reference.clone())
+        else {
+            self.disassembly = DisassemblyWindow::default();
+            return;
+        };
+        self.disassembly = DisassemblyWindow::new(reference.clone());
+        let request = self.disassembly.first_request(BEFORE, COUNT);
+        self.request::<DisassembleSigned>(request, cx, move |this, result, _| {
+            if this.disassembly.reference() != reference {
+                return;
+            }
+            match result {
+                Ok(response) => {
+                    this.disassembly.set_first(BEFORE, response.instructions);
+                    this.scroll_to_pc = true;
+                }
+                Err(error) => this.log(format!("disassemble: {error}")),
+            }
+        });
+    }
+
+    fn read_more(&mut self, side: Side, cx: &mut Context<Self>) {
+        let Some(request) = self.disassembly.more_request(side, MORE) else {
+            return;
+        };
+        let reference = self.disassembly.reference().to_string();
+        self.request::<DisassembleSigned>(request, cx, move |this, result, _| {
+            if this.disassembly.reference() != reference {
+                return;
+            }
+            match result {
+                Ok(response) => {
+                    this.disassembly.add_more(side, response.instructions);
+                }
+                Err(error) => this.log(format!("disassemble: {error}")),
+            }
+        });
+    }
+
+    fn toggle_breakpoint(&mut self, address: String, cx: &mut Context<Self>) {
+        self.breakpoints.toggle(address);
+        let request = self.breakpoints.request();
+        let asked = request.clone();
+        self.request::<SetInstructionBreakpoints>(
+            request,
+            cx,
+            move |this, result, _| match result {
+                Ok(response) => this.breakpoints.answered(&asked, Ok(&response.breakpoints)),
+                Err(error) => {
+                    this.log(format!("setInstructionBreakpoints: {error}"));
+                    this.breakpoints.answered(&asked, Err(&error));
+                }
+            },
+        );
+    }
+
+    /// Execution control of the selected thread.
+    fn control(&mut self, command: &'static str, extra: Value, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected_thread else {
+            return;
+        };
+        let mut arguments = json!({ "threadId": thread });
+        if let (Value::Object(arguments), Value::Object(extra)) = (&mut arguments, extra) {
+            arguments.extend(extra);
+        }
+        if command != "pause" {
+            self.set_state(thread, ThreadState::Running);
+            self.frames.clear();
+        }
+        self.request_raw(command, arguments, cx);
+    }
+}
+
+/// Connects to the server and starts a session: `initialize`, `attach` with the arguments in
+/// the file `attach`, `configurationDone`.
+fn start_session(server: &str, attach: &str) -> Result<Arc<DapClient>, String> {
+    let text = std::fs::read_to_string(attach).map_err(|error| format!("{attach}: {error}"))?;
+    let arguments: Value =
+        serde_json::from_str(&text).map_err(|error| format!("{attach}: {error}"))?;
+    let client = DapClient::connect(server).map_err(|error| format!("{server}: {error}"))?;
+    client
+        .request_raw(
+            "initialize",
+            json!({
+                "clientID": "aurix-debugger", "clientName": "AURIX Debugger",
+                "adapterID": "probe-rs", "linesStartAt1": true, "columnsStartAt1": true,
+                "pathFormat": "path", "supportsMemoryReferences": true,
+            }),
+            TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
+    client
+        .request_raw("attach", arguments, Duration::from_secs(60))
+        .map_err(|error| error.to_string())?;
+    client
+        .request_raw("configurationDone", json!({}), TIMEOUT)
+        .map_err(|error| error.to_string())?;
+    Ok(Arc::new(client))
+}
+
+fn hsla(color: u32) -> Hsla {
+    rgb(color).into()
+}
+
+fn panel_title(title: &'static str) -> impl IntoElement {
+    div()
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(hsla(color::MUTED))
+        .child(title)
+}
+
+fn button(
+    id: &'static str,
+    label: &'static str,
+    enabled: bool,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_0p5()
+        .rounded_sm()
+        .text_sm()
+        .bg(hsla(color::BUTTON))
+        .text_color(hsla(if enabled { color::TEXT } else { color::MUTED }))
+        .when(enabled, |this| {
+            this.cursor_pointer()
+                .hover(|style| style.bg(hsla(color::BUTTON_HOVER)))
+                .on_click(on_click)
+        })
+        .child(label)
+}
+
+impl Debugger {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.selected_thread.and_then(|id| self.state(id));
+        let stopped = matches!(state, Some(ThreadState::Stopped(_)));
+        // A thread of unknown state may run: pause is offered.
+        let running = state.is_some() && !stopped;
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(hsla(color::BORDER))
+            .bg(hsla(color::PANEL))
+            .child(button(
+                "continue",
+                "Continue",
+                stopped,
+                cx.listener(|this, _, _, cx| this.control("continue", json!({}), cx)),
+            ))
+            .child(button(
+                "pause",
+                "Pause",
+                running,
+                cx.listener(|this, _, _, cx| this.control("pause", json!({}), cx)),
+            ))
+            .child(button(
+                "step-over",
+                "Step Over",
+                stopped,
+                cx.listener(|this, _, _, cx| this.control("next", json!({}), cx)),
+            ))
+            .child(button(
+                "step-instruction",
+                "Step Instruction",
+                stopped,
+                cx.listener(|this, _, _, cx| {
+                    this.control("next", json!({ "granularity": "instruction" }), cx)
+                }),
+            ))
+            .child(button(
+                "step-into-instruction",
+                "Step Into Instruction",
+                stopped,
+                cx.listener(|this, _, _, cx| {
+                    this.control("stepIn", json!({ "granularity": "instruction" }), cx)
+                }),
+            ))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(hsla(color::MUTED))
+                    .child(self.status.clone()),
+            )
+    }
+
+    fn render_threads(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(panel_title("THREADS"))
+            .children(self.threads.iter().map(|thread| {
+                let id = thread.id;
+                let selected = self.selected_thread == Some(id);
+                let state = match &thread.state {
+                    ThreadState::Unknown => "?".to_string(),
+                    ThreadState::Running => "running".to_string(),
+                    ThreadState::Stopped(reason) => format!("stopped: {reason}"),
+                };
+                div()
+                    .id(SharedString::from(format!("thread-{id}")))
+                    .flex()
+                    .gap_2()
+                    .px_2()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(selected, |this| this.bg(hsla(color::SELECTED)))
+                    .hover(|style| style.bg(hsla(color::SELECTED)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_thread(id, cx)))
+                    .child(
+                        div()
+                            .text_color(hsla(color::TEXT))
+                            .child(thread.name.clone()),
+                    )
+                    .child(div().text_color(hsla(color::MUTED)).child(state))
+            }))
+    }
+
+    fn render_stack(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(panel_title("CALL STACK"))
+            .when(self.frames.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .text_sm()
+                        .text_color(hsla(color::MUTED))
+                        .child("Not stopped"),
+                )
+            })
+            .children(self.frames.iter().enumerate().map(|(ix, frame)| {
+                let selected = ix == self.selected_frame;
+                let location = match &frame.source {
+                    Some(source) => {
+                        format!("{}:{}", source.name.clone().unwrap_or_default(), frame.line)
+                    }
+                    None => frame
+                        .instruction_pointer_reference
+                        .clone()
+                        .unwrap_or_default(),
+                };
+                div()
+                    .id(SharedString::from(format!("frame-{ix}")))
+                    .flex()
+                    .flex_col()
+                    .px_2()
+                    .cursor_pointer()
+                    .when(selected, |this| this.bg(hsla(color::SELECTED)))
+                    .hover(|style| style.bg(hsla(color::SELECTED)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.select_frame(ix, cx)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(hsla(color::TEXT))
+                            .child(frame.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(hsla(color::MUTED))
+                            .child(location),
+                    )
+            }))
+    }
+
+    fn render_instructions(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let pc_index = self.disassembly.pc_index();
+        range
+            .filter_map(|ix| {
+                let instruction = self.disassembly.instructions().get(ix)?.clone();
+                let at_pc = pc_index == Some(ix);
+                let filler = is_filler(&instruction);
+                let breakpoint = self.breakpoints.get(&instruction.address).cloned();
+                let line = self
+                    .disassembly
+                    .line_start(ix)
+                    .map(|(file, line)| format!("{}:{line}", file.unwrap_or("line")));
+                let gutter_address = instruction.address.clone();
+                let mark = match breakpoint {
+                    Some(state) if state.verified == Some(true) => ("●", color::BREAKPOINT),
+                    Some(_) => ("○", color::MUTED),
+                    None => ("", color::MUTED),
+                };
+                Some(
+                    div()
+                        .id(SharedString::from(format!("instruction-{ix}")))
+                        .h(px(20.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .font_family("Consolas")
+                        .text_sm()
+                        .when(at_pc, |this| this.bg(hsla(color::PC_LINE)))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("gutter-{ix}")))
+                                .w(px(16.))
+                                .text_color(hsla(mark.1))
+                                .when(!filler, |this| {
+                                    this.cursor_pointer().on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.toggle_breakpoint(gutter_address.clone(), cx)
+                                        },
+                                    ))
+                                })
+                                .child(mark.0),
+                        )
+                        .child(
+                            div()
+                                .w(px(12.))
+                                .text_color(hsla(color::PC_MARK))
+                                .child(if at_pc { "▶" } else { "" }),
+                        )
+                        .child(
+                            div()
+                                .w(px(96.))
+                                .text_color(hsla(color::MUTED))
+                                .child(instruction.address.clone()),
+                        )
+                        .child(
+                            div()
+                                .w(px(110.))
+                                .text_color(hsla(color::MUTED))
+                                .child(instruction.instruction_bytes.clone().unwrap_or_default()),
+                        )
+                        .child(
+                            div()
+                                .w(px(260.))
+                                .text_color(hsla(if filler { color::MUTED } else { color::TEXT }))
+                                .child(instruction.instruction.clone()),
+                        )
+                        .when_some(line, |this, line| {
+                            this.child(div().text_color(hsla(color::ACCENT)).child(line))
+                        })
+                        .into_any_element(),
+                )
+            })
+            .collect()
+    }
+
+    fn render_disassembly(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scroll_to_pc
+            && let Some(ix) = self.disassembly.pc_index()
+        {
+            self.scroll_to_pc = false;
+            self.disassembly_scroll
+                .scroll_to_item(ix, ScrollStrategy::Center);
+        }
+        let count = self.disassembly.instructions().len();
+        let shown = count > 0;
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(panel_title("DISASSEMBLY"))
+                    .child(button(
+                        "earlier",
+                        "▲ Earlier",
+                        shown,
+                        cx.listener(|this, _, _, cx| this.read_more(Side::Before, cx)),
+                    ))
+                    .child(button(
+                        "later",
+                        "▼ Later",
+                        shown,
+                        cx.listener(|this, _, _, cx| this.read_more(Side::After, cx)),
+                    ))
+                    .child(button(
+                        "go-to-pc",
+                        "PC",
+                        shown,
+                        cx.listener(|this, _, _, cx| {
+                            this.scroll_to_pc = true;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        div()
+                            .px_2()
+                            .text_xs()
+                            .text_color(hsla(color::MUTED))
+                            .child(self.disassembly.reference().to_string()),
+                    ),
+            )
+            .child(
+                uniform_list(
+                    "disassembly",
+                    count,
+                    cx.processor(|this, range, _window, cx| this.render_instructions(range, cx)),
+                )
+                .track_scroll(&self.disassembly_scroll)
+                .flex_1(),
+            )
+    }
+
+    fn render_console(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .h(px(180.))
+            .border_t_1()
+            .border_color(hsla(color::BORDER))
+            .bg(hsla(color::PANEL))
+            .child(panel_title("CONSOLE"))
+            .child(
+                uniform_list(
+                    "console",
+                    self.console.len(),
+                    cx.processor(|this, range: Range<usize>, _window, _cx| {
+                        range
+                            .filter_map(|ix| {
+                                let line = this.console.get(ix)?.clone();
+                                Some(
+                                    div()
+                                        .px_2()
+                                        .font_family("Consolas")
+                                        .text_xs()
+                                        .text_color(hsla(color::TEXT))
+                                        .child(line),
+                                )
+                            })
+                            .collect()
+                    }),
+                )
+                .track_scroll(&self.console_scroll)
+                .flex_1(),
+            )
+    }
+}
+
+impl Render for Debugger {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(hsla(color::BACKGROUND))
+            .text_color(hsla(color::TEXT))
+            .font_family("Segoe UI")
+            .child(self.render_toolbar(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("side")
+                            .w(px(300.))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .border_r_1()
+                            .border_color(hsla(color::BORDER))
+                            .bg(hsla(color::PANEL))
+                            .overflow_y_scroll()
+                            .child(self.render_threads(cx))
+                            .child(self.render_stack(cx)),
+                    )
+                    .child(self.render_disassembly(cx)),
+            )
+            .child(self.render_console(cx))
+    }
+}

@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rtt = RttChannels::default();
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-        let Ok(event) = client.events().recv_timeout(left) else {
+        let Some(event) = client.next_event(left) else {
             break;
         };
         match event.event.as_str() {

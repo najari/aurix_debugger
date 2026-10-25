@@ -129,12 +129,21 @@ impl DisassemblyWindow {
         count
     }
 
-    /// The index of the program counter's instruction.
+    /// The index of the instruction that holds the program counter. The program counter of a
+    /// caller's frame may point into an instruction rather than at its start (probe-rs gives the
+    /// address before the return address, inside the call): the instruction it falls in counts.
     pub fn pc_index(&self) -> Option<usize> {
         let pc = self.pc?;
-        self.instructions
+        let addresses = self
+            .instructions
             .iter()
-            .position(|instruction| parse_address(&instruction.address) == Some(pc))
+            .map(|instruction| parse_address(&instruction.address))
+            .collect::<Vec<_>>();
+        let ix = addresses
+            .iter()
+            .rposition(|address| address.is_some_and(|address| address <= pc))?;
+        let next = addresses[ix + 1..].iter().flatten().next();
+        (addresses[ix] == Some(pc) || next.is_some_and(|next| *next > pc)).then_some(ix)
     }
 
     /// The source line that starts at instruction `ix`: the adapter gives the line on the first
@@ -234,6 +243,22 @@ mod tests {
                 .instruction_offset,
             5
         );
+    }
+
+    #[test]
+    fn a_caller_frame_marks_the_instruction_it_points_into() {
+        // 0x8021c022 is inside the 4 byte call at 0x8021c020.
+        let mut window = DisassemblyWindow::new("0x8021c022@0");
+        window.set_first(1, instructions(&[0x8021_c01c, 0x8021_c020, 0x8021_c024]));
+        assert_eq!(window.pc_index(), Some(1));
+        // Beyond the last instruction: not shown.
+        let mut window = DisassemblyWindow::new("0x8021c030");
+        window.set_first(0, instructions(&[0x8021_c020, 0x8021_c024]));
+        assert_eq!(window.pc_index(), None);
+        // Before the first: not shown either.
+        let mut window = DisassemblyWindow::new("0x10");
+        window.set_first(0, instructions(&[0x20]));
+        assert_eq!(window.pc_index(), None);
     }
 
     #[test]

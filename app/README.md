@@ -1,0 +1,34 @@
+# aurix-debugger (B)
+
+The standalone debugger: a GPUI window on the probe-rs DAP server. This is its first screen.
+
+| Part | What it does |
+| --- | --- |
+| Toolbar | Continue, Pause, Step Over (line), Step Instruction, Step Into Instruction of the selected thread; the connection state |
+| Threads | One thread per core, with its state (running, stopped and why); a click selects it |
+| Call stack | The frames of the selected thread; a click shows the frame's disassembly |
+| Disassembly | The instructions around the frame's program counter (▶), read further with ▲/▼, back to the PC; a click left of an instruction sets or removes a breakpoint on it (● set, ○ refused) |
+| Console | The server's messages, stop descriptions and the RTT output of every core |
+
+The state and rules of the views are the shared crates' (`../crates`: `aurix-debug-model`,
+`aurix-dap-client`); this crate only draws them and sends the requests.
+
+## Run
+
+```text
+probe-rs dap-server --port 50000
+start_in_flash.exe C:\work\aurix_tcf_demo\build\demo_flash.elf
+cargo run -- ..\crates\dap-client\examples\tc275_demo_3cores.json
+```
+
+The second argument names another server (default `127.0.0.1:50000`). Any attach arguments of
+the probe-rs fork work, `rttEnabled` included (`tc275_rtt_cpu0_cpu1.json`).
+
+## GPUI and licenses
+
+GPUI comes from the Zed checkout next to this repository (`../../zed`, tag v1.25.3, path
+dependencies); the patches and `Cargo.lock` are Zed's, so GPUI builds with the versions it was
+released with. `cargo metadata` of this crate: 618 packages in the build graph, no GPL one; the
+19 Zed crates among them (gpui, gpui_platform, gpui_windows, collections, sum_tree, …) are all
+Apache-2.0; `r-efi` and `self_cell` are dual licensed with a permissive option. The license of
+this crate and the shared crates is not decided yet (`publish = false`).

@@ -202,7 +202,35 @@ Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그�
 | `rtt_tail` (CPU0·CPU1 RTT 시험 프로그램) | `core 0 · 0: Terminal`과 `core 1 · 0: Terminal` 채널을 열고 두 코어의 줄을 따로 출력(4초에 9줄, 14줄) |
 | `live_watch` (플래시 데모, 3코어) | `g_ticks`가 읽을 때마다 늘며 `*` 표시, `g_result = 46`, 없는 변수는 `<not a global variable>` |
 
-다음: Zed 포크가 이 크레이트를 쓰도록 바꿔 로직을 한 곳에만 두거나, B(GPUI 독립 앱)의 첫 화면(세션 연결, 스레드·콜스택, 디스어셈블리)을 이 크레이트로 시작한다.
+## B: GPUI 독립 앱 첫 화면 ([`app/`](../app/README.md))
+
+공통 크레이트 위에 GPUI 창을 올린 첫 화면이다. GPUI는 옆의 Zed 체크아웃(`C:\work\zed`, v1.25.3)을 경로로 참조하고, Zed의 patch와 `Cargo.lock`을 가져와 같은 버전으로 빌드한다. 첫 빌드 2분 49초(`-j 2`).
+
+라이선스 확인(`cargo metadata`): 빌드 그래프의 패키지 618개 중 GPL은 없다. 그중 Zed 크레이트 19개(gpui, gpui_platform, gpui_windows, collections, sum_tree 등)는 모두 Apache-2.0이다. `r-efi`, `self_cell`은 MIT·Apache를 고를 수 있는 다중 라이선스다.
+
+| 화면 | 내용 |
+| --- | --- |
+| 툴바 | 선택한 스레드의 Continue, Pause, Step Over, Step Instruction, Step Into Instruction, 연결 상태 |
+| 스레드 | 코어마다 하나, 상태(running, stopped와 이유) |
+| 콜스택 | 선택한 스레드의 프레임, 누르면 그 프레임의 디스어셈블리 |
+| 디스어셈블리 | PC(▶) 주변 명령, 위·아래 더 읽기, PC로 가기, 줄 왼쪽을 누르면 명령 BP(● 설정, ○ 거절) |
+| 콘솔 | 서버 메시지, 정지 설명, 모든 코어의 RTT 출력 |
+
+실기(TC275, 플래시 데모, CPU0–CPU2 한 세션):
+
+| 시험 | 결과 |
+| --- | --- |
+| 연결 | attach 뒤 스레드 3개 running(`configurationDone` 뒤 서버가 코어를 실행) |
+| Pause | CPU0 `stopped: pause`, 콜스택 `square → scale → accumulate → compute → main`, `0x8021c008` 주변 디스어셈블리와 `demo.c:16`·`:17` 줄 표시 |
+| 명령 BP | `0x8021C00C mul`에 ●, 서버가 `verified`로 답함. Continue 뒤 그 주소에서 정지 |
+| Step Instruction | `next` `granularity: instruction`, `0x8021c00e`로 이동 |
+| 바깥 프레임 | `main`을 고르면 `0x8021c0ae`(`call` 안쪽)를 포함하는 `0x8021C0AC call` 줄에 ▶(모델이 주소를 포함하는 명령을 찾도록 고침) |
+| 실행 중 스레드 | CPU1을 고르면 콜스택·디스어셈블리를 비우고 `stackTrace`를 보내지 않음 |
+| 창 닫기 | `disconnect`를 보내고 종료, 다시 띄우면 새 세션으로 붙음 |
+
+작업 중 고친 것: 바깥 프레임의 PC 표시(모델), 실행 중 스레드에 `stackTrace`를 보내던 것, 앞 스레드의 디스어셈블리가 남던 것, 콘솔에 같은 정지 메시지가 두 번 찍히던 것, 창을 닫을 때 `disconnect`가 없어 서버가 다음 세션을 받지 못하던 것(Windows에서는 앱 종료 훅이 돌지 않아 `on_window_should_close`에서 보냄).
+
+남은 것: 소스 편집기(소스 줄과 소스 BP), 변수·레지스터, 메모리, Live Watch·RTT 전용 패널(모델은 있음), attach 설정 고르기 화면, 패널 크기 조절.
 
 ## 그 밖의 관찰
 
@@ -217,7 +245,8 @@ Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그�
 3. ~~Live Watch 패널~~ 동작 확인(`7648baf`). 코어별 로컬 주소 읽기도 확인(문제 아님)
 4. ~~RTT 패널~~ 동작 확인(`7f255b4`, 시험 프로그램 `rtt_demo`), 여러 코어 RTT(`76123f4`, probe-rs `4b4b107`). 입력 채널은 남음
 5. ~~B로 옮길 공통 크레이트 분리~~ `crates/`의 `aurix-debug-model`, `aurix-dap-client`(보드에서 예제로 확인)
-6. Zed 포크를 이 크레이트로 바꾸거나 B의 첫 화면 시작
+6. ~~B의 첫 화면~~ `app/`(스레드, 콜스택, 디스어셈블리와 명령 BP, 실행 제어, 콘솔) 보드에서 확인
+7. B에 소스 보기와 소스 BP, 변수·레지스터, Live Watch·RTT 패널. 크레이트·앱 라이선스 결정
 
 ## 출처
 

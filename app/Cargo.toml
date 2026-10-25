@@ -1,0 +1,41 @@
+# The standalone debugger (B): a GPUI window on the probe-rs DAP server.
+#
+# GPUI comes from the Zed checkout (C:\work\zed, tag v1.25.3): gpui, gpui_platform and the Zed
+# crates they use are Apache-2.0 (checked with cargo metadata, see README.md); no GPL crate of
+# Zed is used. The patches and Cargo.lock are Zed's, so GPUI builds with the versions it was
+# released with.
+[workspace]
+resolver = "2"
+
+[package]
+name = "aurix-debugger"
+description = "A debugger window for the probe-rs DAP server: threads, call stack, disassembly with instruction breakpoints, console."
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+aurix-dap-client = { path = "../crates/dap-client" }
+aurix-debug-model = { path = "../crates/debug-model" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
+gpui = { path = "../../zed/crates/gpui" }
+gpui_platform = { path = "../../zed/crates/gpui_platform" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+codegen-units = 16
+
+[profile.dev.build-override]
+codegen-units = 16
+
+# Zed's patches that GPUI's dependency tree needs (see the Zed workspace's Cargo.toml).
+[patch.crates-io]
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
+khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }

@@ -2,7 +2,7 @@
 //! `dap-server --port`).
 //!
 //! A reader thread takes the adapter's messages: a response goes to the request waiting for it,
-//! an event to [`DapClient::events`]. Requests block the calling thread until their response or
+//! an event to [`DapClient::next_event`]. Requests block the calling thread until their response or
 //! a timeout; no async runtime is involved, so any UI (a GPUI background task, a CLI) can use
 //! the client. Requests from the adapter to the client (`runInTerminal`, `startDebugging`) are
 //! answered as not supported.
@@ -73,7 +73,8 @@ pub struct DapClient {
     writer: Arc<Mutex<TcpStream>>,
     seq: Arc<AtomicI64>,
     pending: Pending,
-    events: Receiver<Event>,
+    /// Behind a lock so that the client can be shared between threads (a UI's tasks).
+    events: Mutex<Receiver<Event>>,
     _reader: JoinHandle<()>,
 }
 
@@ -181,14 +182,28 @@ impl DapClient {
             writer,
             seq,
             pending,
-            events,
+            events: Mutex::new(events),
             _reader: reader,
         })
     }
 
-    /// The adapter's events, in the order they came.
-    pub fn events(&self) -> &Receiver<Event> {
-        &self.events
+    /// The adapter's next event, waiting at most `timeout`. Events come in the order the adapter
+    /// sent them; `None` when none came in time or the connection is closed.
+    pub fn next_event(&self, timeout: Duration) -> Option<Event> {
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .recv_timeout(timeout)
+            .ok()
+    }
+
+    /// The adapter's next event if one is waiting.
+    pub fn try_event(&self) -> Option<Event> {
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .try_recv()
+            .ok()
     }
 
     /// Sends `command` with `arguments` and waits for its response; returns the response body.
@@ -309,6 +324,12 @@ mod tests {
     }
 
     #[test]
+    fn the_client_can_be_shared_between_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<DapClient>();
+    }
+
+    #[test]
     fn requests_get_their_responses_and_events_come_on_the_channel() {
         let client = DapClient::connect(adapter()).unwrap();
         let threads = client
@@ -318,10 +339,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(threads.threads[0].name, "0-TC275");
-        let event = client
-            .events()
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap();
+        let event = client.next_event(Duration::from_secs(5)).unwrap();
         assert_eq!(event.event, "probe-rs-rtt-data");
         assert_eq!(event.body["data"], "hi\n");
 
