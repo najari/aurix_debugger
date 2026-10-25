@@ -5,17 +5,201 @@
 //! by `<attach>.trace` next to the attach file (`id = name` a line). Freeze keeps the view as
 //! it is while the trace is read on; Clear forgets what was read.
 
-use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 
 use aurix_debug_model::protocol::RttData;
 use aurix_debug_model::sw_trace::{Kind, Names, SwTrace, binary_bytes};
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{AnyElement, Context, div, prelude::*, px, uniform_list};
 
 use super::{Debugger, button, color, hsla};
 
-/// How many events the list shows.
-const SHOWN: usize = 300;
+/// How far back a row looks for the event before on its core.
+const LOOK_BACK: usize = 500;
+
+fn cell(text: String, width: f32, colour: u32) -> gpui::Div {
+    div()
+        .w(px(width))
+        .flex_none()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_color(hsla(colour))
+        .child(text)
+}
+
+/// Row `ix` of the event list (0 the newest): time, core, id, kind, arg, span, and the time
+/// since the event before on the same core.
+fn event_row(trace: &SwTrace, ix: usize, several: bool) -> AnyElement {
+    let events = trace.events();
+    let Some(at) = events.len().checked_sub(ix + 1) else {
+        return div().into_any_element();
+    };
+    let event = events[at];
+    let delta = (at.saturating_sub(LOOK_BACK)..at)
+        .rev()
+        .find(|i| events[*i].core == event.core)
+        .map(|i| event.time - events[i].time);
+    let kind = trace.kind(&event);
+    let (word, colour) = match kind {
+        Kind::Begin => ("begin", color::TEXT),
+        Kind::End => ("end", color::MUTED),
+        Kind::Event => ("event", color::TEXT),
+        Kind::Dropped => ("dropped", color::CHANGED),
+    };
+    div()
+        .flex()
+        .font_family("Consolas")
+        .text_xs()
+        .child(cell(
+            trace.format(trace.since_start(event.time)),
+            96.,
+            color::MUTED,
+        ))
+        .when(several, |this| {
+            this.child(cell(
+                event.core.map_or("CPU".into(), |c| format!("CPU{c}")),
+                44.,
+                color::MUTED,
+            ))
+        })
+        .child(cell(trace.names().name(event.id), 110., colour))
+        .child(cell(word.into(), 56., colour))
+        .child(cell(
+            if kind == Kind::End {
+                String::new()
+            } else {
+                event.arg.to_string()
+            },
+            52.,
+            colour,
+        ))
+        .child(cell(
+            event.span.map(|s| trace.format(s)).unwrap_or_default(),
+            80.,
+            color::ACCENT,
+        ))
+        .child(cell(
+            delta.map(|d| trace.format(d)).unwrap_or_default(),
+            80.,
+            color::MUTED,
+        ))
+        .into_any_element()
+}
+/// The chart's windows: name and nanoseconds.
+const WINDOWS: [(&str, u64); 4] = [
+    ("10 ms", 10_000_000),
+    ("100 ms", 100_000_000),
+    ("1 s", 1_000_000_000),
+    ("5 s", 5_000_000_000),
+];
+const WINDOW_IDS: [&str; 4] = [
+    "sw-trace-10ms",
+    "sw-trace-100ms",
+    "sw-trace-1s",
+    "sw-trace-5s",
+];
+/// The chart's plot width in pixels: a column a pixel.
+const CHART_WIDTH: u32 = 760;
+
+/// The chart of `trace`'s last `window` nanoseconds: a row per core and id, spans as bars,
+/// single records as ticks, the time under it.
+fn render_chart(trace: &SwTrace, window_ns: u64, several: bool) -> AnyElement {
+    let ticks = (window_ns as u128 * trace.tick_hz() as u128 / 1_000_000_000) as u64;
+    let Some(chart) = trace.chart(ticks, CHART_WIDTH) else {
+        return div().into_any_element();
+    };
+    let label = |row: &aurix_debug_model::sw_trace::ChartRow| match (several, row.core) {
+        (true, Some(core)) => format!("CPU{core} {}", row.name),
+        _ => row.name.clone(),
+    };
+    let rows = chart.rows.iter().map(|row| {
+        let mut plot = div()
+            .relative()
+            .w(px(CHART_WIDTH as f32))
+            .h(px(14.))
+            .flex_none()
+            .border_b_1()
+            .border_color(hsla(color::BORDER));
+        for (a, b) in &row.segments {
+            plot = plot.child(
+                div()
+                    .absolute()
+                    .left(px(*a as f32))
+                    .top(px(2.))
+                    .w(px((b - a) as f32))
+                    .h(px(10.))
+                    .bg(hsla(color::ACCENT)),
+            );
+        }
+        for c in &row.marks {
+            plot = plot.child(
+                div()
+                    .absolute()
+                    .left(px(*c as f32))
+                    .top(px(0.))
+                    .w(px(1.))
+                    .h(px(14.))
+                    .bg(hsla(color::TEXT)),
+            );
+        }
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(150.))
+                    .flex_none()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(hsla(color::TEXT))
+                    .child(label(row)),
+            )
+            .child(plot)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(hsla(color::MUTED))
+                    .child(if row.spans > 0 {
+                        format!("{} span(s)", row.spans)
+                    } else {
+                        format!("{} record(s)", row.marks.len())
+                    }),
+            )
+    });
+    // Five times under the plot, from the start of the window to its end.
+    let mut axis = div()
+        .relative()
+        .w(px(CHART_WIDTH as f32))
+        .h(px(14.))
+        .flex_none();
+    for i in 0..=4u32 {
+        let x = CHART_WIDTH * i / 4;
+        let time = chart.start + (chart.end - chart.start) * u64::from(i) / 4;
+        axis = axis.child(
+            div()
+                .absolute()
+                .left(px((x as f32 - if i == 4 { 60. } else { 0. }).max(0.)))
+                .text_xs()
+                .text_color(hsla(color::MUTED))
+                .child(trace.format(time)),
+        );
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .children(rows)
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .child(div().w(px(150.)).flex_none())
+                .child(axis),
+        )
+        .into_any_element()
+}
 
 impl Debugger {
     /// The names of the trace ids for `attach`: `<attach>.trace`, if there is one.
@@ -85,15 +269,6 @@ impl Debugger {
                     .to_string())
         );
 
-        let cell = |text: String, width: f32, colour| {
-            div()
-                .w(px(width))
-                .flex_none()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_color(hsla(colour))
-                .child(text)
-        };
         let spread = |s: &aurix_debug_model::sw_trace::Spread| {
             if s.count == 0 {
                 String::new()
@@ -144,16 +319,17 @@ impl Debugger {
                 .child(cell(spread(&s.span), 260., color::TEXT))
         });
 
-        // The latest events, newest first, with the time since the event before on its core.
-        let start = trace.events().len().saturating_sub(SHOWN);
-        let mut before: HashMap<Option<u64>, u64> = HashMap::new();
-        let mut lines = Vec::with_capacity(SHOWN);
-        for event in trace.events().iter().skip(start) {
-            let delta = before
-                .insert(event.core, event.time)
-                .map(|t| event.time - t);
-            lines.push((*event, delta));
-        }
+        // Every event kept, newest first, drawn only where the list shows (uniform_list).
+        let count = trace.events().len();
+        let events = uniform_list(
+            "sw-trace-events",
+            count,
+            cx.processor(move |this, range: Range<usize>, _window, _cx| {
+                let trace = this.sw_trace_frozen.as_ref().unwrap_or(&this.sw_trace);
+                range.map(|ix| event_row(trace, ix, several)).collect()
+            }),
+        )
+        .flex_1();
         let events_header = div()
             .flex()
             .text_xs()
@@ -167,51 +343,33 @@ impl Debugger {
             .child(cell("Arg".into(), 52., color::MUTED))
             .child(cell("Span".into(), 80., color::MUTED))
             .child(cell("After".into(), 80., color::MUTED));
-        let events = lines.into_iter().rev().map(|(event, delta)| {
-            let kind = trace.kind(&event);
-            let (word, colour) = match kind {
-                Kind::Begin => ("begin", color::TEXT),
-                Kind::End => ("end", color::MUTED),
-                Kind::Event => ("event", color::TEXT),
-                Kind::Dropped => ("dropped", color::CHANGED),
-            };
-            div()
-                .flex()
-                .font_family("Consolas")
-                .text_xs()
-                .child(cell(
-                    trace.format(trace.since_start(event.time)),
-                    96.,
-                    color::MUTED,
-                ))
-                .when(several, |this| {
-                    this.child(cell(core_name(event.core), 44., color::MUTED))
-                })
-                .child(cell(trace.names().name(event.id), 110., colour))
-                .child(cell(word.into(), 56., colour))
-                .child(cell(
-                    if kind == Kind::End {
-                        String::new()
-                    } else {
-                        event.arg.to_string()
-                    },
-                    52.,
-                    colour,
-                ))
-                .child(cell(
-                    event.span.map(|s| trace.format(s)).unwrap_or_default(),
-                    80.,
-                    color::ACCENT,
-                ))
-                .child(cell(
-                    delta.map(|d| trace.format(d)).unwrap_or_default(),
-                    80.,
-                    color::MUTED,
-                ))
-        });
 
         let empty = trace.total() == 0;
         let note = self.sw_trace_note.clone();
+        let window = self.sw_trace_window;
+        let chart = window
+            .filter(|_| !empty)
+            .map(|i| render_chart(trace, WINDOWS[i].1, several));
+        let mut views = div().flex().items_center().gap_1().child(button(
+            "sw-trace-list",
+            "List",
+            window.is_some(),
+            cx.listener(|this, _, _, cx| {
+                this.sw_trace_window = None;
+                cx.notify();
+            }),
+        ));
+        for (i, (name, _)) in WINDOWS.iter().enumerate() {
+            views = views.child(button(
+                WINDOW_IDS[i],
+                name,
+                window != Some(i),
+                cx.listener(move |this, _, _, cx| {
+                    this.sw_trace_window = Some(i);
+                    cx.notify();
+                }),
+            ));
+        }
         div()
             .flex()
             .flex_col()
@@ -247,32 +405,56 @@ impl Debugger {
                             cx.notify();
                         }),
                     ))
-                    .child(div().text_xs().text_color(hsla(color::MUTED)).child(summary))
+                    .child(views)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(hsla(color::MUTED))
+                            .child(summary),
+                    )
                     .when_some(note, |this, note| {
                         this.child(div().text_xs().text_color(hsla(color::CHANGED)).child(note))
                     }),
             )
-            .child(
-                div()
-                    .id("sw-trace-body")
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px_2()
-                    .when(empty, |this| {
-                        this.child(div().text_sm().text_color(hsla(color::MUTED)).child(
-                            "No records: the program writes aurix_trace.h records to an RTT channel \
-                             whose dataFormat is BinaryLE in the attach file (rttEnabled)",
-                        ))
-                    })
-                    .when(!empty, |this| {
-                        this.child(div().flex().flex_col().child(stats_header).children(stats))
-                            .child(div().flex().flex_col().child(events_header).children(events))
-                    }),
-            )
+            .when(empty, |this| {
+                this.child(div().px_2().text_sm().text_color(hsla(color::MUTED)).child(
+                    "No records: the program writes aurix_trace.h records to an RTT channel \
+                     whose dataFormat is BinaryLE in the attach file (rttEnabled)",
+                ))
+            })
+            .when_some(chart, |this, chart| {
+                this.child(
+                    div()
+                        .id("sw-trace-chart")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px_2()
+                        .child(chart),
+                )
+            })
+            // The list: the statistics, then the events filling the rest of the panel.
+            .when(!empty && window.is_none(), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .px_2()
+                        .pb_1()
+                        .child(stats_header)
+                        .children(stats),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .px_2()
+                        .child(events_header)
+                        .child(events),
+                )
+            })
             .into_any_element()
     }
 }

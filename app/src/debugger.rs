@@ -55,6 +55,8 @@ use panels::BottomTab;
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the adapter's events are taken.
 const EVENT_POLL: Duration = Duration::from_millis(30);
+/// How often the software trace redraws the window at most (its data comes every ~10 ms).
+const TRACE_REDRAW: Duration = Duration::from_millis(250);
 /// The console keeps at most this many lines.
 const MAX_CONSOLE_LINES: usize = 5_000;
 /// The same console line twice within this is shown once.
@@ -161,6 +163,10 @@ pub struct Debugger {
     sw_trace_note: Option<String>,
     /// What the tab shows while frozen (the trace is still read meanwhile).
     sw_trace_frozen: Option<aurix_debug_model::sw_trace::SwTrace>,
+    /// The chart's window (an index of the SW Trace tab's windows), or the list.
+    sw_trace_window: Option<usize>,
+    /// When trace data last redrew the window.
+    sw_trace_drawn: Option<Instant>,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -233,6 +239,8 @@ impl Debugger {
             sw_trace_names: None,
             sw_trace_note: None,
             sw_trace_frozen: None,
+            sw_trace_window: None,
+            sw_trace_drawn: None,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
@@ -427,11 +435,23 @@ impl Debugger {
                             return false;
                         };
                         let mut any = false;
+                        let mut trace = false;
                         while let Some(event) = client.try_event() {
+                            // The software trace comes many times a second: it redraws at most
+                            // every TRACE_REDRAW, the rest at once.
+                            if this.is_sw_trace_event(&event) {
+                                trace = true;
+                            } else {
+                                any = true;
+                            }
                             this.handle_event(event, cx);
-                            any = true;
                         }
-                        if any {
+                        let trace_due = trace
+                            && this
+                                .sw_trace_drawn
+                                .is_none_or(|drawn| drawn.elapsed() >= TRACE_REDRAW);
+                        if any || trace_due {
+                            this.sw_trace_drawn = Some(Instant::now());
                             cx.notify();
                         }
                         true
@@ -443,6 +463,22 @@ impl Debugger {
             }
         })
         .detach();
+    }
+
+    /// Whether `event` is data of a binary RTT channel (the software trace).
+    fn is_sw_trace_event(&self, event: &Event) -> bool {
+        if event.event != RTT_DATA_EVENT {
+            return false;
+        }
+        let Some(channel) = event.body["channelNumber"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+        else {
+            return false;
+        };
+        self.rtt
+            .get((event.body["core"].as_u64(), channel))
+            .is_some_and(|c| c.data_format == "BinaryLE")
     }
 
     fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {

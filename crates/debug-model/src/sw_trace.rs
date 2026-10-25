@@ -17,8 +17,8 @@ pub const END_BIT: u16 = 0x8000;
 pub const ID_DROPPED: u16 = 0x7FFF;
 /// The STM clock of the TC27x as the demos run it.
 pub const DEFAULT_TICK_HZ: u64 = 100_000_000;
-/// How many events the list keeps.
-pub const KEEP: usize = 5000;
+/// How many events are kept (for the list and the chart): some seconds of a busy core.
+pub const KEEP: usize = 20_000;
 
 /// The bytes of a binary RTT channel's data as probe-rs sends them: `0x0a0x00…`.
 pub fn binary_bytes(text: &str) -> Result<Vec<u8>, String> {
@@ -380,6 +380,112 @@ impl SwTrace {
     }
 }
 
+/// One row of the chart: an id on a core, its spans and single records in the window, in
+/// columns (`0..columns`) merged where they touch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChartRow {
+    pub core: Option<u64>,
+    pub id: u16,
+    pub name: String,
+    /// The spans, as column ranges `start..end` (at least one column wide).
+    pub segments: Vec<(u32, u32)>,
+    /// The records that are no span, as columns.
+    pub marks: Vec<u32>,
+    /// The spans that reach into the window (whole or not).
+    pub spans: usize,
+}
+
+/// The spans and records of the last `window` ticks, in `columns` columns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chart {
+    /// The window, in ticks since the first event read.
+    pub start: u64,
+    pub end: u64,
+    pub columns: u32,
+    pub rows: Vec<ChartRow>,
+}
+
+impl SwTrace {
+    /// The chart of the last `window` ticks before the last event, `columns` columns wide. A
+    /// span still open runs to the end of the window. `None` before the first event.
+    pub fn chart(&self, window: u64, columns: u32) -> Option<Chart> {
+        let last = self.events.back()?.time;
+        let window = window.max(1);
+        let columns = columns.max(1);
+        let from = last.saturating_sub(window);
+        let column = |time: u64| -> u32 {
+            let offset = time.saturating_sub(from).min(window);
+            ((offset as u128 * columns as u128) / window as u128) as u32
+        };
+        let mut rows: BTreeMap<(Option<u64>, u16), ChartRow> = self
+            .stats
+            .iter()
+            .map(|((core, id), _)| {
+                (
+                    (*core, *id),
+                    ChartRow {
+                        core: *core,
+                        id: *id,
+                        name: self.names.name(*id),
+                        segments: Vec::new(),
+                        marks: Vec::new(),
+                        spans: 0,
+                    },
+                )
+            })
+            .collect();
+        let add_span = |row: &mut ChartRow, begin: u64, end: u64| {
+            if end < from {
+                return;
+            }
+            let a = column(begin);
+            let b = column(end).max(a + 1).min(columns);
+            let a = a.min(b.saturating_sub(1));
+            row.spans += 1;
+            match row.segments.last_mut() {
+                Some(last) if a <= last.1 => last.1 = last.1.max(b),
+                _ => row.segments.push((a, b)),
+            }
+        };
+        for event in &self.events {
+            if event.id == ID_DROPPED {
+                continue;
+            }
+            let Some(row) = rows.get_mut(&(event.core, event.id)) else {
+                continue;
+            };
+            if let Some(span) = event.span {
+                add_span(row, event.time - span, event.time);
+            } else if !event.end
+                && event.time >= from
+                && self
+                    .stats
+                    .get(&(event.core, event.id))
+                    .is_some_and(|s| s.span.count == 0)
+            {
+                let c = column(event.time).min(columns - 1);
+                if row.marks.last() != Some(&c) {
+                    row.marks.push(c);
+                }
+            }
+        }
+        // Spans begun and not ended yet run to the end of the window.
+        for ((core, id), stats) in &self.stats {
+            if let (Some(begin), true) = (stats.open, stats.span.count > 0)
+                && let Some(row) = rows.get_mut(&(*core, *id))
+            {
+                add_span(row, begin, last);
+            }
+        }
+        Some(Chart {
+            start: self.since_start(from),
+            end: self.since_start(last),
+            columns,
+            rows: rows.into_values().collect(),
+        })
+    }
+}
+
 /// Nanoseconds as text, three significant digits or so.
 pub fn format_ns(ns: u64) -> String {
     let ns_f = ns as f64;
@@ -492,6 +598,45 @@ mod tests {
         assert_eq!(trace.total(), 0);
         assert_eq!(trace.received(Some(0), &next[3..]), 1);
         assert_eq!(trace.events()[0].arg, 7);
+    }
+
+    #[test]
+    fn a_chart_of_the_last_window() {
+        let mut trace = SwTrace::new(Names::parse("1 = task\n10 = isr\n20 = dispatch").unwrap());
+        let mut bytes = Vec::new();
+        // A task from 0 to 600, ISRs of 2 ticks every 100, a dispatch at 650, a task begun at
+        // 700 and not ended.
+        bytes.extend(record(0, 1, 0));
+        for t in (100..=500).step_by(100) {
+            bytes.extend(record(t, 10, 0));
+            bytes.extend(record(t + 2, 10 | END_BIT, 0));
+        }
+        bytes.extend(record(600, 1 | END_BIT, 0));
+        bytes.extend(record(650, 20, 1));
+        bytes.extend(record(700, 1, 0));
+        bytes.extend(record(1000, 10, 0));
+        bytes.extend(record(1002, 10 | END_BIT, 0));
+        trace.received(None, &bytes);
+
+        // The last 1000 ticks in 100 columns: a column is 10 ticks.
+        let chart = trace.chart(1000, 100).unwrap();
+        assert_eq!((chart.start, chart.end), (2, 1002));
+        let row = |name: &str| chart.rows.iter().find(|r| r.name == name).unwrap();
+        // The task from 0 (before the window, cut at its start) to 600, and the open one from
+        // 700 to the end.
+        assert_eq!(row("task").segments, [(0, 59), (69, 100)]);
+        assert_eq!(row("task").spans, 2);
+        // Six ISRs, each at least a column wide.
+        assert_eq!(
+            row("isr").segments,
+            [(9, 10), (19, 20), (29, 30), (39, 40), (49, 50), (99, 100)]
+        );
+        assert_eq!(row("dispatch").marks, [64]);
+        // A narrow chart merges what touches.
+        let narrow = trace.chart(1000, 2).unwrap();
+        let task = narrow.rows.iter().find(|r| r.name == "task").unwrap();
+        assert_eq!(task.segments, [(0, 2)]);
+        assert!(SwTrace::default().chart(10, 10).is_none());
     }
 
     #[test]
