@@ -1,8 +1,10 @@
 //! The Cache tab: per core the program cache and the data cache (or data read buffer) with
 //! their sizes and whether they are on, the segments cached for code and for data, read every
 //! [`INTERVAL_MS`] while the tab or the memory tab is shown (the memory tab says when the
-//! memory it shows may be cached). Measure counts the hits and misses with the performance
-//! counters (`CCTRL` set for two reads, then put back): the only writes of the tab.
+//! memory it shows may be cached). Measure counts with the performance counters,
+//! TRACE32's BenchMarkCounter: the cache hits and misses, then the dispatch stalls, then the
+//! branches and memory stalls, and instructions per cycle (`CCTRL` set for two reads each, then
+//! put back): the only writes of the tab.
 //!
 //! The lines in the caches are not shown: their tags can be read only with the cache off and
 //! mapped (`MTU_MEMMAP`), and their format is not public (`aurix_debug_model::cache`).
@@ -80,8 +82,11 @@ impl Debugger {
                         .into_iter()
                         .flatten()
                         .filter_map(|row| {
-                            let (program, data) = row.measured?;
-                            Some(format!("CPU{}: {program}; {data}", row.core))
+                            let m = row.measured?;
+                            Some(format!(
+                                "CPU{}: {}; {}; {}",
+                                row.core, m.program, m.data, m.bench
+                            ))
                         })
                         .collect::<Vec<_>>();
                     for line in summary {
@@ -163,13 +168,20 @@ impl Debugger {
                             .child(cell(row.code_segments, 96., color::TEXT))
                             .child(cell(row.data_segments, 96., color::TEXT)),
                     )
-                    .when_some(row.measured, |this, (program, data)| {
+                    .when_some(row.measured, |this, m| {
                         this.child(
                             div()
                                 .pl(px(112.))
                                 .text_xs()
                                 .text_color(hsla(color::ACCENT))
-                                .child(format!("{program}; {data}")),
+                                .child(format!("{}; {}", m.program, m.data)),
+                        )
+                        .child(
+                            div()
+                                .pl(px(112.))
+                                .text_xs()
+                                .text_color(hsla(color::TEXT))
+                                .child(m.bench),
                         )
                     })
             }
@@ -209,7 +221,7 @@ impl Debugger {
                     .py_0p5()
                     .child(button(
                         "cache-measure",
-                        if measuring { "Measuring…" } else { "Measure hits" },
+                        if measuring { "Measuring…" } else { "Measure" },
                         !measuring,
                         cx.listener(|this, _, _, cx| {
                             this.measure_cache(cx);
@@ -221,7 +233,7 @@ impl Debugger {
                             .text_xs()
                             .text_color(hsla(color::MUTED))
                             .child(format!(
-                                "PCON0/2, DCON0/2, PMA0/1 read every {INTERVAL_MS} ms; Measure counts hits and misses between reads with CCTRL, then puts CCTRL back"
+                                "PCON0/2, DCON0/2, PMA0/1 read every {INTERVAL_MS} ms; Measure counts four windows with CCTRL (cache hits, dispatch stalls, branches and memory stalls), then puts CCTRL back"
                             )),
                     )
                     .when_some(note, |this, note| {

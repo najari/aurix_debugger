@@ -206,18 +206,28 @@ pub struct CacheRow {
     /// The segments cacheable for code, for data.
     pub code_segments: String,
     pub data_segments: String,
-    /// The last measurement: program cache, data side.
-    pub measured: Option<(String, String)>,
+    /// The last measurement.
+    pub measured: Option<Measured>,
 }
 
-/// Where a measurement is.
+/// What a measurement found on a core.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Measured {
+    /// The program cache's hits.
+    pub program: String,
+    /// The data cache's (or read buffer's) hits.
+    pub data: String,
+    /// The benchmark counters: instructions per cycle, stalls, branches (TRACE32's
+    /// BenchMarkCounter).
+    pub bench: String,
+}
+
+/// Where a measurement is: the source group of [`SOURCES`] counted, and whether the next read
+/// is the end of its window (else its start).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Phase {
-    /// The program sources were written; the next read is the start.
-    ProgramStart,
-    ProgramEnd,
-    DataStart,
-    DataEnd,
+struct Phase {
+    step: usize,
+    end: bool,
 }
 
 /// A write of one CSFR word (`CCTRL`).
@@ -251,15 +261,17 @@ pub struct CacheView {
     /// `CCTRL` of each core before the measurement.
     saved: Vec<u32>,
     start: Vec<Counters>,
-    program: Vec<[u32; 5]>,
-    measured: Vec<Option<(String, String)>>,
+    /// Per source group counted so far, per core: cycles, instructions, M1–M3.
+    counted: Vec<Vec<[u32; 5]>>,
+    measured: Vec<Option<Measured>>,
     writes: Vec<CounterWrite>,
 }
 
-/// Sources of `CCTRL.M1`–`M3` (Table 5-17, 5-18): 1 the program cache (hit, miss, multi-issue
-/// on a TC1.6P), 2 the data side (hit, clean miss, dirty miss; DRB hit, miss on a TC1.6E).
-const PROGRAM: u32 = 1;
-const DATA: u32 = 2;
+/// Sources of `CCTRL.M1`–`M3` (Table 5-17, 5-18), in the order measured: 1 the program cache
+/// (hit, miss, multi-issue on a TC1.6P), 2 the data side (hit, clean miss, dirty miss; DRB hit,
+/// miss on a TC1.6E), 0 the dispatch stalls (integer, load-store, loop on a TC1.6P), 3 the
+/// branches and the program and data memory stalls.
+const SOURCES: [u32; 4] = [1, 2, 0, 3];
 
 fn cctrl_with(saved: u32, source: u32) -> u32 {
     (saved & !CCTRL_SOURCES) | CCTRL_CE | source << 2 | source << 5 | source << 8
@@ -277,6 +289,67 @@ fn percent(hits: u32, misses: u32) -> String {
     }
 }
 
+/// The share `part` is of `whole`, as `12.3%`.
+fn share(part: u32, whole: u32) -> String {
+    if whole == 0 {
+        "-".into()
+    } else {
+        format!("{:.1}%", part as f64 * 100.0 / whole as f64)
+    }
+}
+
+/// What the four windows counted on a core: `p` program cache, `d` data side, `s` dispatch
+/// stalls, `b` branches and memory stalls; each cycles, instructions, M1–M3.
+fn measured(kind: CoreKind, p: [u32; 5], d: [u32; 5], s: [u32; 5], b: [u32; 5]) -> Measured {
+    let program = format!(
+        "PCACHE {} in {} cycles, {} instructions",
+        percent(p[2], p[3]),
+        p[0],
+        p[1]
+    );
+    let data = match kind {
+        CoreKind::P => format!(
+            "DCACHE {}, {} dirty misses",
+            percent(d[2], d[3] + d[4]),
+            d[4]
+        ),
+        CoreKind::E => format!("DRB {}", percent(d[2], d[3])),
+    };
+    let ipc = if s[0] == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.2}", s[1] as f64 / s[0] as f64)
+    };
+    let dispatch = match kind {
+        CoreKind::P => format!(
+            "IP {}, LS {}, loop {}",
+            share(s[2], s[0]),
+            share(s[3], s[0]),
+            share(s[4], s[0])
+        ),
+        CoreKind::E => format!("IP {}, LS {}", share(s[2], s[0]), share(s[3], s[0])),
+    };
+    let multi = match kind {
+        CoreKind::P => format!(", multi-issue {} of cycles", share(p[4], p[0])),
+        CoreKind::E => String::new(),
+    };
+    let branches = if b[1] == 0 {
+        "-".to_string()
+    } else {
+        format!("{:.1}", b[2] as f64 * 100.0 / b[1] as f64)
+    };
+    let bench = format!(
+        "IPC {ipc}{multi} · dispatch stalls {dispatch} · memory stalls program {}, data {} · {branches} branches per 100 instructions",
+        share(b[3], b[0]),
+        share(b[4], b[0])
+    );
+    Measured {
+        program,
+        data,
+        bench,
+    }
+}
+
 impl CacheView {
     pub fn new(caches: Caches) -> Self {
         let n = caches.cores.len();
@@ -288,7 +361,7 @@ impl CacheView {
             phase: None,
             saved: Vec::new(),
             start: Vec::new(),
-            program: Vec::new(),
+            counted: Vec::new(),
             measured: vec![None; n],
             writes: Vec::new(),
         }
@@ -411,8 +484,12 @@ impl CacheView {
             return false;
         }
         self.saved = saved;
-        self.write_sources(Some(PROGRAM));
-        self.phase = Some(Phase::ProgramStart);
+        self.counted.clear();
+        self.write_sources(Some(SOURCES[0]));
+        self.phase = Some(Phase {
+            step: 0,
+            end: false,
+        });
         true
     }
 
@@ -454,57 +531,38 @@ impl CacheView {
             self.error = Some("measurement stopped: a core could not be read".into());
             return;
         };
-        match phase {
-            Phase::ProgramStart | Phase::DataStart => {
-                self.start = now;
-                self.phase = Some(if phase == Phase::ProgramStart {
-                    Phase::ProgramEnd
-                } else {
-                    Phase::DataEnd
-                });
-            }
-            Phase::ProgramEnd => {
-                self.program = now
-                    .iter()
-                    .zip(&self.start)
-                    .map(|(now, start)| now.since(start))
-                    .collect();
-                self.write_sources(Some(DATA));
-                self.phase = Some(Phase::DataStart);
-            }
-            Phase::DataEnd => {
-                let data: Vec<[u32; 5]> = now
-                    .iter()
-                    .zip(&self.start)
-                    .map(|(now, start)| now.since(start))
-                    .collect();
-                self.measured = self
-                    .caches
-                    .cores
-                    .iter()
-                    .zip(self.program.iter().zip(&data))
-                    .map(|(core, (p, d))| {
-                        let program = format!(
-                            "PCACHE {} in {} cycles, {} instructions",
-                            percent(p[2], p[3]),
-                            p[0],
-                            p[1]
-                        );
-                        let data = match core.kind {
-                            CoreKind::P => format!(
-                                "DCACHE {}, {} dirty misses",
-                                percent(d[2], d[3] + d[4]),
-                                d[4]
-                            ),
-                            CoreKind::E => format!("DRB {}", percent(d[2], d[3])),
-                        };
-                        Some((program, data))
-                    })
-                    .collect();
-                self.write_sources(None);
-                self.phase = None;
-            }
+        if !phase.end {
+            self.start = now;
+            self.phase = Some(Phase { end: true, ..phase });
+            return;
         }
+        self.counted.push(
+            now.iter()
+                .zip(&self.start)
+                .map(|(now, start)| now.since(start))
+                .collect(),
+        );
+        let next = phase.step + 1;
+        if next < SOURCES.len() {
+            self.write_sources(Some(SOURCES[next]));
+            self.phase = Some(Phase {
+                step: next,
+                end: false,
+            });
+            return;
+        }
+        self.measured = self
+            .caches
+            .cores
+            .iter()
+            .enumerate()
+            .map(|(i, core)| {
+                let [p, d, s, b] = [0, 1, 2, 3].map(|k| self.counted[k][i]);
+                Some(measured(core.kind, p, d, s, b))
+            })
+            .collect();
+        self.write_sources(None);
+        self.phase = None;
     }
 
     pub fn rows(&self) -> Vec<Result<CacheRow, String>> {
@@ -688,22 +746,40 @@ mod tests {
         let (_, g2) = view.ranges();
         view.answered(g2, &board([[0x24A, 400, 200, 0, 0, 0]; 3], 2));
         view.answered(g2, &board([[0x24A, 500, 300, 30, 10, 0]; 3], 2));
+        // Then the dispatch stalls (source 0) and the branches and memory stalls (3).
+        let writes = view.take_writes();
+        assert_eq!(writes[2].value, 0x2);
+        let (_, g3) = view.ranges();
+        view.answered(g3, &board([[0x2, 600, 350, 0, 0, 0]; 3], 2));
+        view.answered(g3, &board([[0x2, 1600, 950, 100, 50, 0]; 3], 2));
+        assert_eq!(view.take_writes()[0].value, 0x36E);
+        let (_, g4) = view.ranges();
+        view.answered(g4, &board([[0x36E, 2000, 1000, 0, 0, 0]; 3], 2));
+        view.answered(g4, &board([[0x36E, 3000, 1500, 90, 20, 40]; 3], 2));
         let writes = view.take_writes();
         assert_eq!(writes[2].value, 0);
         assert!(!view.measuring());
         let rows: Vec<CacheRow> = view.rows().into_iter().map(Result::unwrap).collect();
-        let (program, data) = rows[1].measured.clone().unwrap();
+        let m = rows[1].measured.clone().unwrap();
         assert_eq!(
-            program,
+            m.program,
             "PCACHE 90.00% hits (900 hits, 100 misses) in 200 cycles, 100 instructions"
         );
         assert_eq!(
-            data,
+            m.data,
             "DCACHE 75.00% hits (30 hits, 10 misses), 0 dirty misses"
         );
         assert_eq!(
-            rows[0].measured.clone().unwrap().1,
-            "DRB 75.00% hits (30 hits, 10 misses)"
+            m.bench,
+            "IPC 0.60, multi-issue 0.0% of cycles · dispatch stalls IP 10.0%, LS 5.0%, loop 0.0% \
+             · memory stalls program 2.0%, data 4.0% · 18.0 branches per 100 instructions"
+        );
+        let e = rows[0].measured.clone().unwrap();
+        assert_eq!(e.data, "DRB 75.00% hits (30 hits, 10 misses)");
+        assert_eq!(
+            e.bench,
+            "IPC 0.60 · dispatch stalls IP 10.0%, LS 5.0% · memory stalls program 2.0%, data 4.0% \
+             · 18.0 branches per 100 instructions"
         );
         assert_eq!(writes[1].arguments().memory_reference, "0xf883fc00");
     }

@@ -70,7 +70,7 @@ TRACE32를 직접 돌려 본 수치(속도, 지연)는 없다. 속도 비교는 
 | 리셋 | 리셋을 지나 디버깅, BP·트레이스 설정 자동 복원, 워치독·STM 정지 | STM0로 리셋 감지, 트리거 유닛·SW BP 다시 쓰기, 계속 실행 또는 정지 | 비슷 |
 | 터미널·RTT | TERM 창(타깃 메모리 버퍼 등 자체 방식). SEGGER RTT는 설명서에 없음 | SEGGER RTT 출력·입력, 코어별 채널 | 우리가 나음 |
 | 트레이스 | 온칩(ED), MCDS로 최대 6코어의 프로그램·데이터·버스, 타임스탬프, AGBT 최대 8 GB, DAP 스트리밍, 트리거 언어 | MCDS 기록을 `.mcds`로 저장하는 명령만(이 어댑터가 맵 1을 막아 미검증), 해독은 Infineon 도구. 소프트웨어 트레이스(LOGGER 방식, `aurix_trace.h` + RTT 이진 채널, 앱 B SW Trace 탭, `aurix-run trace expect`)는 ED 없이 됨(2026-10-26) | 모자람 |
-| 성능 분석 | BenchMarkCounter, AUTOSAR 프로파일링, 코드 커버리지(MC/DC까지) | 성능 카운터(CCNT·ICNT·M1–M3), 두 주소 사이 구간 | 모자람 |
+| 성능 분석 | BenchMarkCounter, AUTOSAR 프로파일링, 코드 커버리지(MC/DC까지) | 성능 카운터(CCNT·ICNT·M1–M3), 두 주소 사이 구간. 앱 B Cache 탭의 Measure가 네 창(캐시 히트, 디스패치 정지, 분기·메모리 정지)으로 코어별 IPC·정지 비율·분기 수를 잰다(BenchMarkCounter에 해당). SW Trace로 태스크·ISR 실행 시간과 부하(2026-10-26). 커버리지 없음 | 모자람 |
 | OS 인식 | ORTI로 태스크·ISR·runnable, 멀티 OS, TC4x 하이퍼바이저 | ORTI 2.1·2.2 파일을 읽어 앱 B의 OS 탭에 객체 종류별 표(ENUM 이름, 바뀐 값 표시), 멈춤·실행 중 0.5초 갱신. 경로 `a.b`·`a[n]`·`p->b`·`*p`(probe-rs `d8954dd`, 2026-10-25)에 더해 C 식(인덱스에 식, `&`, 캐스트, `*(uint32 *)주소`, 연산자, `?:`)과 주소로 된 ENUM 항목(probe-rs `1839a18`, 2026-10-26). runnable·멀티 OS 없음 | 모자람 |
 | 자동화 | PRACTICE 스크립트(`.cmm`), 데모 스크립트, GUI 간 InterCom | `aurix-run` 명령 파일(attach, BP·조건, 실행 제어, 기대값, RTT, JUnit, 종료 코드 0·1·2, 2026-10-25; 변수 `let`·`read`, `if`·`while`·`repeat`, `check`, 2026-10-26), DAP·GDB 서버, Rust 크레이트 | 비슷(GUI 창·대화상자 조작은 없음) |
 | 다른 도구와 연결 | ETAS ETK·dSPACE·Vector VX1000과 포트 공유, XCP | 표준 DAP·GDB로 여러 IDE, TAS 서버를 여러 클라이언트가 함께 씀 | 비슷 |
