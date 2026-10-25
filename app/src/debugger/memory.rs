@@ -229,6 +229,16 @@ impl Debugger {
                         )
                     }),
             )
+            .when_some(self.cache_memory_note().filter(|_| shown), |this, note| {
+                this.child(
+                    div()
+                        .px_2()
+                        .pb_0p5()
+                        .text_xs()
+                        .text_color(hsla(color::CHANGED))
+                        .child(note),
+                )
+            })
             .when_some(self.memory_focus.filter(|_| shown), |this, at| {
                 let (note, colour) = match &self.memory_write_note {
                     Some(Ok(note)) => (note.clone(), color::ACCENT),

@@ -38,6 +38,7 @@ impl Debugger {
             self.watch_file = Some(watch_file);
             self.load_os_for(&attach);
             self.load_gtm_for(&attach);
+            self.load_cache_for(&attach);
         }
         if let Err(error) = recent::remember(&mut self.recent, &attach) {
             self.log(format!("recent attach files: {error}"));
@@ -72,6 +73,13 @@ impl Debugger {
         self.live_watch = LiveWatch::new(self.live_watch.expressions().to_vec());
         self.os_busy = false;
         self.gtm_busy = false;
+        self.cache_busy = false;
+        // A measurement of the old session cannot go on (its CCTRL writes stay as they were).
+        if let Some(view) = &mut self.cache
+            && view.measuring()
+        {
+            *view = aurix_debug_model::cache::CacheView::new(view.caches().clone());
+        }
         if let Some(start) = self.memory.start() {
             self.memory.show(start, self.memory.core());
         }

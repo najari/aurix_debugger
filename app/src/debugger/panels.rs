@@ -26,6 +26,8 @@ pub enum BottomTab {
     Os,
     /// The GTM's MCS channels.
     Gtm,
+    /// The cores' caches.
+    Cache,
 }
 
 /// The file the Live Watch expressions of `attach` are kept in.
@@ -104,6 +106,7 @@ impl Debugger {
                         this.read_memory(cx);
                         this.read_os(cx);
                         this.read_gtm(cx);
+                        this.read_cache(cx);
                         true
                     })
                     .unwrap_or(false);
@@ -157,7 +160,11 @@ impl Debugger {
                 .console_scroll
                 .scroll_to_item(self.console.len().saturating_sub(1), ScrollStrategy::Bottom),
             BottomTab::Rtt(_) => self.scroll_rtt_to_end(),
-            BottomTab::LiveWatch | BottomTab::Memory | BottomTab::Os | BottomTab::Gtm => {}
+            BottomTab::LiveWatch
+            | BottomTab::Memory
+            | BottomTab::Os
+            | BottomTab::Gtm
+            | BottomTab::Cache => {}
         }
     }
 
@@ -182,6 +189,7 @@ impl Debugger {
         ));
         tabs.push((BottomTab::Os, "OS".to_string()));
         tabs.push((BottomTab::Gtm, "GTM".to_string()));
+        tabs.push((BottomTab::Cache, "Cache".to_string()));
         let body = match self.bottom {
             BottomTab::Console => self.render_console(cx).into_any_element(),
             BottomTab::Rtt(key) => self.render_rtt(key, cx).into_any_element(),
@@ -189,6 +197,7 @@ impl Debugger {
             BottomTab::Memory => self.render_memory(cx),
             BottomTab::Os => self.render_os(cx),
             BottomTab::Gtm => self.render_gtm(cx),
+            BottomTab::Cache => self.render_cache(cx),
         };
         div()
             .flex()

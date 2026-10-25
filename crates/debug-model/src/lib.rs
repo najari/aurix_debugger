@@ -20,8 +20,10 @@
 //! - [`orti`]: ORTI files and the OS view (tasks, ISRs) built on them.
 //! - [`path_expr`]: the path expressions the server reads (`a.b`, `a[n]`, `p->b`, `*p`).
 //! - [`gtm`]: the GTM's MCS channels and memory, their instructions as text, the GTM view.
+//! - [`cache`]: the cores' caches, the segments they cache, their hit and miss counts.
 
 pub mod breakpoints;
+pub mod cache;
 pub mod disassembly;
 pub mod gtm;
 pub mod live_watch;

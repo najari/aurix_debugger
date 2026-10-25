@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 use crate::source::{SourceFile, SourceFiles};
 
 mod breakpoint_edit;
+mod cache;
 mod connect;
 mod gtm;
 mod memory;
@@ -148,6 +149,10 @@ pub struct Debugger {
     gtm: Option<aurix_debug_model::gtm::GtmView>,
     /// A read of the MCS channels is under way.
     gtm_busy: bool,
+    /// The cores' caches, for a chip whose caches are known.
+    cache: Option<aurix_debug_model::cache::CacheView>,
+    /// A read of the cache registers is under way.
+    cache_busy: bool,
     bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
@@ -214,6 +219,8 @@ impl Debugger {
             os_busy: false,
             gtm: None,
             gtm_busy: false,
+            cache: None,
+            cache_busy: false,
             bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
