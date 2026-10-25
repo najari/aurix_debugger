@@ -65,6 +65,7 @@ server is asked anything.
 | `server <host>:<port>` | The server (default `127.0.0.1:50000`), before `attach` |
 | `attach <attach.json>` | initialize, attach, configurationDone (the cores are left as they are). An attach file that turns flashing on is refused |
 | `break <file>:<line> [if <condition>] [hit <count>] [log <message>]` | A source breakpoint, with the probe-rs conditions (`v == 3 && k != 0`, `3`, `>= 3`, `% 4`) |
+| `unbreak <file>:<line>` | Removes that source breakpoint (the file's others stay) |
 | `break-at <address>[@core]` | An instruction breakpoint |
 | `watch <variable> read\|write\|access [if …] [hit …]` | A data breakpoint (needs a halted core for the variable's frame) |
 | `continue [core\|all]`, `pause [core\|all]` | Without a core: the core that stopped last, else every core |
@@ -87,7 +88,9 @@ and `data_breakpoint` (flash demo), `rtt_echo` (RTT test program on CPU0 and CPU
 probe-rs fork `149db65`), and `orti_paths` (the ORTI demo `zed/aurix_tcf_demo/build_orti.ps1`,
 RAM only): `expect` and `expect live` on paths such as `OsTcb[1].prio` and
 `OsRunningTcb->state`, and a breakpoint for one task, `if OsRunningTcb->prio == 2` (probe-rs fork
-`d8954dd`).
+`d8954dd`), and `step_over_loop` (flash demo): step over through a `for` loop whose condition
+sits after the body must stop in the next iteration (before probe-rs fork `c5d7411` it ran to the
+end of the loop).
 
 ```text
 cargo test

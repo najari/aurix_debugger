@@ -389,11 +389,19 @@ TRACE32 갭 보완 개발지시서의 WP-3이다. ORTI 파일이 적은 C 경로
 | T-O5 실행 중 | 표가 0.5초마다 바뀜. `aurix-run script/examples/orti_paths.aurix` 15/15(경로 `expect`·`expect live`, `OsRunningTcb->prio == 2` 태스크 BP) |
 | T-O6 ORTI 없음·깨진 ORTI | 없으면 "No ORTI file", 깨지면 "line 2: `0x1G` is not a number"(콘솔에도). 두 경우 모두 attach, Pause, 콜스택, 변수, step 정상 |
 
-회귀: probe-rs 바이너리 테스트 235개, lib 566개, probe-rs-debug, 공통 크레이트(debug-model 32개), 앱 9개, clippy(mcd 있고 없고). 실제 AUTOSAR OS가 낸 ORTI 파일로는 아직 시험하지 못했다. T-O6 중 Pause 직후의 Step Over 한 번이 다른 태스크의 같은 함수(66 → 67번 줄, task 2 → 0)에서 멈췄다. ORTI 없이 생긴 일이라 이번 변경과 상관없고, 루프 안 step over의 기존 동작으로 보인다.
+회귀: probe-rs 바이너리 테스트 235개, lib 566개, probe-rs-debug, 공통 크레이트(debug-model 32개), 앱 9개, clippy(mcd 있고 없고). 실제 AUTOSAR OS가 낸 ORTI 파일로는 아직 시험하지 못했다. T-O6 중 Pause 직후의 Step Over 한 번이 다른 태스크의 같은 함수(66 → 67번 줄, task 2 → 0)에서 멈췄다. ORTI와는 상관없는 Step Over의 문제였고, 아래 "Step Over와 루프"에서 고쳤다.
 
 ### 속도: 어댑터 클럭 (probe-rs `86680be`)
 
 TRACE32 갭 보완 개발지시서의 WP-4다. 메모리 19.4 KiB/s는 TAS 연결이나 MCD 경로가 아니라 DAS JTAG 어댑터의 클럭(TAS 서버 기본 400 kHz)이 한계였다. TAS 프로브가 probe-rs의 `speed`(DAP attach의 `"speed"`, kHz)로 클럭을 정하고 끝날 때 되돌리게 했고, 예제 attach 파일, Zed 시나리오(`zed/aurix_tcf_demo/debug.json`), VS Code 설정에 `"speed": 6000`을 넣었다. 6 MHz에서 메모리 131 KiB/s, DAP stepIn·next·stepOut 150 ms대 → 38–49 ms, continue → BP 121 → 42 ms, 메모리 보기 4 KiB 264 → 45 ms, Live Watch(전역 2개 × 세 코어) 115 → 30 ms(중앙값, 각 20회, 공통 크레이트 예제 `dap_measure`). 6 MHz에서 `hw_smoke` 16/16, `aurix-run` 보드 스크립트 6개가 모두 통과했다. 경로별 전체 표는 [PRD](PROBE_RS_TRICORE_PRD.md)의 성능 측정에 있다. Zed와 VS Code 화면에서는 이번에 확인하지 않았다(같은 DAP `speed` 필드를 보낸다).
+
+### Step Over와 루프 (probe-rs `c5d7411`, `ab20e71`)
+
+Step Over는 현재 PC보다 주소가 큰 다음 문장에 하드웨어 BP를 걸고 실행했다(업스트림 probe-rs와 같음). 조건이 본문 뒤에 놓인 루프에서는 조건에서 본문으로 되돌아가는 분기를 따라가지 못해, 루프가 끝날 때까지 또는 같은 함수의 다른 호출에서 멈췄다. 플래시 데모 `accumulate()`의 `for (i = 0; i < 4; i++)`에서 조건(i = 1)에서 Step Over하면 33번 줄(i = 4)로 건너뛰었다. T-O6에서 다른 태스크에서 멈춘 것도 같은 원인이다.
+
+GDB의 `next`처럼 한 명령씩 실행해 처음 닿는 문장 시작에서 멈추게 했다. 호출(복귀 주소 레지스터가 방금 실행한 명령 바로 뒤를 가리킴)은 그 주소까지 BP로 실행하고, 200 명령 안에 문장에 닿지 않으면 예전 방식으로 이어 간다. 이제 조건에서 32번 줄(i = 1)로 돌아오고, ORTI 데모의 태스크 루프에서 Pause 뒤 Step Over는 같은 태스크에서 루프 머리(64번 줄)로 간다(세 번 반복 확인). 회귀 스크립트 `script/examples/step_over_loop.aurix` 5/5. DAP next는 6 MHz에서 48 → 65 ms(중앙값)로 늘었다. `aurix-run`에 BP를 지우는 `unbreak <file>:<line>`을 더했다.
+
+함께 400 kHz에서 step이 10월 24일보다 느려진 원인도 찾았다. 그 뒤 상태 확인이 다섯 단어가 됐고 step마다 트리거 유닛 8개를 다시 쓴다. 유닛 쓰기를 한 요청으로 묶어 단일 step이 400 kHz 41.5 → 37.5 ms, 6 MHz 10.3 → 9.0 ms가 됐다. 데이터 BP 하드웨어 시험 `watch_step`, `hw_smoke` 16/16, 보드 스크립트 7개 모두 통과.
 
 ## 그 밖의 관찰
 
@@ -419,7 +427,8 @@ TRACE32 갭 보완 개발지시서의 WP-4다. 메모리 19.4 KiB/s는 TAS 연�
 14. ~~조건·횟수 BP와 로그 지점~~ 보드에서 확인(probe-rs `c18738d`, 앱 B). VS Code 화면 확인은 남음
 15. ~~ORTI 태스크 보기~~ 보드에서 확인(probe-rs `d8954dd`, 앱 B OS 탭). 실제 AUTOSAR OS의 ORTI 파일 시험은 남음
 16. ~~속도(어댑터 클럭)~~ 6 MHz 기본, 보드 회귀 통과(probe-rs `86680be`). 더 빠른 어댑터는 남음
-17. 크레이트·앱 라이선스 결정
+17. ~~Step Over가 루프를 건너뜀~~ 고침(probe-rs `c5d7411`), 보드 스크립트로 확인
+18. 크레이트·앱 라이선스 결정
 
 ## 출처
 

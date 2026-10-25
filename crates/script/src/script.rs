@@ -63,6 +63,11 @@ pub enum Command {
         line: u64,
         settings: BreakpointSettings,
     },
+    /// Removes the source breakpoint of a `break` before it.
+    Unbreak {
+        path: String,
+        line: u64,
+    },
     /// An instruction breakpoint: the address and the core suffix as written.
     BreakAt(String),
     Watch {
@@ -398,8 +403,10 @@ fn parse_command(text: &str) -> Result<Command, String> {
             }
             Ok(Command::Attach(path.trim_matches('"').to_string()))
         }
-        "break" => {
-            let place = args.first().ok_or("`break` needs <file>:<line>")?;
+        "break" | "unbreak" => {
+            let place = args
+                .first()
+                .ok_or_else(|| format!("`{keyword}` needs <file>:<line>"))?;
             let (path, line) = place
                 .rsplit_once(':')
                 .ok_or_else(|| format!("`{place}` is not <file>:<line>"))?;
@@ -408,6 +415,13 @@ fn parse_command(text: &str) -> Result<Command, String> {
                 .map_err(|_| format!("`{line}` is not a line number"))?;
             if path.is_empty() || line == 0 {
                 return Err(format!("`{place}` is not <file>:<line>"));
+            }
+            if keyword == "unbreak" {
+                no_more(1)?;
+                return Ok(Command::Unbreak {
+                    path: path.to_string(),
+                    line,
+                });
             }
             Ok(Command::Break {
                 path: path.to_string(),
@@ -773,5 +787,20 @@ mod tests {
         );
         let error = Script::parse("attach ${AURIX_NO_SUCH_VARIABLE_42}", &vars).unwrap_err();
         assert!(error.message.contains("--set"), "{error}");
+    }
+
+    #[test]
+    fn unbreak_names_one_line() {
+        let vars = HashMap::new();
+        let script = Script::parse("attach a.json\nunbreak C:/src/demo.c:32\n", &vars).unwrap();
+        assert_eq!(
+            script.lines[1].command,
+            Command::Unbreak {
+                path: "C:/src/demo.c".into(),
+                line: 32
+            }
+        );
+        assert!(Script::parse("attach a.json\nunbreak C:/src/demo.c:32 if i == 0", &vars).is_err());
+        assert!(Script::parse("attach a.json\nunbreak demo.c", &vars).is_err());
     }
 }

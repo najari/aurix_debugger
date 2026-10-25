@@ -405,6 +405,7 @@ impl Session<'_> {
                 line,
                 settings,
             } => self.set_break(path, *line, settings.clone()),
+            Command::Unbreak { path, line } => self.remove_break(path, *line),
             Command::BreakAt(reference) => self.set_break_at(reference),
             Command::Watch {
                 name,
@@ -531,16 +532,7 @@ impl Session<'_> {
         line: u64,
         settings: BreakpointSettings,
     ) -> Result<Option<String>, Fail> {
-        let resolved = self.path(path);
-        // The debug information names the file by its full path.
-        let path = std::fs::canonicalize(&resolved)
-            .map(|p| {
-                p.display()
-                    .to_string()
-                    .trim_start_matches(r"\\?\")
-                    .to_string()
-            })
-            .unwrap_or_else(|_| resolved.display().to_string());
+        let path = self.source_path(path);
         self.source_breakpoints.set(&path, line, settings);
         let request = self.source_breakpoints.request(&path);
         let answer = self.request("setBreakpoints", serde_json::to_value(&request).unwrap())?;
@@ -561,6 +553,31 @@ impl Session<'_> {
         Ok(breakpoint["instructionReference"]
             .as_str()
             .map(|address| format!("at {address}")))
+    }
+
+    /// Removes a source breakpoint set before; the file's other breakpoints stay.
+    fn remove_break(&mut self, path: &str, line: u64) -> Result<Option<String>, Fail> {
+        let path = self.source_path(path);
+        if self.source_breakpoints.get(&path, line).is_none() {
+            return Err(Fail::Error(format!("no breakpoint at {path}:{line}")));
+        }
+        self.source_breakpoints.toggle(&path, line);
+        let request = self.source_breakpoints.request(&path);
+        self.request("setBreakpoints", serde_json::to_value(&request).unwrap())?;
+        Ok(None)
+    }
+
+    /// The full path of a source file named in the script, as the debug information names it.
+    fn source_path(&self, path: &str) -> String {
+        let resolved = self.path(path);
+        std::fs::canonicalize(&resolved)
+            .map(|p| {
+                p.display()
+                    .to_string()
+                    .trim_start_matches(r"\\?\")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| resolved.display().to_string())
     }
 
     fn set_break_at(&mut self, reference: &str) -> Result<Option<String>, Fail> {
