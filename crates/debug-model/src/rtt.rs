@@ -2,10 +2,28 @@
 //! ([`RttChannelConfig`]) and sends its data ([`RttData`]) only once the client answered with
 //! `rttWindowOpened`. In a session of several cores each core has its own channels, numbered from
 //! 0, and the events name the core.
+//!
+//! The down channels (input to the target) are announced as prompts ([`RttPrompt`]); a line
+//! goes to one with the debug console command `rtt write <channel> <text>` (probe-rs adds the
+//! line break). An up channel's tab sends to the down channel of its core with the same number,
+//! else to that core's first one.
 
 use std::collections::VecDeque;
 
-use crate::protocol::{RttChannelConfig, RttData, RttWindowOpenedArguments};
+use crate::protocol::{
+    ReplCommandArguments, RttChannelConfig, RttData, RttPrompt, RttWindowOpenedArguments,
+};
+
+/// What a line sent to the target looks like among the lines received.
+pub const SENT_MARK: &str = "» ";
+
+/// A down channel: its core (in a session of several cores), number and name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownChannel {
+    pub core: Option<u64>,
+    pub number: u32,
+    pub name: String,
+}
 
 /// The lines a channel keeps, at most (the oldest go first).
 pub const MAX_LINES: usize = 10_000;
@@ -49,9 +67,60 @@ impl RttChannel {
 #[derive(Clone, Debug, Default)]
 pub struct RttChannels {
     channels: Vec<RttChannel>,
+    down: Vec<DownChannel>,
 }
 
 impl RttChannels {
+    /// A down channel the adapter announced (prompts of other kinds are not RTT).
+    pub fn prompted(&mut self, prompt: RttPrompt) {
+        if prompt.prompt_kind != "rtt" {
+            return;
+        }
+        let channel = DownChannel {
+            core: prompt.core,
+            number: prompt.prompt_handle,
+            name: prompt.prompt_name,
+        };
+        match self
+            .down
+            .iter_mut()
+            .find(|d| d.core == channel.core && d.number == channel.number)
+        {
+            Some(known) => *known = channel,
+            None => self.down.push(channel),
+        }
+    }
+
+    /// The down channel the tab of up channel `key` sends to.
+    pub fn down_for(&self, key: ChannelKey) -> Option<&DownChannel> {
+        let of_core = || self.down.iter().filter(|d| d.core == key.0);
+        of_core()
+            .find(|d| d.number == key.1)
+            .or_else(|| of_core().next())
+    }
+
+    /// The command that sends `text` (one line) from the tab of up channel `key`, and notes it
+    /// among the tab's lines; none when the core has no down channel or the text is empty.
+    pub fn send(&mut self, key: ChannelKey, text: &str) -> Option<ReplCommandArguments> {
+        let text = text.lines().next().unwrap_or_default().trim_end();
+        if text.is_empty() {
+            return None;
+        }
+        let down = self.down_for(key)?.clone();
+        if let Some(channel) = self.channels.iter_mut().find(|c| c.key() == key) {
+            channel.lines.push_back(format!("{SENT_MARK}{text}"));
+            while channel.lines.len() > MAX_LINES {
+                channel.lines.pop_front();
+                channel.dropped += 1;
+            }
+        }
+        Some(ReplCommandArguments {
+            expression: format!("rtt write {} {text}", down.number),
+            context: "repl".into(),
+            core: down.core,
+        })
+    }
+
     pub fn channels(&self) -> &[RttChannel] {
         &self.channels
     }
@@ -158,6 +227,41 @@ mod tests {
         let core0 = rtt.get((Some(0), 0)).unwrap();
         assert!(core0.lines.is_empty());
         assert_eq!(core0.dropped, 2);
+    }
+
+    fn prompt(core: Option<u64>, number: u32, kind: &str) -> RttPrompt {
+        RttPrompt {
+            prompt_kind: kind.into(),
+            prompt_name: "Input".into(),
+            prompt_handle: number,
+            core,
+        }
+    }
+
+    #[test]
+    fn a_line_goes_to_the_down_channel_of_the_tabs_core() {
+        let mut rtt = RttChannels::default();
+        rtt.announced(config(Some(0)));
+        rtt.announced(config(Some(1)));
+        // Not RTT: ignored.
+        rtt.prompted(prompt(Some(0), 0, "other"));
+        assert!(rtt.send((Some(0), 0), "hello").is_none());
+
+        rtt.prompted(prompt(Some(1), 0, "rtt"));
+        // Core 0 has no down channel; core 1 has.
+        assert!(rtt.down_for((Some(0), 0)).is_none());
+        assert!(rtt.send((Some(0), 0), "hello").is_none());
+        let command = rtt.send((Some(1), 0), "hello world\nsecond").unwrap();
+        assert_eq!(command.expression, "rtt write 0 hello world");
+        assert_eq!((command.context.as_str(), command.core), ("repl", Some(1)));
+        let lines = &rtt.get((Some(1), 0)).unwrap().lines;
+        assert_eq!(lines.back().unwrap(), "» hello world");
+        assert!(rtt.send((Some(1), 0), "  ").is_none());
+
+        // Another number: the core's first down channel.
+        rtt.prompted(prompt(Some(1), 2, "rtt"));
+        assert_eq!(rtt.down_for((Some(1), 5)).unwrap().number, 0);
+        assert_eq!(rtt.down_for((Some(1), 2)).unwrap().number, 2);
     }
 
     #[test]

@@ -13,8 +13,8 @@ use aurix_dap_client::{DapClient, Event};
 use aurix_debug_model::breakpoints::InstructionBreakpoints;
 use aurix_debug_model::disassembly::{BEFORE, COUNT, DisassemblyWindow, MORE, Side, is_filler};
 use aurix_debug_model::protocol::{
-    DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RttChannelConfig, RttData,
-    RttWindowOpened,
+    DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RTT_PROMPT_EVENT,
+    RttChannelConfig, RttData, RttPrompt, RttWindowOpened,
 };
 use aurix_debug_model::reference::parse_address;
 use aurix_debug_model::rtt::RttChannels;
@@ -111,6 +111,10 @@ pub struct Debugger {
     variables: Variables,
     rtt: RttChannels,
     rtt_scroll: UniformListScrollHandle,
+    /// Where a line for the shown RTT tab's down channel is typed.
+    rtt_input: Entity<TextInput>,
+    /// Why the last line was not sent.
+    rtt_error: Option<String>,
     live_watch: LiveWatch,
     /// Where a Live Watch expression is typed.
     watch_input: Entity<TextInput>,
@@ -172,6 +176,8 @@ impl Debugger {
             variables: Variables::default(),
             rtt: RttChannels::default(),
             rtt_scroll: UniformListScrollHandle::new(),
+            rtt_input: cx.new(|cx| TextInput::new("A line for the target, Enter", cx)),
+            rtt_error: None,
             live_watch: LiveWatch::default(),
             watch_input: cx
                 .new(|cx| TextInput::new("Add an expression (a global variable), Enter", cx)),
@@ -202,6 +208,11 @@ impl Debugger {
         .detach();
         cx.subscribe(&this.memory_input, |this, _, Submitted(text), cx| {
             this.memory_submitted(text);
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&this.rtt_input, |this, _, Submitted(text), cx| {
+            this.rtt_send(text, cx);
             cx.notify();
         })
         .detach();
@@ -458,6 +469,19 @@ impl Debugger {
                             this.log(format!("rttWindowOpened: {error}"));
                         }
                     });
+                }
+            }
+            RTT_PROMPT_EVENT => {
+                if let Ok(prompt) = serde_json::from_value::<RttPrompt>(event.body) {
+                    let core = prompt
+                        .core
+                        .map(|core| format!("core {core} · "))
+                        .unwrap_or_default();
+                    self.log(format!(
+                        "RTT input [{core}{}: {}] opened",
+                        prompt.prompt_handle, prompt.prompt_name
+                    ));
+                    self.rtt.prompted(prompt);
                 }
             }
             RTT_DATA_EVENT => {

@@ -89,6 +89,43 @@ pub struct RttData {
     pub core: Option<u64>,
 }
 
+/// The event that announces an RTT down channel (input to the target).
+pub const RTT_PROMPT_EVENT: &str = "probe-rs-create-prompt";
+
+/// The body of a [`RTT_PROMPT_EVENT`]: the down channel's number is the handle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RttPrompt {
+    /// `rtt` for an RTT down channel.
+    pub prompt_kind: String,
+    #[serde(default)]
+    pub prompt_name: String,
+    pub prompt_handle: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<u64>,
+}
+
+/// Arguments of an `evaluate` request in the `repl` context: a probe-rs debug console command
+/// (`rtt write 0 hello`), on `core` in a session of several cores.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplCommandArguments {
+    pub expression: String,
+    pub context: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<u64>,
+}
+
+/// A probe-rs debug console command. Its answer's `result` is empty when the command did what
+/// it was asked, else the reason it did not (probe-rs answers with success either way).
+pub enum ReplCommand {}
+
+impl Request for ReplCommand {
+    const COMMAND: &'static str = "evaluate";
+    type Arguments = ReplCommandArguments;
+    type Response = dap_types::EvaluateResponse;
+}
+
 /// Arguments of a `disassemble` request with signed offsets: DAP allows a negative instruction
 /// offset (the instructions before the reference), `dap_types::DisassembleArguments` has it
 /// unsigned.

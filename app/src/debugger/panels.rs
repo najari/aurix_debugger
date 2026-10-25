@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use aurix_debug_model::live_watch::INTERVAL_MS;
-use aurix_debug_model::protocol::LiveWatch as LiveWatchRequest;
+use aurix_debug_model::protocol::{LiveWatch as LiveWatchRequest, ReplCommand};
 use aurix_debug_model::rtt::ChannelKey;
 use gpui::{AnyElement, Context, ScrollStrategy, SharedString, div, prelude::*, px, uniform_list};
 
@@ -107,6 +107,30 @@ impl Debugger {
             }
         })
         .detach();
+    }
+
+    /// Sends a line to the down channel of the shown RTT tab's core.
+    pub(super) fn rtt_send(&mut self, text: &str, cx: &mut Context<Self>) {
+        let BottomTab::Rtt(key) = self.bottom else {
+            return;
+        };
+        let Some(command) = self.rtt.send(key, text) else {
+            return;
+        };
+        self.rtt_error = None;
+        self.scroll_rtt_to_end();
+        self.request::<ReplCommand>(command, cx, |this, result, _| {
+            // probe-rs answers with success either way: a result is why it did not write.
+            let error = match result {
+                Ok(response) if response.result.is_empty() => None,
+                Ok(response) => Some(response.result),
+                Err(error) => Some(error),
+            };
+            if let Some(error) = &error {
+                this.log(format!("rtt write: {error}"));
+            }
+            this.rtt_error = error;
+        });
     }
 
     pub(super) fn scroll_rtt_to_end(&mut self) {
@@ -262,6 +286,28 @@ impl Debugger {
                 .track_scroll(&self.rtt_scroll)
                 .flex_1(),
             )
+            .when_some(self.rtt.down_for(key).cloned(), |this, down| {
+                let target = match down.core {
+                    Some(core) => format!("to core {core} · {}: {}", down.number, down.name),
+                    None => format!("to {}: {}", down.number, down.name),
+                };
+                let (note, colour) = match &self.rtt_error {
+                    Some(error) => (error.clone(), color::CHANGED),
+                    None => (target, color::MUTED),
+                };
+                this.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .py_0p5()
+                        .border_t_1()
+                        .border_color(hsla(color::BORDER))
+                        .child(div().w(px(420.)).child(self.rtt_input.clone()))
+                        .child(div().text_xs().text_color(hsla(colour)).child(note)),
+                )
+            })
     }
 
     fn render_live_watch(&mut self, cx: &mut Context<Self>) -> AnyElement {

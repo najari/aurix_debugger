@@ -230,7 +230,7 @@ Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그�
 
 작업 중 고친 것: 바깥 프레임의 PC 표시(모델), 실행 중 스레드에 `stackTrace`를 보내던 것, 앞 스레드의 디스어셈블리가 남던 것, 콘솔에 같은 정지 메시지가 두 번 찍히던 것, 창을 닫을 때 `disconnect`가 없어 서버가 다음 세션을 받지 못하던 것(Windows에서는 앱 종료 훅이 돌지 않아 `on_window_should_close`에서 보냄).
 
-남은 것: RTT 입력 채널.
+남은 것: 없음(기능 목록 기준). 라이선스 결정이 남았다.
 
 ### 소스 보기, 소스 BP, 변수·레지스터
 
@@ -334,6 +334,14 @@ Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그�
 | 변수 | `g_result`(`0x7000A004`)의 `2E`를 `63`으로 → 한 명령 진행 뒤 변수 패널 `g_result = 99` |
 | 플래시 | `0x8021C000`에 `00` → "is flash (program or data flash, UCBs): only RAM is written", 서버로 보내지 않음, 내용 그대로 |
 
+### RTT 입력 채널
+
+probe-rs는 down 채널을 `probe-rs-create-prompt` 이벤트(코어, 채널 번호, 이름)로 알리고, 디버그 콘솔 명령 `rtt write <채널> <글>`(`evaluate`, context `repl`)로 받아 줄바꿈을 붙여 타깃에 쓴다. 여러 코어 세션에서는 `core` 인자로 그 코어에 간다. 서버는 고치지 않았다. 공통 크레이트 `rtt`가 down 채널을 코어별로 기억하고, up 채널 탭이 보낼 곳(같은 코어의 같은 번호, 없으면 그 코어의 첫 down 채널)과 명령을 만든다. 명령이 실패해도 probe-rs는 성공으로 답하고 `result`에 이유를 쓰므로, 비어 있지 않은 `result`를 실패로 본다. 공통 크레이트 테스트 25개.
+
+RTT 시험 프로그램(`rtt_demo.c`, RAM만)에 down 채널 "Input"(64바이트)을 더했다: 받은 줄을 `rtt_demo CPU0 got: <줄>`로 up 채널에 돌려준다.
+
+실기(TC275, CPU0·CPU1에 RTT 시험 프로그램): 두 코어의 "Input"이 열리고 RTT 탭 아래에 입력 칸(`to core 1 · 0: Input`)이 나옴. CPU1 탭에서 `hello from B` → `rtt_demo CPU1 got: hello from B`. CPU0 탭에서 `ping CPU0 42` → `» ping CPU0 42` 다음 줄에 `rtt_demo CPU0 got: ping CPU0 42`.
+
 ## 그 밖의 관찰
 
 - 이 PC에서는 F9가 Zed에 닿지 않았다(다른 프로그램이 가로채는 것으로 보임). 명령 팔레트의 `editor: toggle breakpoint`로 BP를 걸었다.
@@ -354,7 +362,8 @@ Zed 포크의 로직(디스어셈블리 창, 명령 BP, Live Watch, RTT)을 그�
 10. ~~B에 attach 설정 고르기~~ 보드에서 확인(다시 연결, BP 다시 보내기)
 11. ~~B에 패널 크기 조절~~ 보드에서 확인
 12. ~~B에 메모리 쓰기(RAM만)~~ 보드에서 확인
-13. RTT 입력 채널. 크레이트·앱 라이선스 결정
+13. ~~RTT 입력 채널~~ 보드에서 확인(두 코어)
+14. 크레이트·앱 라이선스 결정
 
 ## 출처
 
