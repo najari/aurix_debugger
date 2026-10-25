@@ -119,6 +119,9 @@ pub struct Debugger {
     breakpoint_edit: breakpoint_edit::BreakpointEdit,
     breakpoint_editing: bool,
     variables: Variables,
+    /// The locals of every frame of the call stack, and whether the call stack shows them.
+    frame_locals: aurix_debug_model::frame_locals::FrameLocals,
+    show_frame_locals: bool,
     rtt: RttChannels,
     rtt_scroll: UniformListScrollHandle,
     /// Where a line for the shown RTT tab's down channel is typed.
@@ -212,6 +215,8 @@ impl Debugger {
             breakpoint_edit: breakpoint_edit::BreakpointEdit::new(cx),
             breakpoint_editing: false,
             variables: Variables::default(),
+            frame_locals: Default::default(),
+            show_frame_locals: true,
             rtt: RttChannels::default(),
             rtt_scroll: UniformListScrollHandle::new(),
             rtt_input: cx.new(|cx| TextInput::new("A line for the target, Enter", cx)),
@@ -666,6 +671,37 @@ impl Debugger {
         self.disassembly = DisassemblyWindow::default();
         self.source = Err(NOT_STOPPED.into());
         self.variables.clear();
+        self.frame_locals.clear();
+    }
+
+    /// Reads the locals of every frame of the call stack (its Locals scope, the first level).
+    fn read_frame_locals(&mut self, cx: &mut Context<Self>) {
+        if !self.show_frame_locals {
+            return;
+        }
+        let frames: Vec<(u64, String)> = self
+            .frames
+            .iter()
+            .map(|frame| (frame.id, frame.name.clone()))
+            .collect();
+        for request in self.frame_locals.set_frames(&frames) {
+            let frame = request.frame_id;
+            self.request::<Scopes>(request, cx, move |this, result, cx| match result {
+                Ok(response) => {
+                    if let Some(request) = this.frame_locals.scopes(frame, &response.scopes) {
+                        this.request::<VariablesRequest>(request, cx, move |this, result, _| {
+                            match result {
+                                Ok(response) => {
+                                    this.frame_locals.variables(frame, response.variables)
+                                }
+                                Err(error) => this.frame_locals.failed(frame, error),
+                            }
+                        });
+                    }
+                }
+                Err(error) => this.frame_locals.failed(frame, error),
+            });
+        }
     }
 
     /// Reads the call stack of the selected thread. A running core has none (it would answer
@@ -698,6 +734,7 @@ impl Debugger {
                     }
                     this.frames = response.stack_frames;
                     this.select_frame(0, cx);
+                    this.read_frame_locals(cx);
                 }
                 Err(error) => {
                     this.clear_stack();
@@ -1074,10 +1111,33 @@ impl Debugger {
     }
 
     fn render_stack(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use aurix_debug_model::frame_locals::Shown;
+        /// How many locals a frame shows at most.
+        const LOCALS_SHOWN: usize = 8;
+        let show_locals = self.show_frame_locals;
         div()
             .flex()
             .flex_col()
-            .child(panel_title("CALL STACK"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .pr_2()
+                    .child(panel_title("CALL STACK"))
+                    .child(button(
+                        "frame-locals",
+                        if show_locals { "Locals ✓" } else { "Locals" },
+                        true,
+                        cx.listener(move |this, _, _, cx| {
+                            this.show_frame_locals = !show_locals;
+                            if this.show_frame_locals {
+                                this.read_frame_locals(cx);
+                            }
+                            cx.notify();
+                        }),
+                    )),
+            )
             .when(self.frames.is_empty(), |this| {
                 this.child(
                     div()
@@ -1119,6 +1179,48 @@ impl Debugger {
                             .text_color(hsla(color::MUTED))
                             .child(location),
                     )
+                    .when(show_locals, |this| {
+                        let line = |name: String, value: String, colour| {
+                            div()
+                                .flex()
+                                .gap_1()
+                                .pl_2()
+                                .text_xs()
+                                .font_family("Consolas")
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(div().text_color(hsla(color::MUTED)).child(name))
+                                .child(div().text_color(hsla(colour)).child(value))
+                        };
+                        match self.frame_locals.shown(frame.id) {
+                            None => this,
+                            Some(Shown::Loading) => {
+                                this.child(line("…".into(), String::new(), color::MUTED))
+                            }
+                            Some(Shown::Failed(error)) => {
+                                this.child(line("locals:".into(), error.to_string(), color::MUTED))
+                            }
+                            Some(Shown::Locals(locals)) => this
+                                .children(locals.iter().take(LOCALS_SHOWN).map(|local| {
+                                    line(
+                                        format!("{} =", local.name),
+                                        local.value.clone(),
+                                        if local.changed {
+                                            color::CHANGED
+                                        } else {
+                                            color::TEXT
+                                        },
+                                    )
+                                }))
+                                .when(locals.len() > LOCALS_SHOWN, |this| {
+                                    this.child(line(
+                                        format!("+{} more", locals.len() - LOCALS_SHOWN),
+                                        String::new(),
+                                        color::MUTED,
+                                    ))
+                                }),
+                        }
+                    })
             }))
     }
 

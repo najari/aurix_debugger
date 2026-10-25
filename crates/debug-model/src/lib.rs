@@ -13,6 +13,7 @@
 //! - [`disassembly`]: the instructions around a program counter, read further on either side.
 //! - [`breakpoints`]: breakpoints on instructions.
 //! - [`source_breakpoints`]: breakpoints on source lines.
+//! - [`frame_locals`]: the locals of every frame of a call stack.
 //! - [`variables`]: the scopes and variables of a stack frame, as a tree read on demand.
 //! - [`live_watch`]: expressions read on every core, and what changed.
 //! - [`memory`]: a memory window read again and again, and what changed.
@@ -27,6 +28,7 @@
 pub mod breakpoints;
 pub mod cache;
 pub mod disassembly;
+pub mod frame_locals;
 pub mod gtm;
 pub mod live_watch;
 pub mod memory;
