@@ -33,6 +33,13 @@ use serde_json::{Value, json};
 
 use crate::source::{SourceFile, SourceFiles};
 
+mod panels;
+
+use crate::text_input::{Submitted, TextInput};
+use aurix_debug_model::live_watch::LiveWatch;
+use gpui::Entity;
+use panels::BottomTab;
+
 /// How long a request may take.
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the adapter's events are taken.
@@ -97,6 +104,13 @@ pub struct Debugger {
     source_breakpoints: SourceBreakpoints,
     variables: Variables,
     rtt: RttChannels,
+    rtt_scroll: UniformListScrollHandle,
+    live_watch: LiveWatch,
+    /// Where a Live Watch expression is typed.
+    watch_input: Entity<TextInput>,
+    /// Where the Live Watch expressions are kept: next to the attach file.
+    watch_file: Option<std::path::PathBuf>,
+    bottom: BottomTab,
     console: Vec<SharedString>,
     /// When the last console line came.
     last_log: Option<Instant>,
@@ -105,6 +119,13 @@ pub struct Debugger {
 
 impl Debugger {
     pub fn new(attach: Option<String>, server: String, cx: &mut Context<Self>) -> Self {
+        let watch_file = attach.as_deref().map(panels::watch_file);
+        let live_watch = LiveWatch::new(
+            watch_file
+                .as_deref()
+                .map(panels::read_watch_file)
+                .unwrap_or_default(),
+        );
         let mut this = Self {
             server,
             attach,
@@ -125,10 +146,21 @@ impl Debugger {
             source_breakpoints: SourceBreakpoints::default(),
             variables: Variables::default(),
             rtt: RttChannels::default(),
+            rtt_scroll: UniformListScrollHandle::new(),
+            live_watch,
+            watch_input: cx
+                .new(|cx| TextInput::new("Add an expression (a global variable), Enter", cx)),
+            watch_file,
+            bottom: BottomTab::Console,
             console: Vec::new(),
             last_log: None,
             console_scroll: UniformListScrollHandle::new(),
         };
+        cx.subscribe(&this.watch_input, |this, _, Submitted(expression), cx| {
+            this.add_watch(expression);
+            cx.notify();
+        })
+        .detach();
         this.connect(cx);
         this
     }
@@ -189,6 +221,7 @@ impl Debugger {
                         this.client = Some(client);
                         this.take_events(cx);
                         this.read_threads(cx);
+                        this.poll_live_watch(cx);
                     }
                     Err(error) => {
                         this.status = format!("Not attached: {error}").into();
@@ -361,22 +394,8 @@ impl Debugger {
             RTT_DATA_EVENT => {
                 if let Ok(data) = serde_json::from_value::<RttData>(event.body) {
                     let key = (data.core, data.channel_number);
-                    let new = self.rtt.received(data);
-                    let lines = self
-                        .rtt
-                        .get(key)
-                        .map(|channel| {
-                            let label = channel.label();
-                            channel
-                                .lines
-                                .iter()
-                                .skip(channel.lines.len() - new)
-                                .map(|line| format!("RTT [{label}] {line}"))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    for line in lines {
-                        self.log(line);
+                    if self.rtt.received(data) > 0 && self.bottom == BottomTab::Rtt(key) {
+                        self.scroll_rtt_to_end();
                     }
                 }
             }
@@ -428,6 +447,12 @@ impl Debugger {
                     name: thread.name,
                 })
                 .collect();
+            let cores = this
+                .threads
+                .iter()
+                .filter_map(|row| Some((u64::try_from(row.id).ok()?, row.name.clone())))
+                .collect::<Vec<_>>();
+            this.live_watch.set_threads(&cores);
             if this.selected_thread.is_none()
                 && let Some(first) = this.threads.first()
             {
@@ -1179,6 +1204,9 @@ impl Debugger {
                 let name = row.name.clone();
                 let value = row.value.clone();
                 let type_ = row.type_.clone();
+                // A global can be read while the core runs: it can go to the Live Watch.
+                let watchable = row.depth == 1 && row.key.first().is_some_and(|s| s == "Static");
+                let watch_name = row.name.clone();
                 div()
                     .id(SharedString::from(format!("variable-{ix}")))
                     .flex()
@@ -1222,41 +1250,29 @@ impl Debugger {
                     .when_some(note, |this, note| {
                         this.child(div().text_xs().text_color(hsla(color::MUTED)).child(note))
                     })
-            }))
-    }
-
-    fn render_console(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .h(px(180.))
-            .border_t_1()
-            .border_color(hsla(color::BORDER))
-            .bg(hsla(color::PANEL))
-            .child(panel_title("CONSOLE"))
-            .child(
-                uniform_list(
-                    "console",
-                    self.console.len(),
-                    cx.processor(|this, range: Range<usize>, _window, _cx| {
-                        range
-                            .filter_map(|ix| {
-                                let line = this.console.get(ix)?.clone();
-                                Some(
-                                    div()
-                                        .px_2()
-                                        .font_family("Consolas")
-                                        .text_xs()
+                    .when(watchable, |this| {
+                        let expression = watch_name.clone();
+                        this.child(div().flex_1()).child(
+                            div()
+                                .id(SharedString::from(format!("watch-{ix}")))
+                                .px_1()
+                                .rounded_sm()
+                                .text_xs()
+                                .text_color(hsla(color::MUTED))
+                                .cursor_pointer()
+                                .hover(|style| {
+                                    style
+                                        .bg(hsla(color::BUTTON_HOVER))
                                         .text_color(hsla(color::TEXT))
-                                        .child(line),
-                                )
-                            })
-                            .collect()
-                    }),
-                )
-                .track_scroll(&self.console_scroll)
-                .flex_1(),
-            )
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.add_watch(&expression);
+                                    cx.notify();
+                                }))
+                                .child("watch"),
+                        )
+                    })
+            }))
     }
 }
 
@@ -1311,6 +1327,6 @@ impl Render for Debugger {
                             .child(self.render_variables(cx)),
                     ),
             )
-            .child(self.render_console(cx))
+            .child(self.render_bottom(cx))
     }
 }

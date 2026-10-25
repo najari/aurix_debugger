@@ -10,6 +10,7 @@
 
 mod debugger;
 mod source;
+mod text_input;
 
 use gpui::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size};
 use gpui_platform::application;

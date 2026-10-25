@@ -21,4 +21,6 @@ out/
 
 # runtime logs
 *.log
+# Live Watch expressions the debugger app keeps next to an attach file
+*.watch
 /app/target/

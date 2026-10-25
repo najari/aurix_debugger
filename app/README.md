@@ -10,7 +10,9 @@ The standalone debugger: a GPUI window on the probe-rs DAP server.
 | Source | The frame's source file (read from the path in the debug information) with its line marked (▶), back to it with PC, Reload after an edit; a click left of a line sets or removes a breakpoint on it (● set, ○ refused) |
 | Disassembly | The instructions around the frame's program counter (▶), read further with ▲/▼, back to the PC; a click left of an instruction sets or removes a breakpoint on it (● set, ○ refused); ◆ marks where a source line's breakpoint was set |
 | Variables | The frame's scopes (Static, Peripherals, Registers, Variables) as a tree; a click expands or collapses a node, what is expanded stays so at the next stop, and a value that differs from the previous stop's is red (locals and registers: same function on the same core; statics and peripherals: same core) |
-| Console | The server's messages, stop descriptions and the RTT output of every core |
+| Console (tab) | The server's messages and stop descriptions |
+| RTT (a tab per channel) | The lines of each RTT up channel of every core, following the newest; Clear |
+| Live Watch (tab) | Expressions (global variables) read every 500 ms on every core while the cores run; a value that changed since the last read is red; typed into the input (Enter), or sent from a Static variable with "watch"; × removes one; reading can be paused. The expressions are kept next to the attach file (`<attach>.watch`) |
 
 The state and rules of the views are the shared crates' (`../crates`: `aurix-debug-model`,
 `aurix-dap-client`); this crate only draws them and sends the requests.

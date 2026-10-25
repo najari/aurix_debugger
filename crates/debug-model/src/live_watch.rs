@@ -51,8 +51,14 @@ impl LiveWatch {
         self.paused
     }
 
+    /// Stops or resumes the reads. Stopped, nothing is marked as changed.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
+        if paused {
+            for target in &mut self.targets {
+                target.changed.clear();
+            }
+        }
     }
 
     /// Adds an expression (trimmed); returns whether it is new.
@@ -190,6 +196,7 @@ mod tests {
 
         watch.set_paused(true);
         assert!(watch.take_requests().is_empty());
+        assert!(watch.targets()[0].changed.is_empty());
     }
 
     #[test]
