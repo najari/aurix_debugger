@@ -4,7 +4,7 @@
 #   aurix-run demo_flash.aurix                 -> 0
 #   aurix-run demo_flash.aurix --set K=4       -> 1 (expect k == 4 does not hold)
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23
 continue all
 wait stopped 0 reason breakpoint

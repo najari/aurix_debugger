@@ -5,7 +5,7 @@
 # stop in the body again with i = 1; it used to run on to the end of the loop (i = 4) because it
 # only stopped at the next statement by address (fixed in the probe-rs fork).
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 pause all
 break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32 if i == 0
 continue 0

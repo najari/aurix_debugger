@@ -1,0 +1,24 @@
+# The C expressions of liveWatch (probe-rs fork c_expr) on the flash demo (start it first with
+# start_in_flash): casts, arithmetic, &, *(type *), an address. g_ticks at 0x7000A000 counts up,
+# compute() writes g_result = 46 (TC275 and TC36x builds alike). In `expect live` the expression
+# comes before the comparison, without spaces or comparison operators of its own (no << or >>).
+#
+#   aurix-run c_expressions.aurix --set ATTACH=../../dap-client/examples/tc36x_demo_2cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
+continue all
+expect live g_ticks > 0 within 2s
+expect live (unsigned)g_ticks/2 > 0
+expect live *(unsigned*)&g_ticks > 0
+expect live *(unsigned*)0x7000A000 > 0
+expect live (uint8)g_ticks <= 255
+expect live g_result == 46 within 2s
+expect live g_result*2+1 == 93
+expect live (g_result-46)*7 == 0
+expect live &g_result-&g_ticks == 4
+expect live g_result%5 == 1
+expect live (sint8)(g_result*4) == -72
+pause 0
+wait stopped 0
+expect live g_result == 46
+expect live (g_ticks&1)+(g_ticks&1^1) == 1
+expect memory 0x7000A004@0 2E 00 00 00

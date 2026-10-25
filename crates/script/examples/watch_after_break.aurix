@@ -5,7 +5,7 @@
 # Until probe-rs fork 149db65 the data breakpoint did not halt once an instruction breakpoint
 # was armed (break after make next to break before make triggers, TriCore).
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 continue all
 pause 0
 wait stopped 0

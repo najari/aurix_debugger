@@ -1,7 +1,7 @@
 # A data breakpoint with a condition on the flash demo (start it first with start_in_flash):
 # compute() writes g_result = 46 each time.
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 continue all
 pause 0
 wait stopped 0

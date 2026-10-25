@@ -5,7 +5,7 @@
 # Each pass of the loop is 4 steps (32:16 the call of scale, 32:13 sum +=, 31:25 i++, 31:19
 # i < n); the first one starts at the breakpoint on 32, one step in.
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 pause all
 break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32 if i == 0
 continue 0

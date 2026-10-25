@@ -1,7 +1,7 @@
 # Breakpoint conditions, a step, memory and a live global on the flash demo (start it first
 # with start_in_flash). Each compute() calls scale() with v = 0, 1, 2, 3 and writes g_result = 46.
 
-attach ../../dap-client/examples/tc275_demo_3cores.json
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
 continue all
 expect live g_ticks > 0 within 2s
 
