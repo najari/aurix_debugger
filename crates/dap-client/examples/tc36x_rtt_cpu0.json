@@ -1,0 +1,10 @@
+{
+  "request": "attach",
+  "cwd": "C:\work\aurix_tcf_demo",
+  "chip": "TC36x",
+  "probe": "058b:0000",
+  "coreConfigs": [
+    { "coreIndex": 0, "programBinary": "C:\work\aurix_tcf_demo\build\rtt_demo_tc36x.elf", "rttEnabled": true }
+  ],
+  "consoleLogLevel": "Console"
+}

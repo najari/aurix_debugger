@@ -1,5 +1,5 @@
 /*
- * rtt_demo - RTT output test for the probe-rs debugger (TC275, RAM only).
+ * rtt_demo - RTT output test for the probe-rs debugger (TC275 or TC36x, RAM only).
  *
  * Code in the PSPR, data in the DSPR of the core it is built for (CPU0 by default, CPU1
  * with build_rtt.ps1 -Core 1): start_in_flash writes it to RAM, the flash is not touched.
@@ -56,8 +56,12 @@ volatile unsigned g_received; /* bytes read from the down channel */
 static char input[INPUT_SIZE];
 static unsigned input_len;
 
-/* STM0 timer, low 32 bits (TC27x: STM0 base 0xF0000000, TIM0 at +0x10). */
-#define STM0_TIM0 (*(volatile unsigned *)0xF0000010u)
+/* STM0 timer, low 32 bits: TIM0 at +0x10 of STM0, which starts at 0xF0000000 on the TC27x
+ * and at 0xF0001000 on the TC3xx (build_rtt.ps1 -Board tc36x sets STM0_TIM0_ADDRESS). */
+#ifndef STM0_TIM0_ADDRESS
+#define STM0_TIM0_ADDRESS 0xF0000010u
+#endif
+#define STM0_TIM0 (*(volatile unsigned *)STM0_TIM0_ADDRESS)
 
 static void rtt_init(void)
 {

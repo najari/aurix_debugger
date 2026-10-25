@@ -78,5 +78,55 @@
       }
     ],
     "consoleLogLevel": "Console"
+  },
+  {
+    // TC36x (TriBoard TC3X5): the flash demo in PF1 0x80400000 (build_flash.ps1 -Board tc36x,
+    // written by the VS Code task "TC36x: probe-rs flash demo"), CPU0 at main by
+    // start_in_flash. CPU1 of the test board is in boot halt: its thread shows as sleeping.
+    "label": "TC36x: probe-rs CPU0-CPU1 one session",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC36x",
+    "probe": "058b:0000",
+    "allStop": true,
+    "coreConfigs": [
+      { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash_tc36x.elf" },
+      { "coreIndex": 1, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash_tc36x.elf" }
+    ],
+    "consoleLogLevel": "Console"
+  },
+  {
+    "label": "TC36x: probe-rs PFLASH CPU0",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC36x",
+    "probe": "058b:0000",
+    "coreConfigs": [
+      { "coreIndex": 0, "programBinary": "C:\\work\\aurix_tcf_demo\\build\\demo_flash_tc36x.elf" }
+    ],
+    "consoleLogLevel": "Console"
+  },
+  {
+    // RTT on the TC36x: build_rtt.ps1 -Board tc36x, then PROBE_RS_CHIP=TC36x
+    // start_in_flash.exe build\rtt_demo_tc36x.elf (RAM only).
+    "label": "TC36x: probe-rs RTT RAM CPU0",
+    "adapter": "probe-rs",
+    "request": "attach",
+    "server": "127.0.0.1:50000",
+    "cwd": "C:\\work\\aurix_tcf_demo",
+    "chip": "TC36x",
+    "probe": "058b:0000",
+    "coreConfigs": [
+      {
+        "coreIndex": 0,
+        "programBinary": "C:\\work\\aurix_tcf_demo\\build\\rtt_demo_tc36x.elf",
+        "rttEnabled": true
+      }
+    ],
+    "consoleLogLevel": "Console"
   }
 ]

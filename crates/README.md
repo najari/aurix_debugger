@@ -92,6 +92,10 @@ RAM only): `expect` and `expect live` on paths such as `OsTcb[1].prio` and
 sits after the body must stop in the next iteration (before probe-rs fork `c5d7411` it ran to the
 end of the loop).
 
+On the TC36x (TriBoard TC3X5) the same with `tc36x_demo_2cores.json` (the flash demo
+`demo_flash_tc36x.elf`; CPU1 of the test board is in boot halt and reads as sleeping) and
+`tc36x_rtt_cpu0.json` (`build_rtt.ps1 -Board tc36x`, CPU0 only).
+
 ```text
 cargo test
 cargo clippy --all-targets -- -D warnings
