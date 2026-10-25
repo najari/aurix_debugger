@@ -4,7 +4,8 @@ The standalone debugger: a GPUI window on the probe-rs DAP server.
 
 | Part | What it does |
 | --- | --- |
-| Toolbar | Continue, Pause, Step Over (line), Step Instruction, Step Into Instruction of the selected thread; the connection state |
+| Toolbar | Continue, Pause, Step Over (line), Step Instruction, Step Into Instruction of the selected thread; the connection state, the attach file, Disconnect |
+| Attach page (no session) | The attach files used before, newest first, each with its chip and the program of each core (`%APPDATA%\aurix-debugger\recent.txt`); "Open attach file…" (a file dialog); the server address; why the last attach failed. A click attaches. Attaching the same file again sends its breakpoints again; another file starts without them and with its own Live Watch expressions |
 | Threads | One thread per core, with its state (running, stopped and why); a click selects it |
 | Call stack | The frames of the selected thread; a click shows the frame's source, disassembly and variables |
 | Source | The frame's source file (read from the path in the debug information) with its line marked (▶), back to it with PC, Reload after an edit; a click left of a line sets or removes a breakpoint on it (● set, ○ refused) |
@@ -26,8 +27,9 @@ start_in_flash.exe C:\work\aurix_tcf_demo\build\demo_flash.elf
 cargo run -- ..\crates\dap-client\examples\tc275_demo_3cores.json
 ```
 
-The second argument names another server (default `127.0.0.1:50000`). Any attach arguments of
-the probe-rs fork work, `rttEnabled` included (`tc275_rtt_cpu0_cpu1.json`).
+Both arguments are optional: without an attach file the window opens on the attach page; the
+second argument names another server (default `127.0.0.1:50000`). Any attach arguments of the
+probe-rs fork work, `rttEnabled` included (`tc275_rtt_cpu0_cpu1.json`).
 
 ## GPUI and licenses
 

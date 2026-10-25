@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 
 use crate::source::{SourceFile, SourceFiles};
 
+mod connect;
 mod memory;
 mod panels;
 
@@ -124,20 +125,25 @@ pub struct Debugger {
     /// When the last console line came.
     last_log: Option<Instant>,
     console_scroll: UniformListScrollHandle,
+    /// Counts the sessions: the loops and the answers of an ended session stop there.
+    session: u64,
+    connecting: bool,
+    /// The attach files used before, newest first.
+    recent: Vec<String>,
+    server_input: Entity<TextInput>,
+    connect_error: Option<String>,
 }
 
 impl Debugger {
     pub fn new(attach: Option<String>, server: String, cx: &mut Context<Self>) -> Self {
-        let watch_file = attach.as_deref().map(panels::watch_file);
-        let live_watch = LiveWatch::new(
-            watch_file
-                .as_deref()
-                .map(panels::read_watch_file)
-                .unwrap_or_default(),
-        );
+        let server_input = cx.new(|cx| {
+            let mut input = TextInput::new("Server, e.g. 127.0.0.1:50000", cx);
+            input.set_text(server.clone(), cx);
+            input
+        });
         let mut this = Self {
             server,
-            attach,
+            attach: None,
             client: None,
             status: "Not connected".into(),
             threads: Vec::new(),
@@ -156,10 +162,10 @@ impl Debugger {
             variables: Variables::default(),
             rtt: RttChannels::default(),
             rtt_scroll: UniformListScrollHandle::new(),
-            live_watch,
+            live_watch: LiveWatch::default(),
             watch_input: cx
                 .new(|cx| TextInput::new("Add an expression (a global variable), Enter", cx)),
-            watch_file,
+            watch_file: None,
             memory: MemoryView::default(),
             memory_input: cx.new(|cx| TextInput::new("Address, e.g. 0x7000A000@1", cx)),
             memory_input_error: None,
@@ -169,6 +175,11 @@ impl Debugger {
             console: Vec::new(),
             last_log: None,
             console_scroll: UniformListScrollHandle::new(),
+            session: 0,
+            connecting: false,
+            recent: crate::recent::load(),
+            server_input,
+            connect_error: None,
         };
         cx.subscribe(&this.watch_input, |this, _, Submitted(expression), cx| {
             this.add_watch(expression);
@@ -180,7 +191,9 @@ impl Debugger {
             cx.notify();
         })
         .detach();
-        this.connect(cx);
+        if let Some(attach) = attach {
+            this.start(attach, cx);
+        }
         this
     }
 
@@ -223,10 +236,12 @@ impl Debugger {
     /// adapter's events.
     fn connect(&mut self, cx: &mut Context<Self>) {
         let Some(attach) = self.attach.clone() else {
-            self.status = "Usage: aurix-debugger <attach.json> [server]".into();
             return;
         };
         let server = self.server.clone();
+        let session = self.session;
+        self.connecting = true;
+        self.connect_error = None;
         self.status = format!("Connecting to {server}…").into();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -234,6 +249,14 @@ impl Debugger {
                 .spawn(async move { start_session(&server, &attach) })
                 .await;
             this.update(cx, |this, cx| {
+                if this.session != session {
+                    // Given up meanwhile: end the session that came too late.
+                    if let Ok(client) = result {
+                        end_in_background(client, cx);
+                    }
+                    return;
+                }
+                this.connecting = false;
                 match result {
                     Ok(client) => {
                         this.status = format!("Attached ({})", this.server).into();
@@ -241,9 +264,11 @@ impl Debugger {
                         this.take_events(cx);
                         this.read_threads(cx);
                         this.poll_live_watch(cx);
+                        this.resend_breakpoints(cx);
                     }
                     Err(error) => {
-                        this.status = format!("Not attached: {error}").into();
+                        this.status = "Not attached".into();
+                        this.connect_error = Some(error.clone());
                         this.log(format!("error: {error}"));
                     }
                 }
@@ -267,6 +292,7 @@ impl Debugger {
         let Some(client) = self.client.clone() else {
             return;
         };
+        let session = self.session;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -277,8 +303,11 @@ impl Debugger {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                done(this, result, cx);
-                cx.notify();
+                // The answer of an ended session is not about what is shown now.
+                if this.session == session {
+                    done(this, result, cx);
+                    cx.notify();
+                }
             })
             .ok();
         })
@@ -308,12 +337,14 @@ impl Debugger {
     }
 
     fn take_events(&mut self, cx: &mut Context<Self>) {
+        let session = self.session;
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(EVENT_POLL).await;
                 let alive = this
                     .update(cx, |this, cx| {
-                        let Some(client) = this.client.clone() else {
+                        let Some(client) = this.client.clone().filter(|_| this.session == session)
+                        else {
                             return false;
                         };
                         let mut any = false;
@@ -419,8 +450,8 @@ impl Debugger {
                 }
             }
             "terminated" | "exited" => {
-                self.status = format!("Session ended ({})", event.event).into();
                 self.log(format!("session {}", event.event));
+                self.end_session(&format!("Session ended ({})", event.event), cx);
             }
             _ => {}
         }
@@ -739,6 +770,21 @@ fn start_session(server: &str, attach: &str) -> Result<Arc<DapClient>, String> {
     Ok(Arc::new(client))
 }
 
+/// Ends a session without waiting for it on the window's thread.
+fn end_in_background(client: Arc<DapClient>, cx: &mut Context<Debugger>) {
+    cx.background_executor()
+        .spawn(async move {
+            client
+                .request_raw(
+                    "disconnect",
+                    json!({ "terminateDebuggee": false }),
+                    Duration::from_secs(2),
+                )
+                .ok();
+        })
+        .detach();
+}
+
 fn hsla(color: u32) -> Hsla {
     rgb(color).into()
 }
@@ -830,6 +876,23 @@ impl Debugger {
                     .text_color(hsla(color::MUTED))
                     .child(self.status.clone()),
             )
+            .when_some(self.attach.clone(), |this, attach| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(hsla(color::MUTED))
+                        .child(crate::recent::file_name(&attach).to_string()),
+                )
+            })
+            .child(button(
+                "disconnect",
+                "Disconnect",
+                self.client.is_some() || self.connecting,
+                cx.listener(|this, _, _, cx| {
+                    this.end_session("Disconnected", cx);
+                    cx.notify();
+                }),
+            ))
     }
 
     fn render_threads(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1328,47 +1391,52 @@ impl Render for Debugger {
             .text_color(hsla(color::TEXT))
             .font_family("Segoe UI")
             .child(self.render_toolbar(cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .id("side")
-                            .w(px(260.))
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .border_r_1()
-                            .border_color(hsla(color::BORDER))
-                            .bg(hsla(color::PANEL))
-                            .overflow_y_scroll()
-                            .child(self.render_threads(cx))
-                            .child(self.render_stack(cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.render_source(cx))
-                            .child(self.render_disassembly(cx)),
-                    )
-                    .child(
-                        div()
-                            .id("variables")
-                            .w(px(340.))
-                            .flex_none()
-                            .border_l_1()
-                            .border_color(hsla(color::BORDER))
-                            .bg(hsla(color::PANEL))
-                            .overflow_y_scroll()
-                            .child(self.render_variables(cx)),
-                    ),
-            )
+            .when(self.client.is_none(), |this| {
+                this.child(self.render_connect(cx))
+            })
+            .when(self.client.is_some(), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .id("side")
+                                .w(px(260.))
+                                .flex_none()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .border_r_1()
+                                .border_color(hsla(color::BORDER))
+                                .bg(hsla(color::PANEL))
+                                .overflow_y_scroll()
+                                .child(self.render_threads(cx))
+                                .child(self.render_stack(cx)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w_0()
+                                .child(self.render_source(cx))
+                                .child(self.render_disassembly(cx)),
+                        )
+                        .child(
+                            div()
+                                .id("variables")
+                                .w(px(340.))
+                                .flex_none()
+                                .border_l_1()
+                                .border_color(hsla(color::BORDER))
+                                .bg(hsla(color::PANEL))
+                                .overflow_y_scroll()
+                                .child(self.render_variables(cx)),
+                        ),
+                )
+            })
             .child(self.render_bottom(cx))
     }
 }

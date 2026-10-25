@@ -1,14 +1,15 @@
 //! aurix-debugger: a debugger window for the probe-rs DAP server (the standalone debugger, B).
 //!
 //! ```text
-//! aurix-debugger <attach.json> [server, default 127.0.0.1:50000]
+//! aurix-debugger [attach.json] [server, default 127.0.0.1:50000]
 //! ```
 //!
-//! The window connects to the server (`probe-rs dap-server --port 50000`), attaches with the
-//! arguments in the JSON file, and shows the threads (one per core), the call stack of the
-//! selected thread, the disassembly around the selected frame, and the console.
+//! The window connects to the server (`probe-rs dap-server --port 50000`) and attaches with the
+//! arguments in the JSON file; without one it opens on the attach page (the attach files used
+//! before, a file dialog).
 
 mod debugger;
+mod recent;
 mod source;
 mod text_input;
 

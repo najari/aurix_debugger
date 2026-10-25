@@ -78,6 +78,7 @@ impl Debugger {
 
     /// Reads the Live Watch expressions on every core while the session lasts.
     pub(super) fn poll_live_watch(&mut self, cx: &mut Context<Self>) {
+        let session = self.session;
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -85,7 +86,7 @@ impl Debugger {
                     .await;
                 let alive = this
                     .update(cx, |this, cx| {
-                        if this.client.is_none() {
+                        if this.client.is_none() || this.session != session {
                             return false;
                         }
                         for request in this.live_watch.take_requests() {

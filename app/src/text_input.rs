@@ -41,6 +41,16 @@ impl TextInput {
         }
     }
 
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        self.text = text.into();
+        self.marked = None;
+        cx.notify();
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         match keystroke.key.as_str() {
