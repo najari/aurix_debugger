@@ -61,6 +61,10 @@ const TRACE_REDRAW: Duration = Duration::from_millis(250);
 const MAX_CONSOLE_LINES: usize = 5_000;
 /// The same console line twice within this is shown once.
 const REPEAT_WINDOW: Duration = Duration::from_millis(500);
+/// How long the first thread's state may stay unknown before its stack is asked for to find out:
+/// the adapter's `continued` or `stopped` event comes within milliseconds of the attach, and a
+/// stack trace asked for a core that runs is an error the server writes to the console.
+const STATE_WAIT: Duration = Duration::from_millis(300);
 /// What the source view shows while no frame is selected.
 const NOT_STOPPED: &str = "Not stopped";
 
@@ -668,10 +672,34 @@ impl Debugger {
             if this.selected_thread.is_none()
                 && let Some(first) = this.threads.first()
             {
-                this.selected_thread = Some(first.id);
-                this.read_stack(cx);
+                let thread = first.id;
+                this.selected_thread = Some(thread);
+                if this.state(thread) == Some(&ThreadState::Unknown) {
+                    this.read_stack_unless_told(thread, cx);
+                } else {
+                    this.read_stack(cx);
+                }
             }
         });
+    }
+
+    /// Reads the stack of `thread` if, [`STATE_WAIT`] from now, the adapter has still not told
+    /// whether it runs (a core that runs has no stack; asked, it answers with an error).
+    fn read_stack_unless_told(&mut self, thread: i64, cx: &mut Context<Self>) {
+        let session = self.session;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(STATE_WAIT).await;
+            this.update(cx, |this, cx| {
+                if this.session == session
+                    && this.selected_thread == Some(thread)
+                    && this.state(thread) == Some(&ThreadState::Unknown)
+                {
+                    this.read_stack(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn select_thread(&mut self, thread: i64, cx: &mut Context<Self>) {
