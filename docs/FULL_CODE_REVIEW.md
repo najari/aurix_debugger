@@ -31,13 +31,13 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 19 | 낮음 | GUI | 메모리 탭에 `u64` 끝 근처 주소를 넣으면 패닉 | `crates/debug-model/src/memory.rs:39`, `95`, `194` | 수정됨 |
 | 20 | 낮음 | GUI·스크립트 | sw_trace 오류 메시지를 만들다 ASCII가 아닌 문자에서 패닉 | `crates/debug-model/src/sw_trace.rs:35` | 수정됨 |
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 수정됨 |
-| 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 미착수 |
+| 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 수정됨 |
 
 1~10번, 12~21번은 고쳤고 11번은 일부만 고쳤습니다. 8~10번, 13~17번, 19~21번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
 
 - **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 - **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.
-- **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패합니다. 지우기 전에 멈추므로 데이터는 잃지 않습니다.
+- **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패했습니다. probe-rs 플래시 시퀀스에 `read_unwritten`을 두고, AURIX는 페이지 단위로 읽어 지워진 페이지를 0(지워진 값)으로 돌려주도록 고쳤습니다. TC36x 데모 섹터에서 데모 코드, 0 페이지, 지워진 페이지가 모두 그대로 남는 것을 확인했습니다. 5번의 0 페이지 규칙은 이제 `--restore-unwritten`일 때만 적용됩니다(일반 다운로드는 나머지를 지움).
 - **11번(일부):** 요청 처리 중 오류로 끝나거나 세션 시작이 `apply` 뒤에 실패하면 suspend 레지스터를 되돌립니다. dap-server 프로세스가 강제 종료되는 경우는 저널이 필요해 아직 남아 있습니다. 그룹의 TRC 저널 항목과도 엮여 있습니다.
 - **14번:** BMHD 위치 중 BMHD0(`0xA0000000`)만 AP32566으로 확인했고, BMHD1~3은 일반적으로 알려진 TC27x 주소입니다. 주소가 틀려도 거부가 줄어들 뿐 잘못 거부하지는 않습니다.
 
