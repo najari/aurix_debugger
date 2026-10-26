@@ -1,0 +1,55 @@
+# Step over a call that holds a breakpoint, on the flash demo (start it first with
+# start_in_flash): `sum += scale(i, 3)` (demo.c:32) calls scale, whose line 23 has the
+# breakpoint. One whose condition does not hold, or a log point, does not stop the step: it goes
+# on over the call to 32:13 (fixed in the probe-rs fork). One without a condition stops it in
+# scale.
+#
+#   aurix-run step_over_conditions.aurix --set ATTACH=../../dap-client/examples/tc36x_demo_2cores.json
+
+attach ${ATTACH:-../../dap-client/examples/tc275_demo_3cores.json}
+pause all
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32 if i == 1
+continue 0
+wait stopped 0 reason breakpoint
+expect i == 1
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:32
+
+# A condition that does not hold in scale: over the call.
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23 if v == 99
+step over 0
+wait stopped 0 reason step
+expect i == 1
+expect sum == 1
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23
+
+# To the call of the next pass (32:13, 31:25 i++, 31:19 i < n, 32:16).
+step over 0
+wait stopped 0 reason step
+step over 0
+wait stopped 0 reason step
+step over 0
+wait stopped 0 reason step
+expect i == 2
+
+# A log point in scale: its line, and over the call.
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23 log scale v={v}
+step over 0
+wait stopped 0 reason step
+expect i == 2
+expect sum == 5
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23
+
+step over 0
+wait stopped 0 reason step
+step over 0
+wait stopped 0 reason step
+step over 0
+wait stopped 0 reason step
+expect i == 3
+
+# A breakpoint without a condition stops the step in scale.
+break ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23
+step over 0
+wait stopped 0 reason breakpoint
+expect v == 3
+unbreak ${AURIX_DEMO:-C:/work/aurix_tcf_demo}/src/demo.c:23

@@ -124,7 +124,10 @@ RAM only): `expect` and `expect live` on paths such as `OsTcb[1].prio` and
 `d8954dd`), `gtm_mcs` (the GTM test program `zed/aurix_tcf_demo/build_gtm.ps1`, RAM only: two MCS1 channels
 run and their counters move), `orti_expressions` (the ORTI demo: casts, `*(unsigned*)&OsTicks`, pointer differences and an index read from the target, `OsTcb[OsCurrentTask].prio`, by `expect live`), and `step_over_loop` (flash demo): step over through a `for` loop whose condition
 sits after the body must stop in the next iteration (before probe-rs fork `c5d7411` it ran to the
-end of the loop).
+end of the loop), and `step_over_conditions` (flash demo): step over a call that holds a
+breakpoint whose condition does not hold, or a log point (its line comes), goes on over the call;
+one without a condition stops it in the call (before the probe-rs fork fixed it, the step stopped
+there in every case and the log point printed nothing).
 
 On the TC36x (TriBoard TC3X5) the same with `tc36x_demo_2cores.json` (the flash demo
 `demo_flash_tc36x.elf`; CPU1 of the test board is in boot halt and reads as sleeping) and
