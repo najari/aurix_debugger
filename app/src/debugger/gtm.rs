@@ -38,8 +38,8 @@ impl Debugger {
         let Some(view) = &self.gtm else {
             return;
         };
-        let ranges = view.ranges();
-        let asked = ranges.clone();
+        let asked = view.ranges();
+        let ranges = asked.ranges.clone();
         // Any core reaches the GTM: the selected thread's, else the first.
         let core = self
             .selected_thread

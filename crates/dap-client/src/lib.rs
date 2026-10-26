@@ -4,8 +4,12 @@
 //! A reader thread takes the adapter's messages: a response goes to the request waiting for it,
 //! an event to [`DapClient::next_event`]. Requests block the calling thread until their response or
 //! a timeout; no async runtime is involved, so any UI (a GPUI background task, a CLI) can use
-//! the client. Requests from the adapter to the client (`runInTerminal`, `startDebugging`) are
-//! answered as not supported.
+//! the client. [`DapClient::send`] writes a request at once and leaves the wait for later, so
+//! that a UI sends its requests in the order it makes them and waits elsewhere. Requests from
+//! the adapter to the client (`runInTerminal`, `startDebugging`) are answered as not supported.
+//!
+//! A message that cannot be read (a broken frame) closes the connection: what follows it cannot
+//! be found.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
@@ -208,6 +212,12 @@ impl DapClient {
                         _ => {}
                     }
                 }
+                // The stream ended, or a message could not be read: nothing after it can be.
+                writer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .shutdown(std::net::Shutdown::Both)
+                    .ok();
                 // The waiting requests see the connection close, and so do the next ones.
                 let mut pending = pending.lock().unwrap_or_else(|e| e.into_inner());
                 closed.store(true, Ordering::SeqCst);
@@ -250,6 +260,12 @@ impl DapClient {
         }
     }
 
+    /// Whether the connection to the adapter is closed (it ended, or a message could not be
+    /// read). The events that came before it stay to be taken.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
     /// The adapter's next event if one is waiting.
     pub fn try_event(&self) -> Option<Event> {
         self.events
@@ -259,13 +275,9 @@ impl DapClient {
             .ok()
     }
 
-    /// Sends `command` with `arguments` and waits for its response; returns the response body.
-    pub fn request_raw(
-        &self,
-        command: &str,
-        arguments: Value,
-        timeout: Duration,
-    ) -> Result<Value, Error> {
+    /// Writes request `command` with `arguments` now; [`PendingResponse::wait`] waits for its
+    /// response. Requests reach the adapter in the order they are sent.
+    pub fn send_raw(&self, command: &str, arguments: Value) -> Result<PendingResponse, Error> {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel();
         {
@@ -288,25 +300,34 @@ impl DapClient {
                 .remove(&seq);
             return Err(error.into());
         }
-        let response = match receiver.recv_timeout(timeout) {
-            Ok(response) => response,
-            Err(RecvTimeoutError::Timeout) => {
-                self.pending
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&seq);
-                return Err(Error::Timeout(command.to_string()));
-            }
-            Err(RecvTimeoutError::Disconnected) => return Err(Error::Closed),
-        };
-        if response.get("success").and_then(Value::as_bool) != Some(true) {
-            let message = failure_message(&response);
-            return Err(Error::Failed {
-                command: command.to_string(),
-                message,
-            });
-        }
-        Ok(response.get("body").cloned().unwrap_or(Value::Null))
+        Ok(PendingResponse {
+            seq,
+            command: command.to_string(),
+            receiver,
+            pending: self.pending.clone(),
+        })
+    }
+
+    /// Sends `command` with `arguments` and waits for its response; returns the response body.
+    pub fn request_raw(
+        &self,
+        command: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> Result<Value, Error> {
+        self.send_raw(command, arguments)?.wait(timeout)
+    }
+
+    /// Writes request `R` now; [`TypedResponse::wait`] waits for its response.
+    pub fn send<R: Request>(&self, arguments: R::Arguments) -> Result<TypedResponse<R>, Error> {
+        let arguments = serde_json::to_value(arguments).map_err(|error| Error::Decode {
+            command: R::COMMAND.to_string(),
+            error,
+        })?;
+        Ok(TypedResponse {
+            pending: self.send_raw(R::COMMAND, arguments)?,
+            _request: std::marker::PhantomData,
+        })
     }
 
     /// Sends request `R` and waits for its response.
@@ -315,11 +336,53 @@ impl DapClient {
         arguments: R::Arguments,
         timeout: Duration,
     ) -> Result<R::Response, Error> {
-        let arguments = serde_json::to_value(arguments).map_err(|error| Error::Decode {
-            command: R::COMMAND.to_string(),
-            error,
-        })?;
-        let body = self.request_raw(R::COMMAND, arguments, timeout)?;
+        self.send::<R>(arguments)?.wait(timeout)
+    }
+}
+
+/// A request that was sent, waiting for its response.
+pub struct PendingResponse {
+    seq: i64,
+    command: String,
+    receiver: Receiver<Value>,
+    pending: Pending,
+}
+
+impl PendingResponse {
+    /// Waits at most `timeout` for the response; returns its body.
+    pub fn wait(self, timeout: Duration) -> Result<Value, Error> {
+        let response = match self.receiver.recv_timeout(timeout) {
+            Ok(response) => response,
+            Err(RecvTimeoutError::Timeout) => {
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&self.seq);
+                return Err(Error::Timeout(self.command));
+            }
+            Err(RecvTimeoutError::Disconnected) => return Err(Error::Closed),
+        };
+        if response.get("success").and_then(Value::as_bool) != Some(true) {
+            let message = failure_message(&response);
+            return Err(Error::Failed {
+                command: self.command,
+                message,
+            });
+        }
+        Ok(response.get("body").cloned().unwrap_or(Value::Null))
+    }
+}
+
+/// A request `R` that was sent, waiting for its response.
+pub struct TypedResponse<R> {
+    pending: PendingResponse,
+    _request: std::marker::PhantomData<fn() -> R>,
+}
+
+impl<R: Request> TypedResponse<R> {
+    /// Waits at most `timeout` for the response.
+    pub fn wait(self, timeout: Duration) -> Result<R::Response, Error> {
+        let body = self.pending.wait(timeout)?;
         serde_json::from_value(body).map_err(|error| Error::Decode {
             command: R::COMMAND.to_string(),
             error,
@@ -440,6 +503,76 @@ mod tests {
             "body": { "error": { "id": 1, "format": "no file {path}", "variables": { "path": "a.c" } } }
         });
         assert_eq!(failure_message(&formatted), "no file a.c");
+    }
+
+    #[test]
+    fn requests_reach_the_adapter_in_the_order_they_are_sent() {
+        // An adapter that answers each request with the order it came in.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let writer = Mutex::new(stream.try_clone().unwrap());
+            let mut reader = BufReader::new(stream);
+            let mut order = 0;
+            while let Ok(Some(request)) = read_message(&mut reader) {
+                order += 1;
+                write_message(
+                    &writer,
+                    &json!({ "seq": 100 + order, "type": "response",
+                             "request_seq": request["seq"], "command": request["command"],
+                             "success": true, "body": { "order": order,
+                             "lines": request["arguments"]["lines"] } }),
+                )
+                .unwrap();
+            }
+        });
+        let client = DapClient::connect(address).unwrap();
+        let first = client
+            .send_raw("setBreakpoints", json!({ "lines": [10] }))
+            .unwrap();
+        let second = client
+            .send_raw("setBreakpoints", json!({ "lines": [10, 20] }))
+            .unwrap();
+        // Waited for in the other order, from other threads: they were sent already.
+        let second = std::thread::spawn(move || second.wait(Duration::from_secs(5)).unwrap());
+        let first = first.wait(Duration::from_secs(5)).unwrap();
+        let second = second.join().unwrap();
+        assert_eq!(first["order"], 1);
+        assert_eq!(first["lines"], json!([10]));
+        assert_eq!(second["order"], 2);
+        assert_eq!(second["lines"], json!([10, 20]));
+    }
+
+    #[test]
+    fn a_message_that_cannot_be_read_closes_the_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (done, adapter_done) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            write_message(
+                &Mutex::new(stream.try_clone().unwrap()),
+                &json!({ "seq": 1, "type": "event", "event": "stopped", "body": {} }),
+            )
+            .unwrap();
+            // A frame without its Content-Length; the adapter keeps the socket open.
+            stream.write_all(b"Content-Lenght: 12\r\n\r\n{}").unwrap();
+            adapter_done.recv_timeout(Duration::from_secs(10)).ok();
+        });
+        let client = DapClient::connect(address).unwrap();
+        let start = std::time::Instant::now();
+        while !client.is_closed() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client.is_closed());
+        // The event before it stays to be taken.
+        assert_eq!(client.try_event().unwrap().event, "stopped");
+        assert!(matches!(
+            client.request_raw("threads", json!({}), Duration::from_secs(5)),
+            Err(Error::Closed)
+        ));
+        done.send(()).ok();
     }
 
     #[test]

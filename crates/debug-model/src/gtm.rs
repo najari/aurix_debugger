@@ -358,6 +358,14 @@ pub struct ChannelRow {
 const CODE_BEFORE: u32 = 8;
 const CODE_WORDS: u32 = 24;
 
+/// A read of [`GtmView::ranges`]: the ranges, and the MCS and channel they were asked for.
+#[derive(Clone, Debug)]
+pub struct GtmRead {
+    pub ranges: Vec<MemoryRange>,
+    mcs: usize,
+    selected: usize,
+}
+
 /// The GTM view: the channels of one MCS instance read again and again, what changed, and the
 /// code around the program counter of the selected channel.
 #[derive(Clone, Debug)]
@@ -446,7 +454,7 @@ impl GtmView {
 
     /// The ranges to read, in the order [`Self::answered`] takes them: MCFG_CTRL, then for each
     /// channel R0–R7 with CTRL and PC, then the code window when there is one.
-    pub fn ranges(&self) -> Vec<MemoryRange> {
+    pub fn ranges(&self) -> GtmRead {
         let mut ranges = vec![MemoryRange {
             address: self.gtm.register(MCFG_CTRL) as u64,
             count: 4,
@@ -467,11 +475,22 @@ impl GtmView {
                 count: (words * 4) as usize,
             });
         }
-        ranges
+        GtmRead {
+            ranges,
+            mcs: self.mcs,
+            selected: self.selected,
+        }
     }
 
-    /// The answer to [`Self::ranges`] (asked as `asked`).
-    pub fn answered(&mut self, asked: &[MemoryRange], answer: &[RangeData]) {
+    /// The answer to [`Self::ranges`] (asked as `asked`). An answer for another MCS than the one
+    /// shown is dropped (the MCS was switched while it was read), and its code window when
+    /// another channel is selected now.
+    pub fn answered(&mut self, asked: &GtmRead, answer: &[RangeData]) {
+        if asked.mcs != self.mcs {
+            return;
+        }
+        let code_asked = asked.selected == self.selected;
+        let asked = &asked.ranges;
         self.error = None;
         if answer.len() != asked.len() {
             self.error = Some(format!(
@@ -532,7 +551,7 @@ impl GtmView {
             self.previous[channel] = Some(*now);
         }
         self.channels = channels;
-        if let Some(code) = answer.get(1 + 2 * CHANNELS) {
+        if let Some(code) = answer.get(1 + 2 * CHANNELS).filter(|_| code_asked) {
             let start = asked[1 + 2 * CHANNELS].address as u32 - self.gtm.memory(self.mcs);
             match words(code) {
                 Ok(w) => {
@@ -684,12 +703,7 @@ mod tests {
         }
     }
 
-    fn answer(
-        view: &GtmView,
-        pc0: u32,
-        r0: u32,
-        code: &[u32],
-    ) -> (Vec<MemoryRange>, Vec<RangeData>) {
+    fn answer(view: &GtmView, pc0: u32, r0: u32, code: &[u32]) -> (GtmRead, Vec<RangeData>) {
         let asked = view.ranges();
         let mut answer = vec![data(&[0])];
         for channel in 0..CHANNELS {
@@ -705,7 +719,7 @@ mod tests {
                 answer.push(data(&[4 * channel as u32]));
             }
         }
-        if asked.len() > answer.len() {
+        if asked.ranges.len() > answer.len() {
             answer.push(data(code));
         }
         (asked, answer)
@@ -716,7 +730,7 @@ mod tests {
         let mut view = GtmView::new(Gtm::for_chip("TC275").unwrap());
         view.show_mcs(1);
         // First read: no code window yet (the PC is not known).
-        assert_eq!(view.ranges().len(), 1 + 2 * CHANNELS);
+        assert_eq!(view.ranges().ranges.len(), 1 + 2 * CHANNELS);
         let (asked, reply) = answer(&view, 0x8, 5, &[]);
         view.answered(&asked, &reply);
         let rows = view.rows();
@@ -728,7 +742,7 @@ mod tests {
         assert_eq!(rows[0].changed, [false; 10]);
 
         // Second read: the code window around PC 0x8, from MCS address 0.
-        let asked = view.ranges();
+        let asked = view.ranges().ranges;
         assert_eq!(asked.len(), 2 + 2 * CHANNELS);
         let window = asked.last().unwrap();
         assert_eq!(window.address, 0xF014_0000);
@@ -747,6 +761,31 @@ mod tests {
         let (asked, reply) = answer(&view, 0xC, 6, &code);
         view.answered(&asked, &reply);
         assert!(view.rows()[0].changed[0]);
+    }
+
+    #[test]
+    fn an_answer_for_the_mcs_shown_before_is_dropped() {
+        let mut view = GtmView::new(Gtm::for_chip("TC36x").unwrap());
+        let (asked, reply) = answer(&view, 0x8, 5, &[]);
+        view.answered(&asked, &reply);
+        // The code window of MCS0 is asked, then MCS1 is shown before the answer comes.
+        let (asked, reply) = answer(&view, 0xC, 6, &[0x1000_0000; 24]);
+        assert_eq!(asked.ranges.len(), 2 + 2 * CHANNELS);
+        view.show_mcs(1);
+        view.answered(&asked, &reply);
+        assert_eq!(view.mcs(), 1);
+        assert!(view.rows().is_empty());
+        assert!(view.code().unwrap().is_empty());
+
+        // Another channel selected while its code was read: the channels count, the code not.
+        let mut view = GtmView::new(Gtm::for_chip("TC36x").unwrap());
+        let (asked, reply) = answer(&view, 0x8, 5, &[]);
+        view.answered(&asked, &reply);
+        let (asked, reply) = answer(&view, 0xC, 6, &[0x1000_0000; 24]);
+        view.select(2);
+        view.answered(&asked, &reply);
+        assert_eq!(view.rows()[0].state.as_ref().unwrap().pc(), 0xC);
+        assert!(view.code().unwrap().is_empty());
     }
 
     #[test]

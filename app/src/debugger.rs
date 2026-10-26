@@ -381,8 +381,11 @@ impl Debugger {
         .detach();
     }
 
-    /// Sends request `R` on the background executor; `done` gets the answer on the window's
-    /// entity.
+    /// Sends request `R` now, and waits for its answer on the background executor; `done` gets
+    /// the answer on the window's entity. Sending here, not in the background task, keeps the
+    /// requests in the order they are made: tasks of the background executor run in any order
+    /// (the OS thread pool on Windows), and two breakpoint updates or a counter set-up and its
+    /// first read must not change places.
     fn request<R>(
         &self,
         arguments: R::Arguments,
@@ -395,12 +398,12 @@ impl Debugger {
             return;
         };
         let session = self.session;
+        let sent = client.send::<R>(arguments);
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    client
-                        .request::<R>(arguments, TIMEOUT)
+                    sent.and_then(|pending| pending.wait(TIMEOUT))
                         .map_err(|error| error.to_string())
                 })
                 .await;
@@ -416,16 +419,17 @@ impl Debugger {
         .detach();
     }
 
-    /// Sends a request without a typed answer (execution control); a failure goes to the
-    /// console.
+    /// Sends a request without a typed answer (execution control) now, like [`Self::request`];
+    /// a failure goes to the console.
     fn request_raw(&self, command: &'static str, arguments: Value, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
             return;
         };
+        let sent = client.send_raw(command, arguments);
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { client.request_raw(command, arguments, TIMEOUT) })
+                .spawn(async move { sent.and_then(|pending| pending.wait(TIMEOUT)) })
                 .await;
             if let Err(error) = result {
                 this.update(cx, |this, cx| {
@@ -460,6 +464,18 @@ impl Debugger {
                                 any = true;
                             }
                             this.handle_event(event, cx);
+                        }
+                        // The adapter went away without `terminated` (it ended, or sent a
+                        // message that could not be read): the session is over, and every
+                        // request of the polls would fail.
+                        if this.session == session && client.is_closed() {
+                            this.log("the connection to the adapter closed".to_string());
+                            this.end_session(
+                                "Not attached (the connection to the adapter closed)",
+                                cx,
+                            );
+                            cx.notify();
+                            return false;
                         }
                         let trace_due = trace
                             && this

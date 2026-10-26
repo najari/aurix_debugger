@@ -15,14 +15,14 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 3 | 높음 | 플래시 | 로더의 `wdt_disable`이 CPU0·세이프티 와치독의 `CON1.DR`를 되돌리지 않음 | `loader/m25_flash_loader.c:175-187` | 수정됨 |
 | 4 | 높음 | 플래시 | `stop_loader`, `prepare_flash` 오류 경로에서 RAM·레지스터·코어 복원이 빠짐 | probe-rs-infineon `flash.rs` | 수정됨 |
 | 5 | 높음 | 플래시 | `--restore-unwritten`이 0만 있는 페이지를 건너뛰고, 읽기 오류를 지워진 페이지로 봄 | probe-rs-infineon `flash.rs` (`read_pages`) | 수정됨 |
-| 6 | 높음 | GUI | 요청이 스레드풀 태스크마다 따로 나가 순서가 바뀜 (브레이크포인트 유실, 캐시 측정 왜곡) | `app/src/debugger.rs:386-416` | 미착수 |
+| 6 | 높음 | GUI | 요청이 스레드풀 태스크마다 따로 나가 순서가 바뀜 (브레이크포인트 유실, 캐시 측정 왜곡) | `app/src/debugger.rs:386-416` | 수정됨 |
 | 7 | 높음 | DAP·스크립트 | 조건식·`expect`에 ASCII가 아닌 문자가 있으면 패닉 | `dap_server/server/condition.rs:68-77`, `crates/script/src/compare.rs:97` | 수정됨 |
 | 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 미착수 |
 | 9 | 중간 | TriCore | `on_device_reset`이 `SWEVT`를 다시 쓰지 않아 소프트웨어 브레이크포인트가 안 걸림 | `tricore/mod.rs:1438-1471` | 미착수 |
 | 10 | 중간 | TriCore | 스텝 중 오류가 나면 스텝용 트리거 창이 장치에 남음 | `tricore/mod.rs:1866-1933` | 미착수 |
 | 11 | 중간 | DAP | 비정상 종료 때 `clean_up`이 실행되지 않아 suspend 레지스터가 복원되지 않음 | `dap_server/server/peripheral_suspend.rs`, `session_data.rs` | 미착수 |
-| 12 | 중간 | GUI | 서버 연결이 끊겨도 알아채지 못함 | `crates/dap-client/src/lib.rs:168`, `app/src/debugger.rs:441-475` | 미착수 |
-| 13 | 중간 | GUI | GTM 탭에서 응답 전에 MCS를 바꾸면 언더플로 패닉(debug) 또는 잘못된 데이터(release) | `crates/debug-model/src/gtm.rs:536` | 미착수 |
+| 12 | 중간 | GUI | 서버 연결이 끊겨도 알아채지 못함 | `crates/dap-client/src/lib.rs:168`, `app/src/debugger.rs:441-475` | 수정됨 |
+| 13 | 중간 | GUI | GTM 탭에서 응답 전에 MCS를 바꾸면 언더플로 패닉(debug) 또는 잘못된 데이터(release) | `crates/debug-model/src/gtm.rs:536` | 수정됨 |
 | 14 | 중간 | 플래시 | 섹터 맵 불일치는 경고만 하고, TC27x BMHD0 섹터 지우기를 막지 않음 | probe-rs-infineon 플래시 | 미착수 |
 | 15 | 낮음 | DAP | C 식 파서에 재귀 깊이 제한이 없음 (스택 오버플로) | `dap_server` C 식 파서 | 미착수 |
 | 16 | 낮음 | DAP | 타입 있는 포인터 산술에 원소 크기를 곱하지 않음 | `dap_server` C 식 파서 | 미착수 |
@@ -33,7 +33,7 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 미착수 |
 | 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 미착수 |
 
-1~5번과 7번은 고쳤고 TC36x 보드에서 확인했습니다.
+1~7번과 12·13번은 고쳤고, 13번을 뺀 나머지는 TC36x 보드나 앱에서 확인했습니다(13번은 단위 테스트).
 
 - **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 - **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.
