@@ -7,7 +7,7 @@
 다섯 코어 가운데 지금 보드(TC275)에서 바로 할 수 있는 것은 GTM의 MCS 하나다. 그것도 실행 제어가 아니라 상태·메모리 보기와 GTM 전체 멈추기 수준이다. 나머지는 이 칩에 없거나(SCR·PPU·PCP), 자료가 공개되지 않았고 칩을 잠글 위험이 있다(HSM).
 
 - **GTM(MCS):** 모든 AURIX에 있다. 이 보드에는 GTM 1.5.5와 MCS 4개(채널 8개씩)가 있다. 레지스터와 메모리는 지금 버스(맵 0)로 읽힌다. GTM 전체 멈추기는 매뉴얼의 `GTM_OCS.SUS = 2`(Soft suspend)로 TriCore와 함께 할 수 있다. BP와 한 단계 실행은 GTM 4.1(TC4x)의 BP 유닛이나 Emulation Device의 MCDS가 필요한데, 이 보드는 ED가 아닌 것으로 보인다(CHIPID.EEA = 0, EMEM 읽기 거부).
-- **HSM(Cortex-M):** TC2xx·TC3xx 일부 칩에 있고, 이 보드에도 있지만(CHIPID.SEC = 1) HSM 부팅이 꺼져 있어 돌지 않는다. 매뉴얼에 따르면 HSM 디버그는 디버거의 버스 마스터(Cerberus)가 HSM 권한을 얻는 방식이다. 코어 디버그 접근 방법은 Infineon과 NDA를 맺은 사용자에게만 공개된다. HSM 부팅이나 UCB를 잘못 건드리면 칩이 영구히 잠긴다. 자료와 시험용 칩이 생기기 전에는 하지 않는다.
+- **HSM(Cortex-M):** TC2xx·TC3xx 일부 칩에 있고, 이 보드에도 있지만(CHIPID.SEC = 1) HSM 부팅이 꺼져 있어 돌지 않는다. HSM 디버그는 디버거의 버스 마스터(Cerberus)가 시스템 버스의 64 KB 창(`DBGBASE`·`DBGMEM`)으로 HSM의 Cortex-M 디버그 레지스터에 닿는 방식이다(TC3xx 자료와 TC36x 보드로 확인, 창 주소는 추정). 이 보드(TC275)에서는 TC3xx의 HSM 블록 주소가 모두 버스 오류라, TC27x의 블록 위치와 열리는 조건은 아직 모른다. HSM 부팅이나 UCB를 잘못 건드리면 칩이 영구히 잠긴다. 자료와 시험용 칩이 생기기 전에는 하지 않는다.
 - **SCR(XC800):** TC3xx 일부와 TC4x에 있고, TC27x에는 없다. 칩의 DAP으로 메모리에 매핑된 OCDS에 닿고, Infineon MCD(`mcdxdas`)도 `XC800` 코어로 내주므로 우리 구조에 가장 잘 맞는 다음 대상이다. TC3xx 보드(WP-6)가 있어야 한다.
 - **PPU(ARC EV71):** TC4x에만 있다. 레지스터 자료는 공개되지 않았지만, Infineon TCF 에이전트(vscode-aurix-tcf-debugger)는 PPU·CDSP를 MCD 코어로 멈추고 BP·한 단계를 한다. 우리도 MCD 프로브 경로로 같은 일을 할 수 있을 것으로 본다. TC4x 보드가 먼저다.
 - **PCP:** AUDO(TC1766, TC1797 등) 전용이다. AURIX에는 없어(TC27x SVD에도 없음) 범위 밖으로 둔다.
@@ -19,7 +19,7 @@
 | 코어 | 명령어 구조 | 있는 칩 | 이 보드(TC275) |
 | --- | --- | --- | --- |
 | GTM MCS(Multi Channel Sequencer) | Bosch GTM 전용 명령어. 채널마다 R0–R7·PC | 모든 AURIX: TC2xx(GTM 1.5.x), TC3xx(GTM 3), TC4x(eGTM 4.1) | 있음: GTM 1.5.5, MCS0–MCS3, 채널 8개씩(확인함) |
-| HSM(Hardware Security Module) | Arm Cortex-M(Lauterbach "HSM (Cortex-M)", 흔히 M3) | TC2xx·TC3xx의 일부 변형. TC4x는 CSRM(TriCore)으로 바뀜 | 모름: 공개 SVD에 HSM 블록이 없고, TC275T에 HSM이 있는지 확인하지 못함 |
+| HSM(Hardware Security Module) | Arm Cortex-M(Lauterbach "HSM (Cortex-M)", 흔히 M3) | TC2xx·TC3xx의 일부 변형. TC4x는 CSRM(TriCore)으로 바뀜 | 있음: CHIPID.SEC = 1, 다만 HSM 부팅 꺼짐(`HSMBOOTEN = 0`). 공개 SVD에 HSM 블록이 없고, TC3xx의 블록 주소(`0xF0040000`-)는 버스 오류 |
 | SCR(Standby Controller) | XC800(8051 호환), 최대 20 MHz, XRAM 8 KB | TC3xx 일부, TC4x | 없음 |
 | PPU(Parallel Processing Unit) | Synopsys ARC EV71(벡터 DSP) | TC4x만 | 없음 |
 | PCP/PCP2(Peripheral Control Processor) | PCP 전용 명령어 | AUDO(TC1766, TC1797 등)만 | 없음(AURIX는 DMA가 대신함) |
@@ -48,13 +48,17 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - **TC36x 보드에서 확인(읽기만, 2026-10-27):** CHIPID.SEC = 1, `PROCONHSMCFG`-`COTP1` = 0(HSM 부팅 꺼짐).
     - `HSM_ID`(`0xF0040008`) = `0x00BEC002`, `HSMCTRL` = 0, `HT2HSMS`/`HSM2HTS` = 0으로 읽힌다.
     - `DBGBASE`, `HSMOTGB`, `0xF0050000`은 버스 오류(`0x8d`)다. HSM 펌웨어가 돌지 않아 HSM 디버그가 열리지 않은 상태이고, 주소 맵의 "BE"와 맞는다.
+- **TC275 보드에서 확인(읽기만, 2026-10-27):** 같은 다섯 주소가 모두 버스 오류(`0x8d`)다. `HSM_ID`(`0xF0040008`)와 `HSMCTRL`(`0xF0041000`)도 마찬가지다. 같은 연결에서 `SCU_CHIPID`는 `0x47427060`(SEC = 1)으로 읽힌다.
+    - TC36x에서는 `HSM_ID`와 `HSMCTRL`이 읽혔다. 그러니 TC27x는 HSM 블록이 다른 주소에 있거나, HSM 부팅이 꺼지면 블록 전체가 닫히는 것으로 보인다. 어느 쪽인지는 TC27x HSM 자료가 있어야 안다.
+    - 위의 접근 경로와 아래의 창 변환은 **TC3xx에서 확인된 것**이다.
 - **자료:** Lauterbach는 HSM 디버그 설명서를 Infineon과 HSM NDA를 맺고 Infineon의 서면 승인을 받은 사용자에게만 주고, TriCore 라이선스에 Cortex-M 라이선스를 더 요구한다. winIDEA는 HSM을 UCB로 켜고 두 번째 디버거 창으로 디버그한다.
 - **동작 주의:** 디버거가 붙은 채 리셋하면 부트 코드가 HSM 첫 명령에 BP를 걸어 HSM이 멈춘다(메인 코어가 HSM을 기다리면 동기화가 깨짐). 앱 리셋 뒤에는 HSM이 곧바로 돌아 BP가 사라진다. Lauterbach의 `SYStem.Option.HSMRESTART`·`SSWWAIT`가 이를 다룬다.
-- **우리가 할 수 있는 것:** probe-rs의 Armv7m 구현을 그대로 쓰고, 그 아래에 "HSM 주소 → 창" 메모리 인터페이스를 둔다.
+- **우리가 할 수 있는 것(TC3xx):** probe-rs의 Armv7m 구현을 그대로 쓰고, 그 아래에 "HSM 주소 → 창" 메모리 인터페이스를 둔다. TC27x는 HSM 블록 주소부터 확인해야 한다.
     - **변환:** HSM 주소 `a`의 접근은 `DBGBASE`에 `a & 0xFFFF0000`을 쓰고(바뀔 때만), `0xF0050000 + (a & 0xFFFF)`를 TriCore 버스(TAS)로 읽고 쓴다. 예를 들어 `DHCSR`은 `DBGBASE = 0xE0000000`, 호스트 `0xF005EDF0`이다.
+    - **한 페이지:** Cortex-M의 디버그 레지스터는 모두 `0xE000xxxx` 한 64 KB 페이지에 있다. DWT `0xE0001000`, FPB `0xE0002000`, `DHCSR`·`DCRSR`·`DCRDR`·`DEMCR` `0xE000EDF0`-`0xE000EDFC`이다. 그래서 정지·한 단계·레지스터 접근은 `DBGBASE = 0xE0000000` 하나로 되고, `DBGBASE`를 바꾸는 것은 HSM 메모리를 읽고 쓸 때뿐이다.
     - **정지 그룹:** `HSMOTGB`가 HSM의 OCDS 트리거 버스 선택이라, TriCore와 묶는 정지(allStop)에 쓸 수 있을 것으로 보인다(세부 미확인).
     - **실칩 시험:** HSM 디버그가 열린 칩이 필요하다. HSM 코드를 쓰고 UCB에서 HSM 부팅을 켜야 하며, 잘못하면 칩이 영구히 잠긴다(HSM 코드 없이 부팅을 켬, AP32555 18쪽). 버려도 되는 시험용 칩에서만 한다.
-    - **남은 확인:** 창의 호스트 주소(`0xF0050000` 추정), 창 접근 폭(32비트로 보임), `DBGCTRL.HOST`의 뜻. HSM Target Specification(NDA 사본)에 있을 것이다.
+    - **남은 확인:** 창의 호스트 주소(`0xF0050000` 추정), 창 접근 폭(32비트로 보임), `DBGCTRL.HOST`의 뜻. HSM Target Specification(NDA 사본)에 있을 것이다. TC27x의 HSM 블록 주소와 열리는 조건은 TC27x HSM 자료가 필요하다.
 - **TC27x 매뉴얼(1.3, 10.5.5.6):** HSM은 "보안용 별도 프로세서 서브시스템, SPB에 마스터·슬레이브로 연결"이고 나머지는 Infineon 문의다(코어·디버그 레지스터 설명 없음). SSW가 `PROCONHSMCOTP.HSMBOOTEN`일 때 HSM을 부팅하고, HSM 펌웨어가 `HSMDBGDIS = 0`이면 HSM 디버그를 켜고 `PROCONHSM.DBGIFLCK = 0`이면 칩 디버그 인터페이스 잠금을 푼다. HSM 디버그가 켜지면 디버거의 버스 마스터 Cerberus가 HSM과 같은 권한으로 HSM 전용 플래시·자원에 닿는다. HSM 펌웨어가 실패하면(예: HSM 코드 없음) SSW가 멈춰 칩이 부팅하지 않는다. OCDS(OSTATE) 문서는 배포 제한이다.
 - **이 보드:** HSM은 있지만(SEC = 1) `HSMBOOTEN = 0`이라 돌지 않는다. HSM을 디버그하려면 HSM 코드를 쓰고 UCB_HSMCOTP에서 부팅을 켜야 하는데, 그 자체가 잠금 위험이 있는 UCB 쓰기다.
 
@@ -161,7 +165,7 @@ flowchart TB
 | 1. GTM MCS 보기 | 없음(지금 TC275로) | MCS 채널 상태·PC·R0–R7, MCS RAM, 디스어셈블리. 채널 켜기·끄기, GTM 전체 멈추기, 앱 B의 GTM 탭 | 중간 |
 | 2. GTM MCS BP·한 단계 | ED 보드 + 맵 1 어댑터, 또는 TC4x 보드 | ED: MCDS 경로의 온칩 BP(최대 4개), 이 보드는 ED가 아님. TC4x: GTM 4.1의 MCS마다 BP 2개, 한 단계 | 중간 |
 | 3. SCR (XC800) | TC3xx 보드(WP-6) | 8051 코어 유형, OCDS 모니터 명령, 디스어셈블러. 칩 DAP 경로(PMSWCR4) 또는 MCD의 XC800 코어 | 큼 |
-| 4. HSM (Cortex-M) | Infineon NDA 자료, HSM이 켜진 시험용 칩 | probe-rs Armv7m 재사용, 버스 위 ARM 메모리 인터페이스. UCB·HSM 플래시는 쓰지 않음 | 중간 |
+| 4. HSM (Cortex-M) | HSM이 켜진 시험용 칩, 창 주소 확인용 HSM Target Specification(TC3xx), TC27x HSM 블록 주소 자료 | probe-rs Armv7m 재사용, `DBGBASE`·`DBGMEM` 창 위의 메모리 인터페이스. UCB·HSM 플래시는 쓰지 않음 | 중간 |
 | 5. PPU (ARC EV71) | TC4x 보드, PPU를 코어로 내주는 DAS | MCD 코어 경로(Infineon TCF 에이전트 방식), CDSP도 같이. TC4x의 CSRM(TriCore)은 지금 코어 구현에 가깝다 | 큼 |
 
 1단계의 수용 기준 안: 플래시 데모나 RAM 시험 펌웨어에 MCS 코드를 하나 넣고, 앱 B의 GTM 탭이 채널마다 켜짐·PC·R0–R7을 0.5초마다 보여 주고, 메모리 탭으로 읽은 값과 같아야 한다. GTM 멈추기는 TC27x 설명서의 멈춤 비트를 확인한 뒤에만 넣는다.
@@ -183,7 +187,8 @@ flowchart TB
 ## 미결 사항
 
 - [x] TC275T(이 보드)에 HSM이 있는가. → 있다: CHIPID.SEC = 1(매뉴얼 7.4.8.2). 다만 HSMBOOTEN = 0이라 돌지 않는다.
-- [x] HSM Cortex-M 디버그 레지스터에 AURIX DAP에서 닿는 경로(AHB-AP인지, 시스템 버스 창인지). → 시스템 버스 창이다. Cerberus가 SPB의 HSM 블록에서 `DBGBASE`(`0xF0041010`)로 HSM 주소의 위 16비트를 고르고, 64 KB 디버그 메모리 창(`DBGMEM`)으로 읽고 쓴다. 창의 호스트 주소 `0xF0050000`은 추정이다. 창은 HSM 펌웨어가 HSM 디버그를 켰을 때만 열린다(TC36x 보드: 버스 오류). 자세한 것은 위 HSM 절.
+- [x] HSM Cortex-M 디버그 레지스터에 AURIX DAP에서 닿는 경로(AHB-AP인지, 시스템 버스 창인지). → 시스템 버스 창이다(TC3xx). Cerberus가 SPB의 HSM 블록에서 `DBGBASE`(`0xF0041010`)로 HSM 주소의 위 16비트를 고르고, 64 KB 디버그 메모리 창(`DBGMEM`)으로 읽고 쓴다. 창의 호스트 주소 `0xF0050000`은 추정이다. 창은 HSM 펌웨어가 HSM 디버그를 켰을 때만 열린다(TC36x 보드: 버스 오류). 자세한 것은 위 HSM 절.
+- [ ] TC27x(이 보드)의 HSM 블록 주소와 열리는 조건. TC3xx의 블록 주소(`0xF0040000`-`0xF005FFFF`)는 이 보드에서 `HSM_ID`까지 모두 버스 오류다(2026-10-27). TC27x HSM 자료가 필요하다.
 - [x] GTM 1.5.5의 디버그 인터페이스가 GTM을 멈추는 레지스터. → GTM_OCS(0xF019FDE8)의 SUS = 2(Soft suspend), OTGS suspend 신호에 반응(매뉴얼 25.2.6, OCS).
 - [x] 이 칩의 step(A/B/C)과, A-step의 GTM 정지 주의가 해당하는지. → C-step(CHREV 0x20)이라 해당하지 않는다. 받은 매뉴얼은 D-step판(V2.2)이라 차이는 delta 문서로 확인한다.
 - [ ] 이 보드가 정말 ED가 아닌지(보드 부품 번호, CHID 0x70의 데이터시트 부록). ED가 아니면 WP-5와 GTM MCS BP에는 ED 보드(예: TriBoard TC275 ED)가 따로 필요하다.
