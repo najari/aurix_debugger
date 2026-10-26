@@ -72,10 +72,10 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
     - HSM 부팅이 켜진 TC27x에서 이 섹터를 지우면 TC3xx처럼 잠길 수 있다.
     - 판단할 레지스터는 `FLASH0_PROCONHSMCOTP`(`0xF8002034`)다. 그 비트 배치(HSMBOOTEN, 섹터별 전용 비트)는 TC27x 매뉴얼 10.5.5.6에 있다.
     - 비트 배치가 오면 TC3xx와 같은 방식(지우기 전에 거부, `PROBE_RS_TRICORE_ALLOW_HSM_CODE_ERASE`로만 허용)으로 넣는다.
-2. **디버그 경로는 TC3xx와 같을 가능성이 높다.**
-    - 델타 문서(186쪽)는 "HSM 모듈은 그대로 재사용, PKC·HASH·와치독 추가와 RAM 96 KB로 증가만 다름"이라고 적는다.
-    - 그러므로 브리지, `DBGBASE`, 디버그 창(`DBGMEM`)의 방식은 같을 것으로 본다. TC27x에서 HSM 블록의 주소는 확인하지 않았다.
-    - 확인 방법(읽기만): TC275 보드에서 `0xF0040008`(HSM_ID)과 `0xF0041010`(DBGBASE)을 읽는다. TC3xx와 같다면 HSM_ID는 읽히고, DBGBASE는 HSM 부팅이 꺼져 있으니 버스 오류다.
+2. **디버그 경로의 방식은 같아 보이지만, TC27x의 HSM 블록 주소는 모른다.**
+    - 델타 문서(186쪽)는 "HSM 모듈은 그대로 재사용, PKC·HASH·와치독 추가와 RAM 96 KB로 증가만 다름"이라고 적는다. 그러므로 브리지, `DBGBASE`, 디버그 창(`DBGMEM`)의 방식은 같을 것으로 본다.
+    - 그러나 TC275 보드에서는 TC3xx의 블록 주소가 `HSM_ID`(`0xF0040008`)까지 모두 버스 오류다(위 "TC275 보드에서 확인"). TC36x에서는 `HSM_ID`가 읽혔다.
+    - 그러니 TC27x는 HSM 블록이 다른 주소에 있거나, HSM 부팅이 꺼지면 블록 전체가 닫힌다. TC27x 매뉴얼의 메모리 맵(HSM 항목)으로 블록 주소부터 확인한다.
 3. **리셋 원인 표시가 TC27x에서 틀릴 수 있다.**
     - probe-rs `45a95ee0`에서 `RSTSTAT` bit 26/27을 HSM 리셋으로 이름 붙였다. 칩을 가리지 않는다.
     - 이 위치는 TC3xx 매뉴얼로만 확인했다. TC27x의 `RSTSTAT` 배치가 다르면 틀린 이름이 나온다.
@@ -91,7 +91,7 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - **HSM 데이터 플래시:** TC27x DFLASH의 HSM 섹터(8 × 8 KB, AP32489)는 우리 DFLASH 맵(EEPROM 48개 섹터, `0xAF000000`-`0xAF05FFFF`) 밖이라 쓰기가 거부된다. HSM 섹터의 정확한 주소는 확인하지 않았다.
 - **디버그 인터페이스 잠김:** JTAG ID는 읽히는데 `SCU_CHIPID`를 못 읽으면 "잠김"이라고 알리는 플래셔 검사는 TC27x에도 그대로 돈다.
 
-TC27x 매뉴얼과 TC275 보드가 있는 쪽에서 할 일: `FLASH0_PROCONHSMCOTP` 비트 배치(10.5.5.6), `RSTSTAT` 배치, PFLASH 읽기 보호 레지스터를 확인하고, 위 2번의 두 주소를 읽는다. 값이 오면 1·3·4번을 코드에 넣는다.
+TC27x 매뉴얼과 TC275 보드가 있는 쪽에서 할 일: `FLASH0_PROCONHSMCOTP` 비트 배치(10.5.5.6), `RSTSTAT` 배치, PFLASH 읽기 보호 레지스터, 메모리 맵의 HSM 블록 주소를 확인한다. 값이 오면 1·3·4번을 코드에 넣는다.
 
 ### SCR (XC800)
 
@@ -224,7 +224,6 @@ flowchart TB
 - [x] 이 칩의 step(A/B/C)과, A-step의 GTM 정지 주의가 해당하는지. → C-step(CHREV 0x20)이라 해당하지 않는다. 받은 매뉴얼은 D-step판(V2.2)이라 차이는 delta 문서로 확인한다.
 - [ ] TC27x의 `FLASH0_PROCONHSMCOTP`(`0xF8002034`) 비트 배치(HSMBOOTEN, S6·S16·S17 전용 비트, 매뉴얼 10.5.5.6). 플래셔의 HSM 섹터 보호를 TC27x에 넣는 데 필요하다(위 "TC27x에 필요한 것" 1번).
 - [ ] TC27x의 `RSTSTAT` 배치(bit 26/27이 HSM 리셋인지)와 PFLASH 읽기 보호 레지스터(위 3·4번).
-- [ ] TC275 보드에서 `0xF0040008`(HSM_ID)과 `0xF0041010`(DBGBASE) 읽기(읽기만). TC3xx와 같은 HSM 브리지인지 확인한다(위 2번).
 - [ ] 이 보드가 정말 ED가 아닌지(보드 부품 번호, CHID 0x70의 데이터시트 부록). ED가 아니면 WP-5와 GTM MCS BP에는 ED 보드(예: TriBoard TC275 ED)가 따로 필요하다.
 - [ ] SCR·PPU·CSRM을 쓸 프로젝트와 칩(WP-6과 함께 정한다).
 
