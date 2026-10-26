@@ -141,7 +141,10 @@ hold as on the TC275 (STM0 runs at 100 MHz there too). So does `gtm_mcs` with
 `tc36x_gtm_demo.json` (`build_gtm.ps1 -Board tc36x`): the boot application of the test board
 leaves the GTM off (`GTM_CLC` = 3), so the program switches it on; and since a word of the TC3xx
 MCS memory never written fails its ECC check when an MCS reads ahead into it, stopping the
-channel, the program writes the whole memory of MCS1 first.
+channel, the program writes the whole memory of MCS1 first. `"suspendPeripherals": true` in a
+TC36x attach file (probe-rs fork) stops the system timer of each core of the session while the
+core is halted (STM0 with CPU0): an OS tick or a timeout does not run on behind a breakpoint.
+The session puts the registers back when it ends.
 
 ```text
 cargo test
