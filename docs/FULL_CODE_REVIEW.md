@@ -6,15 +6,15 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 
 ## 결함 목록
 
-높음 7건, 중간 7건, 낮음 7건입니다. 상태 열은 고치면서 바꿔 주세요. 경로의 `tricore/`는 probe-rs의 `probe-rs/src/architecture/tricore/`, `dap_server/`는 `probe-rs-tools/src/bin/probe-rs/cmd/dap_server/`입니다.
+높음 7건, 중간 8건, 낮음 7건입니다. 상태 열은 고치면서 바꿔 주세요. 경로의 `tricore/`는 probe-rs의 `probe-rs/src/architecture/tricore/`, `dap_server/`는 `probe-rs-tools/src/bin/probe-rs/cmd/dap_server/`입니다.
 
 | # | 심각도 | 영역 | 결함 | 위치 | 상태 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 높음 | TriCore | 스텝할 때 인터럽트를 끄는 기능이 MFCR ICR, SYSCALL, 트랩을 놓쳐 인터럽트가 꺼진 채로 남음 | `tricore/mod.rs:240-266`, `1841-1862` | 수정됨 |
 | 2 | 높음 | DAP·TriCore | allStop과 suspendPeripherals를 함께 쓰면 정지 그룹 검사가 HALT 필드를 지워 STM이 멈추지 않음 | `tricore/mod.rs:1616-1628`, `2162-2166` | 수정됨 |
-| 3 | 높음 | 플래시 | 로더의 `wdt_disable`이 CPU0·세이프티 와치독의 `CON1.DR`를 되돌리지 않음 | `loader/m25_flash_loader.c:175-187` | 미착수 |
-| 4 | 높음 | 플래시 | `stop_loader`, `prepare_flash` 오류 경로에서 RAM·레지스터·코어 복원이 빠짐 | probe-rs-infineon `flash.rs` | 미착수 |
-| 5 | 높음 | 플래시 | `--restore-unwritten`이 0만 있는 페이지를 건너뛰고, 읽기 오류를 지워진 페이지로 봄 | probe-rs-infineon `flash.rs` (`read_pages`) | 미착수 |
+| 3 | 높음 | 플래시 | 로더의 `wdt_disable`이 CPU0·세이프티 와치독의 `CON1.DR`를 되돌리지 않음 | `loader/m25_flash_loader.c:175-187` | 수정됨 |
+| 4 | 높음 | 플래시 | `stop_loader`, `prepare_flash` 오류 경로에서 RAM·레지스터·코어 복원이 빠짐 | probe-rs-infineon `flash.rs` | 수정됨 |
+| 5 | 높음 | 플래시 | `--restore-unwritten`이 0만 있는 페이지를 건너뛰고, 읽기 오류를 지워진 페이지로 봄 | probe-rs-infineon `flash.rs` (`read_pages`) | 수정됨 |
 | 6 | 높음 | GUI | 요청이 스레드풀 태스크마다 따로 나가 순서가 바뀜 (브레이크포인트 유실, 캐시 측정 왜곡) | `app/src/debugger.rs:386-416` | 미착수 |
 | 7 | 높음 | DAP·스크립트 | 조건식·`expect`에 ASCII가 아닌 문자가 있으면 패닉 | `dap_server/server/condition.rs:68-77`, `crates/script/src/compare.rs:97` | 수정됨 |
 | 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 미착수 |
@@ -31,8 +31,13 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 19 | 낮음 | GUI | 메모리 탭에 `u64` 끝 근처 주소를 넣으면 패닉 | `crates/debug-model/src/memory.rs:39`, `95`, `194` | 미착수 |
 | 20 | 낮음 | GUI·스크립트 | sw_trace 오류 메시지를 만들다 ASCII가 아닌 문자에서 패닉 | `crates/debug-model/src/sw_trace.rs:35` | 미착수 |
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 미착수 |
+| 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 미착수 |
 
-1·2·7번은 고쳤고 TC36x 보드에서 확인했습니다. 1번을 고치며 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
+1~5번과 7번은 고쳤고 TC36x 보드에서 확인했습니다.
+
+- **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
+- **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.
+- **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패합니다. 지우기 전에 멈추므로 데이터는 잃지 않습니다.
 
 ## 높음: 실제 사용 중 생기는 결함
 
