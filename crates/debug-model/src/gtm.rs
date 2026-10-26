@@ -41,7 +41,8 @@ pub const GTM_REV: u32 = 0x0;
 pub const MCFG_CTRL: u32 = 0xF40;
 /// `GTM_CLC`: clock control (`DISS`, bit 1: the GTM is disabled).
 pub const GTM_CLC: u32 = 0x9_FD00;
-/// `GTM_OCS`: OCDS suspend control (`SUS`, bits 27–24: 2 = soft suspend).
+/// `GTM_OCS` of the TC27x: OCDS suspend control (`SUS`, bits 27–24: 2 = soft suspend). The
+/// TC36x has it at `0x9_FD38`.
 pub const GTM_OCS: u32 = 0x9_FDE8;
 
 /// Where the GTM of a chip is and how its MCS instances are laid out.
