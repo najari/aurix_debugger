@@ -129,6 +129,21 @@ pub struct RttData {
     pub core: Option<u64>,
 }
 
+/// The probe-rs fork's event for a core state that DAP has no thread state for: `sleeping`, a
+/// core that runs no code (an AURIX core in boot halt, until the application starts it). It
+/// follows the `continued` event of the core.
+pub const CORE_STATUS_EVENT: &str = "probe-rs-core-status";
+
+/// The body of a [`CORE_STATUS_EVENT`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoreStatusEvent {
+    pub thread_id: i64,
+    pub status: String,
+    #[serde(default)]
+    pub description: String,
+}
+
 /// The event that announces an RTT down channel (input to the target).
 pub const RTT_PROMPT_EVENT: &str = "probe-rs-create-prompt";
 

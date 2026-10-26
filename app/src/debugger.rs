@@ -13,8 +13,8 @@ use aurix_dap_client::{DapClient, Event};
 use aurix_debug_model::breakpoints::InstructionBreakpoints;
 use aurix_debug_model::disassembly::{BEFORE, COUNT, DisassemblyWindow, MORE, Side, is_filler};
 use aurix_debug_model::protocol::{
-    DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RTT_PROMPT_EVENT,
-    RttChannelConfig, RttData, RttPrompt, RttWindowOpened,
+    CORE_STATUS_EVENT, CoreStatusEvent, DisassembleSigned, RTT_CHANNEL_CONFIG_EVENT,
+    RTT_DATA_EVENT, RTT_PROMPT_EVENT, RttChannelConfig, RttData, RttPrompt, RttWindowOpened,
 };
 use aurix_debug_model::reference::parse_address;
 use aurix_debug_model::rtt::RttChannels;
@@ -84,6 +84,9 @@ mod color {
 enum ThreadState {
     Unknown,
     Running,
+    /// The core runs no code (an AURIX core in boot halt): the server's
+    /// [`CORE_STATUS_EVENT`]. It has no stack, and pause and step do nothing.
+    Asleep,
     Stopped(String),
 }
 
@@ -501,7 +504,7 @@ impl Debugger {
                 let thread = body.get("threadId").and_then(Value::as_i64);
                 if body.get("allThreadsStopped").and_then(Value::as_bool) == Some(true) {
                     for row in &mut self.threads {
-                        if !matches!(row.state, ThreadState::Stopped(_)) {
+                        if !matches!(row.state, ThreadState::Stopped(_) | ThreadState::Asleep) {
                             row.state = ThreadState::Stopped("stopped".into());
                         }
                     }
@@ -581,6 +584,16 @@ impl Debugger {
                         prompt.prompt_handle, prompt.prompt_name
                     ));
                     self.rtt.prompted(prompt);
+                }
+            }
+            CORE_STATUS_EVENT => {
+                if let Ok(status) = serde_json::from_value::<CoreStatusEvent>(event.body)
+                    && status.status == "sleeping"
+                {
+                    self.set_state(status.thread_id, ThreadState::Asleep);
+                    if self.selected_thread == Some(status.thread_id) {
+                        self.clear_stack();
+                    }
                 }
             }
             RTT_DATA_EVENT => {
@@ -714,7 +727,10 @@ impl Debugger {
         let Some(thread) = self.selected_thread else {
             return;
         };
-        if self.state(thread) == Some(&ThreadState::Running) {
+        if matches!(
+            self.state(thread),
+            Some(ThreadState::Running | ThreadState::Asleep)
+        ) {
             return;
         }
         let arguments = StackTraceArguments {
@@ -1010,8 +1026,8 @@ impl Debugger {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.selected_thread.and_then(|id| self.state(id));
         let stopped = matches!(state, Some(ThreadState::Stopped(_)));
-        // A thread of unknown state may run: pause is offered.
-        let running = state.is_some() && !stopped;
+        // A thread of unknown state may run: pause is offered. A sleeping core takes none.
+        let running = state.is_some() && !stopped && state != Some(&ThreadState::Asleep);
         div()
             .flex()
             .items_center()
@@ -1092,6 +1108,7 @@ impl Debugger {
                 let state = match &thread.state {
                     ThreadState::Unknown => "?".to_string(),
                     ThreadState::Running => "running".to_string(),
+                    ThreadState::Asleep => "asleep".to_string(),
                     ThreadState::Stopped(reason) => format!("stopped: {reason}"),
                 };
                 div()

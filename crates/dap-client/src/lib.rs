@@ -117,6 +117,36 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<Value>> {
     Ok(Some(serde_json::from_slice(&body)?))
 }
 
+/// Why a request failed: the error of the response's body (its format with the variables put
+/// in), else its short `message`. probe-rs answers every failure with the message `cancelled`
+/// and the reason in the error.
+fn failure_message(response: &Value) -> String {
+    if let Some(format) = response
+        .pointer("/body/error/format")
+        .and_then(Value::as_str)
+    {
+        let mut text = format.to_string();
+        if let Some(variables) = response
+            .pointer("/body/error/variables")
+            .and_then(Value::as_object)
+        {
+            for (name, value) in variables {
+                if let Some(value) = value.as_str() {
+                    text = text.replace(&format!("{{{name}}}"), value);
+                }
+            }
+        }
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    response
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("no message")
+        .to_string()
+}
+
 impl DapClient {
     /// Connects to an adapter listening at `address`.
     pub fn connect(address: impl ToSocketAddrs) -> Result<Self, Error> {
@@ -270,16 +300,7 @@ impl DapClient {
             Err(RecvTimeoutError::Disconnected) => return Err(Error::Closed),
         };
         if response.get("success").and_then(Value::as_bool) != Some(true) {
-            let message = response
-                .get("message")
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    response
-                        .pointer("/body/error/format")
-                        .and_then(Value::as_str)
-                })
-                .unwrap_or("no message")
-                .to_string();
+            let message = failure_message(&response);
             return Err(Error::Failed {
                 command: command.to_string(),
                 message,
@@ -398,6 +419,27 @@ mod tests {
         }
         assert!(closed);
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_failure_says_why() {
+        // probe-rs: the reason in the error's variables, the message always "cancelled".
+        let probe_rs = json!({
+            "success": false, "message": "cancelled",
+            "body": { "error": { "id": 0, "format": "{response_message}",
+                "variables": { "response_message": "Core must be halted: The core is asleep." } } }
+        });
+        assert_eq!(
+            failure_message(&probe_rs),
+            "Core must be halted: The core is asleep."
+        );
+        let plain = json!({ "success": false, "message": "nope" });
+        assert_eq!(failure_message(&plain), "nope");
+        let formatted = json!({
+            "success": false, "message": "x",
+            "body": { "error": { "id": 1, "format": "no file {path}", "variables": { "path": "a.c" } } }
+        });
+        assert_eq!(failure_message(&formatted), "no file a.c");
     }
 
     #[test]
