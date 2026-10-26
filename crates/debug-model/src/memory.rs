@@ -36,10 +36,20 @@ pub fn parse_location(text: &str) -> Result<(u64, Option<u64>), String> {
     if digits.is_empty() {
         return Err("an address, such as 0x7000A000".into());
     }
-    u64::from_str_radix(&digits, 16)
-        .map(|address| (address, core))
-        .map_err(|_| format!("not a hex address: {address}"))
+    let value =
+        u64::from_str_radix(&digits, 16).map_err(|_| format!("not a hex address: {address}"))?;
+    if value > LAST_ADDRESS {
+        return Err(format!(
+            "{address} is beyond the 32-bit addresses of the AURIX"
+        ));
+    }
+    Ok((value, core))
 }
+
+/// The last address of the AURIX's 32-bit address space.
+pub const LAST_ADDRESS: u64 = 0xFFFF_FFFF;
+/// The last start of the window: its last row ends at [`LAST_ADDRESS`].
+const LAST_START: u64 = LAST_ADDRESS + 1 - SIZE as u64;
 
 #[derive(Clone, Debug, Default)]
 pub struct MemoryView {
@@ -78,9 +88,10 @@ impl MemoryView {
         self.error.as_deref()
     }
 
-    /// Shows the memory from `address` (rounded down to a row) through `core`.
+    /// Shows the memory from `address` (rounded down to a row) through `core`; the window
+    /// stays inside the 32-bit address space.
     pub fn show(&mut self, address: u64, core: Option<u64>) {
-        self.start = Some(address - address % ROW as u64);
+        self.start = Some((address - address % ROW as u64).min(LAST_START));
         self.core = core;
         self.moved();
     }
@@ -92,7 +103,7 @@ impl MemoryView {
             self.start = Some(if rows < 0 {
                 start.saturating_sub(delta)
             } else {
-                start.saturating_add(delta)
+                start.saturating_add(delta).min(LAST_START)
             });
             self.moved();
         }
@@ -516,6 +527,8 @@ mod tests {
         assert!(parse_location("g_ticks").is_err());
         assert!(parse_location("0x10@x").is_err());
         assert!(parse_location("").is_err());
+        assert_eq!(parse_location("0xFFFFFFFF"), Ok((0xFFFF_FFFF, None)));
+        assert!(parse_location("FFFFFFFFFFFFFF80").is_err());
     }
 
     #[test]
@@ -523,6 +536,20 @@ mod tests {
         assert_eq!(decode_base64("AAEC/w==").unwrap(), [0, 1, 2, 255]);
         assert_eq!(decode_base64("aGVsbG8").unwrap(), b"hello");
         assert!(decode_base64("a*b").is_err());
+    }
+
+    #[test]
+    fn the_window_stays_in_the_32_bit_address_space() {
+        let mut view = MemoryView::default();
+        view.show(0xFFFF_FFF0, None);
+        assert_eq!(view.start(), Some(0x1_0000_0000 - SIZE as u64));
+        view.scroll(3);
+        assert_eq!(view.start(), Some(0x1_0000_0000 - SIZE as u64));
+        view.scroll(-1);
+        assert_eq!(view.start(), Some(0x1_0000_0000 - SIZE as u64 - ROW as u64));
+        view.show(0x20, None);
+        view.scroll(-5);
+        assert_eq!(view.start(), Some(0));
     }
 
     fn answer(bytes: &[u8]) -> Result<(Option<String>, Option<u64>), String> {

@@ -24,16 +24,16 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 12 | 중간 | GUI | 서버 연결이 끊겨도 알아채지 못함 | `crates/dap-client/src/lib.rs:168`, `app/src/debugger.rs:441-475` | 수정됨 |
 | 13 | 중간 | GUI | GTM 탭에서 응답 전에 MCS를 바꾸면 언더플로 패닉(debug) 또는 잘못된 데이터(release) | `crates/debug-model/src/gtm.rs:536` | 수정됨 |
 | 14 | 중간 | 플래시 | 섹터 맵 불일치는 경고만 하고, TC27x BMHD0 섹터 지우기를 막지 않음 | probe-rs-infineon 플래시 | 수정됨 |
-| 15 | 낮음 | DAP | C 식 파서에 재귀 깊이 제한이 없음 (스택 오버플로) | `dap_server` C 식 파서 | 미착수 |
-| 16 | 낮음 | DAP | 타입 있는 포인터 산술에 원소 크기를 곱하지 않음 | `dap_server` C 식 파서 | 미착수 |
-| 17 | 낮음 | DAP | 정렬 안 된 레지스터에 SVD 필드를 쓰면 옆 레지스터를 건드림 | `svd.rs:219-241` | 미착수 |
-| 18 | 낮음 | DAP | `readRanges`의 count 합이 넘칠 수 있음 | `adapter.rs:280` | 미착수 |
-| 19 | 낮음 | GUI | 메모리 탭에 `u64` 끝 근처 주소를 넣으면 패닉 | `crates/debug-model/src/memory.rs:39`, `95`, `194` | 미착수 |
-| 20 | 낮음 | GUI·스크립트 | sw_trace 오류 메시지를 만들다 ASCII가 아닌 문자에서 패닉 | `crates/debug-model/src/sw_trace.rs:35` | 미착수 |
-| 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 미착수 |
+| 15 | 낮음 | DAP | C 식 파서에 재귀 깊이 제한이 없음 (스택 오버플로) | `dap_server` C 식 파서 | 수정됨 |
+| 16 | 낮음 | DAP | 타입 있는 포인터 산술에 원소 크기를 곱하지 않음 | `dap_server` C 식 파서 | 수정됨 |
+| 17 | 낮음 | DAP | 정렬 안 된 레지스터에 SVD 필드를 쓰면 옆 레지스터를 건드림 | `svd.rs:219-241` | 수정됨 |
+| 18 | 낮음 | DAP | `readRanges`의 count 합이 넘칠 수 있음 | `adapter.rs:280` | 수정됨 |
+| 19 | 낮음 | GUI | 메모리 탭에 `u64` 끝 근처 주소를 넣으면 패닉 | `crates/debug-model/src/memory.rs:39`, `95`, `194` | 수정됨 |
+| 20 | 낮음 | GUI·스크립트 | sw_trace 오류 메시지를 만들다 ASCII가 아닌 문자에서 패닉 | `crates/debug-model/src/sw_trace.rs:35` | 수정됨 |
+| 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 수정됨 |
 | 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 미착수 |
 
-1~10번, 12~14번은 고쳤고 11번은 일부만 고쳤습니다. 8~10번과 13·14번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
+1~10번, 12~21번은 고쳤고 11번은 일부만 고쳤습니다. 8~10번, 13~17번, 19~21번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
 
 - **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 - **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.

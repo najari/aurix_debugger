@@ -30,9 +30,10 @@ pub fn binary_bytes(text: &str) -> Result<Vec<u8>, String> {
             .strip_prefix("0x")
             .and_then(|r| r.get(..2).map(|d| (d, &r[2..])));
         let Some((digits, after)) = digits else {
+            // The first characters, not bytes: a cut inside a character would panic.
             return Err(format!(
                 "`{}` is not 0x and two hex digits",
-                &rest[..rest.len().min(8)]
+                rest.chars().take(8).collect::<String>()
             ));
         };
         out.push(
@@ -616,6 +617,9 @@ mod tests {
         assert_eq!(binary_bytes("").unwrap(), Vec::<u8>::new());
         assert!(binary_bytes("0x0").is_err());
         assert!(binary_bytes("hello").is_err());
+        // Characters that are not ASCII near the start: an error, no panic.
+        assert!(binary_bytes("0x0aé").is_err());
+        assert!(binary_bytes("가나다라마바").is_err());
     }
 
     #[test]
