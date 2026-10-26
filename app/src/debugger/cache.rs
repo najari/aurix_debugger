@@ -23,9 +23,12 @@ impl Debugger {
     /// The cache view for the chip of `attach`, if its caches are known.
     pub(super) fn load_cache_for(&mut self, attach: &str) {
         self.cache_busy = false;
-        self.cache = AttachSummary::read(attach)
+        let chip = AttachSummary::read(attach)
             .ok()
-            .and_then(|summary| summary.chip)
+            .and_then(|summary| summary.chip);
+        // The memory tab writes the RAM of this chip only.
+        self.memory.set_chip(chip.as_deref());
+        self.cache = chip
             .and_then(|chip| Caches::for_chip(&chip))
             .map(CacheView::new);
     }

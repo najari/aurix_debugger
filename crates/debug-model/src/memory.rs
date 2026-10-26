@@ -56,9 +56,16 @@ pub struct MemoryView {
     busy: Option<u64>,
     /// Counts the moves of the window; an answer of another generation is dropped.
     generation: u64,
+    /// The RAM of the chip, the only memory written.
+    rams: RamMap,
 }
 
 impl MemoryView {
+    /// Sets the chip (`TC275`, `TC36x`) whose RAM the view may write.
+    pub fn set_chip(&mut self, chip: Option<&str>) {
+        self.rams = RamMap::for_chip(chip);
+    }
+
     pub fn start(&self) -> Option<u64> {
         self.start
     }
@@ -188,9 +195,10 @@ impl MemoryView {
     }
 }
 
-/// A RAM of the TC27x that the memory view may write: name, start, end (exclusive), and the
+/// A RAM of a chip that the memory view may write: name, start, end (exclusive), and the
 /// core whose local address it is, if it is a core's scratch-pad RAM (from probe-rs's
-/// `TC27x.yaml`).
+/// `TC27x.yaml`, `TC36x.yaml`).
+#[derive(Debug)]
 struct Ram {
     name: &'static str,
     start: u64,
@@ -249,64 +257,139 @@ const TC27X_RAM: &[Ram] = &[
     },
 ];
 
+/// The TC36x (TriBoard TC3X5): two cores with 192 KiB of DSPR and 32 KiB of PSPR each, and two
+/// 64 KiB DLMUs.
+const TC36X_RAM: &[Ram] = &[
+    Ram {
+        name: "DSPR0",
+        start: 0x7000_0000,
+        end: 0x7003_0000,
+        core: Some(0),
+    },
+    Ram {
+        name: "PSPR0",
+        start: 0x7010_0000,
+        end: 0x7010_8000,
+        core: Some(0),
+    },
+    Ram {
+        name: "DSPR1",
+        start: 0x6000_0000,
+        end: 0x6003_0000,
+        core: Some(1),
+    },
+    Ram {
+        name: "PSPR1",
+        start: 0x6010_0000,
+        end: 0x6010_8000,
+        core: Some(1),
+    },
+    Ram {
+        name: "DLMU0",
+        start: 0x9000_0000,
+        end: 0x9001_0000,
+        core: None,
+    },
+    Ram {
+        name: "DLMU1",
+        start: 0x9001_0000,
+        end: 0x9002_0000,
+        core: None,
+    },
+];
+
+/// The RAM a chip's memory view may write.
+#[derive(Clone, Copy, Debug)]
+pub struct RamMap {
+    rams: &'static [Ram],
+}
+
+impl Default for RamMap {
+    fn default() -> Self {
+        Self::TC27X
+    }
+}
+
+impl RamMap {
+    pub const TC27X: Self = Self { rams: TC27X_RAM };
+    pub const TC36X: Self = Self { rams: TC36X_RAM };
+
+    /// The RAM of `chip` (`TC275`, `TC36x`, as an attach file names it); the TC27x's when the
+    /// chip is not known.
+    pub fn for_chip(chip: Option<&str>) -> Self {
+        match chip {
+            Some(chip) if chip.to_ascii_uppercase().starts_with("TC36") => Self::TC36X,
+            _ => Self::TC27X,
+        }
+    }
+}
+
 /// Where a core sees its own data and program scratch-pad RAM.
 const LOCAL_DSPR: u64 = 0xd000_0000;
 const LOCAL_PSPR: u64 = 0xc000_0000;
 
-/// The RAM of the TC27x that `len` bytes from `address`, read through `core`, are in: its name,
-/// or why they may not be written. Flash, the UCBs, the peripheral registers and anything not
-/// RAM are refused, as are bytes that leave the RAM they start in. A local address
-/// (`0xD000_0000`, `0xC000_0000`) names the RAM of the core it goes through.
+/// [`RamMap::writable`] for the TC27x.
 pub fn writable_ram(address: u64, len: usize, core: Option<u64>) -> Result<String, String> {
-    if len == 0 {
-        return Err("nothing to write".into());
-    }
-    let end = address
-        .checked_add(len as u64)
-        .ok_or_else(|| "past the end of the address space".to_string())?;
-    let local = |base: u64, kind: &str| {
-        let core = core.ok_or_else(|| {
-            format!("{address:#010x} is a core's local address: name the core (@0, @1, @2)")
-        })?;
-        let name = format!("{kind}{core}");
-        let ram = TC27X_RAM
-            .iter()
-            .find(|ram| ram.core == Some(core) && ram.name == name)
-            .ok_or_else(|| format!("core {core} has no {kind}"))?;
-        let size = ram.end - ram.start;
-        if address >= base && end <= base + size {
-            Ok(format!("{} (core {core}, local)", ram.name))
-        } else {
-            Err(format!(
-                "{address:#010x}..{end:#010x} leaves {} ({base:#010x}..{:#010x})",
-                ram.name,
-                base + size
-            ))
+    RamMap::TC27X.writable(address, len, core)
+}
+
+impl RamMap {
+    /// The RAM that `len` bytes from `address`, read through `core`, are in: its name, or why
+    /// they may not be written. Flash, the UCBs, the peripheral registers and anything not RAM
+    /// are refused, as are bytes that leave the RAM they start in. A local address
+    /// (`0xD000_0000`, `0xC000_0000`) names the RAM of the core it goes through.
+    pub fn writable(&self, address: u64, len: usize, core: Option<u64>) -> Result<String, String> {
+        let rams = self.rams;
+        if len == 0 {
+            return Err("nothing to write".into());
         }
-    };
-    match address >> 28 {
-        0xd => return local(LOCAL_DSPR, "DSPR"),
-        0xc => return local(LOCAL_PSPR, "PSPR"),
-        _ => {}
-    }
-    let Some(ram) = TC27X_RAM
-        .iter()
-        .find(|ram| address >= ram.start && address < ram.end)
-    else {
-        let what = match address >> 28 {
-            0x8 | 0xa => "flash (program or data flash, UCBs)",
-            0xf => "a peripheral register",
-            _ => "not RAM",
+        let end = address
+            .checked_add(len as u64)
+            .ok_or_else(|| "past the end of the address space".to_string())?;
+        let local = |base: u64, kind: &str| {
+            let core = core.ok_or_else(|| {
+                format!("{address:#010x} is a core's local address: name the core (@0, @1, …)")
+            })?;
+            let name = format!("{kind}{core}");
+            let ram = rams
+                .iter()
+                .find(|ram| ram.core == Some(core) && ram.name == name)
+                .ok_or_else(|| format!("core {core} has no {kind}"))?;
+            let size = ram.end - ram.start;
+            if address >= base && end <= base + size {
+                Ok(format!("{} (core {core}, local)", ram.name))
+            } else {
+                Err(format!(
+                    "{address:#010x}..{end:#010x} leaves {} ({base:#010x}..{:#010x})",
+                    ram.name,
+                    base + size
+                ))
+            }
         };
-        return Err(format!("{address:#010x} is {what}: only RAM is written"));
-    };
-    if end > ram.end {
-        return Err(format!(
-            "{address:#010x}..{end:#010x} leaves {} (ends at {:#010x})",
-            ram.name, ram.end
-        ));
+        match address >> 28 {
+            0xd => return local(LOCAL_DSPR, "DSPR"),
+            0xc => return local(LOCAL_PSPR, "PSPR"),
+            _ => {}
+        }
+        let Some(ram) = rams
+            .iter()
+            .find(|ram| address >= ram.start && address < ram.end)
+        else {
+            let what = match address >> 28 {
+                0x8 | 0xa => "flash (program or data flash, UCBs)",
+                0xf => "a peripheral register",
+                _ => "not RAM",
+            };
+            return Err(format!("{address:#010x} is {what}: only RAM is written"));
+        };
+        if end > ram.end {
+            return Err(format!(
+                "{address:#010x}..{end:#010x} leaves {} (ends at {:#010x})",
+                ram.name, ram.end
+            ));
+        }
+        Ok(ram.name.to_string())
     }
-    Ok(ram.name.to_string())
 }
 
 /// Bytes typed in hex: `2A 00 ff`, `2a00ff`, `0x2A,0x00`.
@@ -342,7 +425,7 @@ impl MemoryView {
         address: u64,
         bytes: &[u8],
     ) -> Result<(WriteMemoryArguments, String), String> {
-        let ram = writable_ram(address, bytes.len(), self.core)?;
+        let ram = self.rams.writable(address, bytes.len(), self.core)?;
         let reference = format!("{address:#010x}");
         let memory_reference = match self.core {
             Some(core) => with_core(&reference, core),
@@ -476,6 +559,56 @@ mod tests {
         assert!(writable_ram(0xd001_c000, 1, Some(1)).is_ok());
         assert!(writable_ram(0xc000_0000, 2, Some(2)).is_ok());
         assert!(writable_ram(0x7000_0000, 0, None).is_err());
+    }
+
+    #[test]
+    fn the_tc36x_ram_is_its_own() {
+        let rams = RamMap::for_chip(Some("TC36x"));
+        // 192 KiB of DSPR: the TC27x's 112 KiB end is inside it.
+        assert_eq!(rams.writable(0x7001_c000, 4, None).unwrap(), "DSPR0");
+        assert_eq!(rams.writable(0x6002_fffc, 4, None).unwrap(), "DSPR1");
+        assert!(rams.writable(0x7003_0000, 1, None).is_err());
+        assert!(
+            RamMap::for_chip(Some("TC275"))
+                .writable(0x7001_c000, 4, None)
+                .is_err()
+        );
+        assert_eq!(rams.writable(0x7010_7ffc, 4, None).unwrap(), "PSPR0");
+        assert!(rams.writable(0x7010_8000, 1, None).is_err());
+        assert_eq!(rams.writable(0x9001_0000, 4, None).unwrap(), "DLMU1");
+        // The local windows are of the core's size; there is no CPU2.
+        assert_eq!(
+            rams.writable(0xd002_fffc, 4, Some(1)).unwrap(),
+            "DSPR1 (core 1, local)"
+        );
+        assert!(rams.writable(0xd003_0000, 1, Some(1)).is_err());
+        assert!(rams.writable(0xd000_0000, 1, Some(2)).is_err());
+        // Flash and registers stay refused.
+        assert!(
+            rams.writable(0x8040_0000, 1, None)
+                .unwrap_err()
+                .contains("flash")
+        );
+        assert!(
+            rams.writable(0xf000_0010, 1, None)
+                .unwrap_err()
+                .contains("only RAM")
+        );
+        // An unknown chip is the TC27x.
+        assert!(
+            RamMap::for_chip(None)
+                .writable(0x7001_c000, 1, None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_view_writes_the_ram_of_its_chip() {
+        let mut view = MemoryView::default();
+        view.show(0x7001_c000, None);
+        assert!(view.write_request(0x7001_c000, &[1]).is_err());
+        view.set_chip(Some("TC36x"));
+        assert!(view.write_request(0x7001_c000, &[1]).is_ok());
     }
 
     #[test]

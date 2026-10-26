@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use aurix_dap_client::{DapClient, Error as ClientError, Event};
 use aurix_debug_model::breakpoints::{BreakpointSettings, InstructionBreakpoints};
-use aurix_debug_model::memory::{decode_base64, encode_base64, writable_ram};
+use aurix_debug_model::memory::{RamMap, decode_base64, encode_base64};
 use aurix_debug_model::protocol::{
     LiveWatch, LiveWatchArguments, RTT_CHANNEL_CONFIG_EVENT, RTT_DATA_EVENT, RTT_PROMPT_EVENT,
     ReplCommand, RttChannelConfig, RttData, RttPrompt, RttWindowOpened,
@@ -145,6 +145,8 @@ struct Session<'a> {
     vars: HashMap<String, String>,
     /// Per `repeat` line being run, the times left.
     repeats: HashMap<usize, i128>,
+    /// The RAM `write` may write: the attached chip's.
+    rams: RamMap,
 }
 
 /// Where the run goes after a line.
@@ -177,6 +179,7 @@ pub fn run(script: &Script, base_dir: &Path, options: &Options, out: &mut dyn Wr
         sw_trace: SwTrace::default(),
         vars: script.vars.clone(),
         repeats: HashMap::new(),
+        rams: RamMap::default(),
     };
     let mut outcome = Outcome::default();
     let mut at = 0;
@@ -699,6 +702,7 @@ impl Session<'_> {
             Err(_) => Names::default(),
         };
         self.sw_trace = SwTrace::new(names);
+        self.rams = RamMap::for_chip(arguments["chip"].as_str());
         self.client()?
             .request_raw("attach", arguments, ATTACH_TIMEOUT)?;
         self.request("configurationDone", json!({}))?;
@@ -1178,7 +1182,10 @@ impl Session<'_> {
         core: Option<u64>,
         bytes: &[u8],
     ) -> Result<Option<String>, Fail> {
-        let ram = writable_ram(address, bytes.len(), core).map_err(Fail::Error)?;
+        let ram = self
+            .rams
+            .writable(address, bytes.len(), core)
+            .map_err(Fail::Error)?;
         self.request(
             "writeMemory",
             json!({
