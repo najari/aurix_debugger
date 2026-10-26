@@ -88,7 +88,8 @@ pub fn split_comparison(text: &str) -> Result<(String, Op, String), String> {
 /// pointer's member) is none.
 fn find_operator(text: &str) -> Option<(usize, &'static str, Op)> {
     let bytes = text.as_bytes();
-    (0..text.len()).find_map(|at| {
+    // At the characters only: slicing inside one (a name in Korean) would panic.
+    text.char_indices().find_map(|(at, _)| {
         if at > 0 && bytes[at] == b'>' && bytes[at - 1] == b'-' {
             return None;
         }
@@ -195,5 +196,12 @@ mod tests {
         assert!(split_comparison("== 3").is_err());
         assert!(split_comparison("k ==").is_err());
         assert!(split_comparison("a b == 3").is_err());
+        // Names that are not ASCII.
+        assert_eq!(
+            split_comparison("변수 == 1").unwrap(),
+            ("변수".to_string(), Op::Eq, "1".to_string())
+        );
+        assert_eq!(split_comparison("é>1").unwrap().0, "é");
+        assert!(split_comparison("변수").is_err());
     }
 }

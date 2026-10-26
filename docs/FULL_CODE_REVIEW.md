@@ -10,13 +10,13 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 
 | # | 심각도 | 영역 | 결함 | 위치 | 상태 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 높음 | TriCore | 스텝할 때 인터럽트를 끄는 기능이 MFCR ICR, SYSCALL, 트랩을 놓쳐 인터럽트가 꺼진 채로 남음 | `tricore/mod.rs:240-266`, `1841-1862` | 미착수 |
-| 2 | 높음 | DAP·TriCore | allStop과 suspendPeripherals를 함께 쓰면 정지 그룹 검사가 HALT 필드를 지워 STM이 멈추지 않음 | `tricore/mod.rs:1616-1628`, `2162-2166` | 미착수 |
+| 1 | 높음 | TriCore | 스텝할 때 인터럽트를 끄는 기능이 MFCR ICR, SYSCALL, 트랩을 놓쳐 인터럽트가 꺼진 채로 남음 | `tricore/mod.rs:240-266`, `1841-1862` | 수정됨 |
+| 2 | 높음 | DAP·TriCore | allStop과 suspendPeripherals를 함께 쓰면 정지 그룹 검사가 HALT 필드를 지워 STM이 멈추지 않음 | `tricore/mod.rs:1616-1628`, `2162-2166` | 수정됨 |
 | 3 | 높음 | 플래시 | 로더의 `wdt_disable`이 CPU0·세이프티 와치독의 `CON1.DR`를 되돌리지 않음 | `loader/m25_flash_loader.c:175-187` | 미착수 |
 | 4 | 높음 | 플래시 | `stop_loader`, `prepare_flash` 오류 경로에서 RAM·레지스터·코어 복원이 빠짐 | probe-rs-infineon `flash.rs` | 미착수 |
 | 5 | 높음 | 플래시 | `--restore-unwritten`이 0만 있는 페이지를 건너뛰고, 읽기 오류를 지워진 페이지로 봄 | probe-rs-infineon `flash.rs` (`read_pages`) | 미착수 |
 | 6 | 높음 | GUI | 요청이 스레드풀 태스크마다 따로 나가 순서가 바뀜 (브레이크포인트 유실, 캐시 측정 왜곡) | `app/src/debugger.rs:386-416` | 미착수 |
-| 7 | 높음 | DAP·스크립트 | 조건식·`expect`에 ASCII가 아닌 문자가 있으면 패닉 | `dap_server/server/condition.rs:68-77`, `crates/script/src/compare.rs:97` | 미착수 |
+| 7 | 높음 | DAP·스크립트 | 조건식·`expect`에 ASCII가 아닌 문자가 있으면 패닉 | `dap_server/server/condition.rs:68-77`, `crates/script/src/compare.rs:97` | 수정됨 |
 | 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 미착수 |
 | 9 | 중간 | TriCore | `on_device_reset`이 `SWEVT`를 다시 쓰지 않아 소프트웨어 브레이크포인트가 안 걸림 | `tricore/mod.rs:1438-1471` | 미착수 |
 | 10 | 중간 | TriCore | 스텝 중 오류가 나면 스텝용 트리거 창이 장치에 남음 | `tricore/mod.rs:1866-1933` | 미착수 |
@@ -31,6 +31,8 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 19 | 낮음 | GUI | 메모리 탭에 `u64` 끝 근처 주소를 넣으면 패닉 | `crates/debug-model/src/memory.rs:39`, `95`, `194` | 미착수 |
 | 20 | 낮음 | GUI·스크립트 | sw_trace 오류 메시지를 만들다 ASCII가 아닌 문자에서 패닉 | `crates/debug-model/src/sw_trace.rs:35` | 미착수 |
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 미착수 |
+
+1·2·7번은 고쳤고 TC36x 보드에서 확인했습니다. 1번을 고치며 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 
 ## 높음: 실제 사용 중 생기는 결함
 
