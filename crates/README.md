@@ -79,7 +79,7 @@ server is asked anything.
 | `expect <name> <op> <value>` | `evaluate` in the top frame of the stopped core, compared like the conditions |
 | `expect live <global>[@core] <op> <value> [within <time>]` | `liveWatch` every 0.5 s until it holds |
 | `expect memory <address>[@core] <bytes>` | `readMemory` compared |
-| `write <address>[@core] <bytes>` | `writeMemory`, RAM only: of the chip the attach file names (TC27x, or TC36x with its 192 KiB DSPRs and DLMUs) |
+| `write <address>[@core] <bytes>` | `writeMemory`, RAM only: of the chip the attach file names (TC27x, or TC36x with its 192 KiB DSPRs and its DLMUs, cached and not cached) |
 | `rtt send <core> <channel> <text>` | A line to the core's RTT down channel |
 | `rtt expect <core> <channel> "<regex>" [within <time>]` | A line on the up channel that matches, after the last one matched |
 | `sleep <time>`, `disconnect` | The run ends with `disconnect` anyway |

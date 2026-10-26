@@ -258,7 +258,8 @@ const TC27X_RAM: &[Ram] = &[
 ];
 
 /// The TC36x (TriBoard TC3X5): two cores with 192 KiB of DSPR and 32 KiB of PSPR each, and two
-/// 64 KiB DLMUs.
+/// 64 KiB DLMUs, also seen not cached in segment B (the same RAM: a write through one address
+/// reads back through the other on the board).
 const TC36X_RAM: &[Ram] = &[
     Ram {
         name: "DSPR0",
@@ -294,6 +295,18 @@ const TC36X_RAM: &[Ram] = &[
         name: "DLMU1",
         start: 0x9001_0000,
         end: 0x9002_0000,
+        core: None,
+    },
+    Ram {
+        name: "DLMU0 (not cached)",
+        start: 0xb000_0000,
+        end: 0xb001_0000,
+        core: None,
+    },
+    Ram {
+        name: "DLMU1 (not cached)",
+        start: 0xb001_0000,
+        end: 0xb002_0000,
         core: None,
     },
 ];
@@ -576,6 +589,17 @@ mod tests {
         assert_eq!(rams.writable(0x7010_7ffc, 4, None).unwrap(), "PSPR0");
         assert!(rams.writable(0x7010_8000, 1, None).is_err());
         assert_eq!(rams.writable(0x9001_0000, 4, None).unwrap(), "DLMU1");
+        assert_eq!(
+            rams.writable(0xb000_fffc, 4, None).unwrap(),
+            "DLMU0 (not cached)"
+        );
+        assert_eq!(
+            rams.writable(0xb001_0000, 4, None).unwrap(),
+            "DLMU1 (not cached)"
+        );
+        // Past the DLMUs: a bus error on the board.
+        assert!(rams.writable(0x9002_0000, 1, None).is_err());
+        assert!(rams.writable(0xb002_0000, 1, None).is_err());
         // The local windows are of the core's size; there is no CPU2.
         assert_eq!(
             rams.writable(0xd002_fffc, 4, Some(1)).unwrap(),
