@@ -1,0 +1,21 @@
+{
+  "request": "attach",
+  "cwd": "C:\\work\\claude\\zed\\aurix_tcf_demo",
+  "chip": "TC36x",
+  "probe": "058b:0000",
+  "coreConfigs": [
+    {
+      "coreIndex": 0,
+      "programBinary": "C:\\work\\claude\\zed\\aurix_tcf_demo\\build\\orti_trace_tc36x.elf",
+      "rttEnabled": true,
+      "rttChannelFormats": [{ "channelNumber": 0, "dataFormat": "BinaryLE" }]
+    },
+    {
+      "coreIndex": 1,
+      "programBinary": "C:\\work\\claude\\zed\\aurix_tcf_demo\\build\\trace_cpu1_tc36x.elf",
+      "rttEnabled": true,
+      "rttChannelFormats": [{ "channelNumber": 0, "dataFormat": "BinaryLE" }]
+    }
+  ],
+  "consoleLogLevel": "Console"
+}

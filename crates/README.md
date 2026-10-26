@@ -128,7 +128,15 @@ end of the loop).
 
 On the TC36x (TriBoard TC3X5) the same with `tc36x_demo_2cores.json` (the flash demo
 `demo_flash_tc36x.elf`; CPU1 of the test board is in boot halt and reads as sleeping) and
-`tc36x_rtt_cpu0.json` (`build_rtt.ps1 -Board tc36x`, CPU0 only).
+`tc36x_rtt_cpu0.json` (`build_rtt.ps1 -Board tc36x`, CPU0 only). The scripts take the attach
+file from `--set ATTACH=...`: the flash demo ones `tc36x_demo_2cores.json`, `orti_paths` and
+`orti_expressions` `tc36x_orti_demo.json` (`build_orti.ps1 -Board tc36x`), `sw_trace`
+`tc36x_orti_trace.json` (`build_orti.ps1 -Trace -Board tc36x`) and `sw_trace_2cores`
+`tc36x_trace_2cores.json` (with `build_trace_cpu1.ps1 -Board tc36x`, started with
+`start_in_flash --core 1`, which takes the boot-halted CPU1 out of boot halt). On the board they
+hold as on the TC275 (STM0 runs at 100 MHz there too). `gtm_mcs` does not: the boot application
+of the test board leaves the GTM off (`GTM_CLC` = 3), and the TC3xx GTM has its MCS registers
+elsewhere (`0xF01F_0000`, three instances).
 
 ```text
 cargo test

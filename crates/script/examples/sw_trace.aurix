@@ -2,7 +2,7 @@
 # start_in_flash, RAM only): aurix_trace.h records on RTT channel "SwTrace" (BinaryLE), the ids
 # named in tc275_orti_trace.trace. Each task runs a slice of 0.4 s, the timer ISR every 10 ms.
 
-include lib/trace_start.aurix ATTACH=../../dap-client/examples/tc275_orti_trace.json
+include lib/trace_start.aurix ATTACH=${ATTACH:-../../dap-client/examples/tc275_orti_trace.json}
 
 trace expect TimerIsr count >= 50 within 2s
 trace expect TimerIsr interval avg >= 9.9ms

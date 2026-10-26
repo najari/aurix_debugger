@@ -1,7 +1,7 @@
 # The path expressions of orti_demo.ort read by liveWatch, the core running and halted (the ORTI
 # test program: zed/aurix_tcf_demo/build_orti.ps1, started with start_in_flash, RAM only).
 
-attach ../../dap-client/examples/tc275_orti_demo.json
+attach ${ATTACH:-../../dap-client/examples/tc275_orti_demo.json}
 continue all
 expect live OsTcb[0].prio == 3 within 2s
 expect live OsTcb[2].prio == 1

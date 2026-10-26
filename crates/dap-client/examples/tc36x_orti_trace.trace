@@ -1,0 +1,7 @@
+# The ids of the software trace of zed/aurix_tcf_demo/build\orti_trace_tc36x.elf (src/orti_demo.c),
+# read by app B's SW Trace tab and aurix-run for the attach file tc36x_orti_trace.json.
+1 = TaskA
+2 = TaskB
+3 = TaskC
+10 = TimerIsr
+20 = dispatch

@@ -3,7 +3,7 @@
 # (zed/aurix_tcf_demo/build_orti.ps1, started with start_in_flash, RAM only). In `expect live` the
 # expression comes before the comparison, without spaces or comparison operators of its own.
 
-attach ../../dap-client/examples/tc275_orti_demo.json
+attach ${ATTACH:-../../dap-client/examples/tc275_orti_demo.json}
 continue all
 # A cast and a division: OsTicks counts up.
 expect live (unsigned)OsTicks/2 > 5 within 2s

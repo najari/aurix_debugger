@@ -1,5 +1,5 @@
 /*
- * trace_cpu1 - a software trace on CPU1 for the SW Trace tab (TC275 CPU1, RAM only), next to the
+ * trace_cpu1 - a software trace on CPU1 for the SW Trace tab (TC275/TC36x CPU1, RAM only), next to the
  * ORTI demo's trace on CPU0 (build_trace_cpu1.ps1, build\trace_cpu1.elf).
  *
  * Code in the CPU1 PSPR, data in the CPU1 DSPR: start_in_flash --core 1 writes it to RAM. It
@@ -13,7 +13,7 @@
 #define AURIX_TRACE_BUFFER_SIZE 4096u
 #include "aurix_trace.h"
 
-#define STM0_TIM0 (*(volatile unsigned *)0xF0000010u)
+#define STM0_TIM0 (*(volatile unsigned *)(STM0_TIM0_ADDRESS)) /* build_trace_cpu1.ps1 */
 #define MS 100000u /* STM0 at 100 MHz */
 #define JOB_TICKS 10000u
 

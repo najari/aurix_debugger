@@ -1,5 +1,5 @@
 /*
- * orti_demo - a tiny cooperative "OS" for the ORTI view of the debugger (TC275 CPU0, RAM only).
+ * orti_demo - a tiny cooperative "OS" for the ORTI view of the debugger (TC275/TC36x CPU0, RAM only).
  *
  * Code in the CPU0 PSPR, data in the CPU0 DSPR: start_in_flash writes it to RAM, the flash is
  * not touched. Three tasks run in turn, each for about 0.4 s (STM0 at 100 MHz); a "timer ISR"
@@ -42,8 +42,8 @@
 #define TRACE_ISR 10u
 #define TRACE_DISPATCH 20u
 
-/* STM0 timer, low 32 bits (TC27x: STM0 base 0xF0000000, TIM0 at +0x10), 100 MHz. */
-#define STM0_TIM0 (*(volatile unsigned *)0xF0000010u)
+/* STM0 TIM0, 100 MHz: 0xF0000010 TC27x, 0xF0001010 TC3xx, from the build script (-Board). */
+#define STM0_TIM0 (*(volatile unsigned *)(STM0_TIM0_ADDRESS))
 #define SLICE 40000000u /* 0.4 s */
 #define TICK 1000000u   /* 10 ms */
 
