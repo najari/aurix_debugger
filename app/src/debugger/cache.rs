@@ -142,8 +142,8 @@ impl Debugger {
             .text_xs()
             .text_color(hsla(color::MUTED))
             .child(cell("Core".into(), 48., color::MUTED))
-            .child(cell("TriCore".into(), 64., color::MUTED))
-            .child(cell("Program".into(), 220., color::MUTED))
+            .child(cell("TriCore".into(), 80., color::MUTED))
+            .child(cell("Program".into(), 270., color::MUTED))
             .child(cell("Data".into(), 270., color::MUTED))
             .child(cell("Code cached".into(), 96., color::MUTED))
             .child(cell("Data cached".into(), 96., color::MUTED));
@@ -165,8 +165,8 @@ impl Debugger {
                             .font_family("Consolas")
                             .text_sm()
                             .child(cell(format!("CPU{}", row.core), 48., color::TEXT))
-                            .child(cell(row.kind.name().into(), 64., color::MUTED))
-                            .child(cell(row.program.clone(), 220., on(&row.program)))
+                            .child(cell(row.kind.name().into(), 80., color::MUTED))
+                            .child(cell(row.program.clone(), 270., on(&row.program)))
                             .child(cell(row.data.clone(), 270., on(&row.data)))
                             .child(cell(row.code_segments, 96., color::TEXT))
                             .child(cell(row.data_segments, 96., color::TEXT)),
@@ -174,14 +174,14 @@ impl Debugger {
                     .when_some(row.measured, |this, m| {
                         this.child(
                             div()
-                                .pl(px(112.))
+                                .pl(px(128.))
                                 .text_xs()
                                 .text_color(hsla(color::ACCENT))
                                 .child(format!("{}; {}", m.program, m.data)),
                         )
                         .child(
                             div()
-                                .pl(px(112.))
+                                .pl(px(128.))
                                 .text_xs()
                                 .text_color(hsla(color::TEXT))
                                 .child(m.bench),
