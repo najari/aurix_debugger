@@ -20,7 +20,7 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 수정됨 |
 | 9 | 중간 | TriCore | `on_device_reset`이 `SWEVT`를 다시 쓰지 않아 소프트웨어 브레이크포인트가 안 걸림 | `tricore/mod.rs:1438-1471` | 수정됨 |
 | 10 | 중간 | TriCore | 스텝 중 오류가 나면 스텝용 트리거 창이 장치에 남음 | `tricore/mod.rs:1866-1933` | 수정됨 |
-| 11 | 중간 | DAP | 비정상 종료 때 `clean_up`이 실행되지 않아 suspend 레지스터가 복원되지 않음 | `dap_server/server/peripheral_suspend.rs`, `session_data.rs` | 진행 중 |
+| 11 | 중간 | DAP | 비정상 종료 때 `clean_up`이 실행되지 않아 suspend 레지스터가 복원되지 않음 | `dap_server/server/peripheral_suspend.rs`, `session_data.rs` | 수정됨 |
 | 12 | 중간 | GUI | 서버 연결이 끊겨도 알아채지 못함 | `crates/dap-client/src/lib.rs:168`, `app/src/debugger.rs:441-475` | 수정됨 |
 | 13 | 중간 | GUI | GTM 탭에서 응답 전에 MCS를 바꾸면 언더플로 패닉(debug) 또는 잘못된 데이터(release) | `crates/debug-model/src/gtm.rs:536` | 수정됨 |
 | 14 | 중간 | 플래시 | 섹터 맵 불일치는 경고만 하고, TC27x BMHD0 섹터 지우기를 막지 않음 | probe-rs-infineon 플래시 | 수정됨 |
@@ -33,12 +33,12 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 수정됨 |
 | 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 수정됨 |
 
-1~10번, 12~21번은 고쳤고 11번은 일부만 고쳤습니다. 8~10번, 13~17번, 19~21번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
+1~22번 모두 고쳤습니다. 8~10번, 13~17번, 19~21번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
 
 - **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 - **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.
 - **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패했습니다. probe-rs 플래시 시퀀스에 `read_unwritten`을 두고, AURIX는 페이지 단위로 읽어 지워진 페이지를 0(지워진 값)으로 돌려주도록 고쳤습니다. TC36x 데모 섹터에서 데모 코드, 0 페이지, 지워진 페이지가 모두 그대로 남는 것을 확인했습니다. 5번의 0 페이지 규칙은 이제 `--restore-unwritten`일 때만 적용됩니다(일반 다운로드는 나머지를 지움).
-- **11번(일부):** 요청 처리 중 오류로 끝나거나 세션 시작이 `apply` 뒤에 실패하면 suspend 레지스터를 되돌립니다. dap-server 프로세스가 강제 종료되는 경우는 저널이 필요해 아직 남아 있습니다. 그룹의 TRC 저널 항목과도 엮여 있습니다.
+- **11번:** 요청 처리 중 오류로 끝나거나 세션 시작이 `apply` 뒤에 실패하면 suspend 레지스터를 되돌립니다. dap-server 프로세스가 강제 종료되면, 코어 저널에 남긴 값(TRCn과 STM OCS는 코어 n, TL1ST는 첫 코어)을 다음 세션이 되돌립니다. TRCn은 그룹 항목보다 먼저 복구되어 둘 다 돌아옵니다. 보드에서 서버를 죽여 확인했습니다.
 - **14번:** BMHD 위치 중 BMHD0(`0xA0000000`)만 AP32566으로 확인했고, BMHD1~3은 일반적으로 알려진 TC27x 주소입니다. 주소가 틀려도 거부가 줄어들 뿐 잘못 거부하지는 않습니다.
 
 ## 높음: 실제 사용 중 생기는 결함
