@@ -40,6 +40,7 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 - **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패했습니다. probe-rs 플래시 시퀀스에 `read_unwritten`을 두고, AURIX는 페이지 단위로 읽어 지워진 페이지를 0(지워진 값)으로 돌려주도록 고쳤습니다. TC36x 데모 섹터에서 데모 코드, 0 페이지, 지워진 페이지가 모두 그대로 남는 것을 확인했습니다. 5번의 0 페이지 규칙은 이제 `--restore-unwritten`일 때만 적용됩니다(일반 다운로드는 나머지를 지움).
 - **11번:** 요청 처리 중 오류로 끝나거나 세션 시작이 `apply` 뒤에 실패하면 suspend 레지스터를 되돌립니다. dap-server 프로세스가 강제 종료되면, 코어 저널에 남긴 값(TRCn과 STM OCS는 코어 n, TL1ST는 첫 코어)을 다음 세션이 되돌립니다. TRCn은 그룹 항목보다 먼저 복구되어 둘 다 돌아옵니다. 보드에서 서버를 죽여 확인했습니다.
 - **14번:** BMHD 위치 중 BMHD0(`0xA0000000`)만 AP32566으로 확인했고, BMHD1~3은 일반적으로 알려진 TC27x 주소입니다. 주소가 틀려도 거부가 줄어들 뿐 잘못 거부하지는 않습니다.
+- **HSM(추가 검토):** HSM 부팅이 켜진 TC3xx에서 PF0 S0~S39의 HSM 부트 코드를 지우면 장치가 영구히 잠길 수 있습니다(AP32555, AP32349). 이제 플래셔가 `DMU_SP_PROCONHSMCFG/CBS/CX0/CX1`과 `RPRO`를 읽어, HSM_exclusive 섹터와 읽기 보호된 PFLASH는 항상, HSM이 부팅하면 S0~S39는 `PROBE_RS_TRICORE_ALLOW_HSM_CODE_ERASE` 없이는 지우기 전에 거부합니다. 로더 오류는 비트 이름(PROER 등)으로, HSM 리셋(RSTSTAT bit 26/27)과 잠긴 디버그 인터페이스·SSWWAIT는 안내 문구로 나옵니다. 이 보드는 HSM 설정이 모두 0이라 단위 테스트로 확인했고, 보드에서는 정상 다운로드가 막히지 않는 것만 확인했습니다.
 
 ## 높음: 실제 사용 중 생기는 결함
 
