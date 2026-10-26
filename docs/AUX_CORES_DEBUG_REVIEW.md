@@ -62,6 +62,37 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - **TC27x 매뉴얼(1.3, 10.5.5.6):** HSM은 "보안용 별도 프로세서 서브시스템, SPB에 마스터·슬레이브로 연결"이고 나머지는 Infineon 문의다(코어·디버그 레지스터 설명 없음). SSW가 `PROCONHSMCOTP.HSMBOOTEN`일 때 HSM을 부팅하고, HSM 펌웨어가 `HSMDBGDIS = 0`이면 HSM 디버그를 켜고 `PROCONHSM.DBGIFLCK = 0`이면 칩 디버그 인터페이스 잠금을 푼다. HSM 디버그가 켜지면 디버거의 버스 마스터 Cerberus가 HSM과 같은 권한으로 HSM 전용 플래시·자원에 닿는다. HSM 펌웨어가 실패하면(예: HSM 코드 없음) SSW가 멈춰 칩이 부팅하지 않는다. OCDS(OSTATE) 문서는 배포 제한이다.
 - **이 보드:** HSM은 있지만(SEC = 1) `HSMBOOTEN = 0`이라 돌지 않는다. HSM을 디버그하려면 HSM 코드를 쓰고 UCB_HSMCOTP에서 부팅을 켜야 하는데, 그 자체가 잠금 위험이 있는 UCB 쓰기다.
 
+#### TC27x에 필요한 것 (2026-10-27)
+
+위의 경로와 플래셔의 HSM 보호는 TC3xx(TC36x) 자료와 보드로 확인했다. TC27x에 맞추려면 아래가 필요하다. 근거는 TC2xx를 다루는 비교 자료(AP32489, AP32481, TC3xx-TC2xx 델타 문서)와 우리 코드다. TC27x 매뉴얼은 이 확인에 쓰지 못했다(다른 PC에 있음).
+
+1. **플래셔의 HSM 섹터 보호가 TC27x에는 없다(가장 중요).**
+    - 지금의 HSM 검사(`HsmProtection`)는 TC3xx에서만 돈다. TC27x는 BMHD 검사만 있다.
+    - TC2xx의 HSM 전용 섹터는 PF0 S6(16 KB)과 S16·S17(64 KB씩)이다(AP32489 11쪽, TC23x/TC27x/TC29x). 우리 `tc27x_sectors()` 맵으로는 S6 `0xA0018000`, S16 `0xA0060000`, S17 `0xA0070000`이고 크기도 맞는다.
+    - HSM 부팅이 켜진 TC27x에서 이 섹터를 지우면 TC3xx처럼 잠길 수 있다.
+    - 판단할 레지스터는 `FLASH0_PROCONHSMCOTP`(`0xF8002034`)다. 그 비트 배치(HSMBOOTEN, 섹터별 전용 비트)는 TC27x 매뉴얼 10.5.5.6에 있다.
+    - 비트 배치가 오면 TC3xx와 같은 방식(지우기 전에 거부, `PROBE_RS_TRICORE_ALLOW_HSM_CODE_ERASE`로만 허용)으로 넣는다.
+2. **디버그 경로는 TC3xx와 같을 가능성이 높다.**
+    - 델타 문서(186쪽)는 "HSM 모듈은 그대로 재사용, PKC·HASH·와치독 추가와 RAM 96 KB로 증가만 다름"이라고 적는다.
+    - 그러므로 브리지, `DBGBASE`, 디버그 창(`DBGMEM`)의 방식은 같을 것으로 본다. TC27x에서 HSM 블록의 주소는 확인하지 않았다.
+    - 확인 방법(읽기만): TC275 보드에서 `0xF0040008`(HSM_ID)과 `0xF0041010`(DBGBASE)을 읽는다. TC3xx와 같다면 HSM_ID는 읽히고, DBGBASE는 HSM 부팅이 꺼져 있으니 버스 오류다.
+3. **리셋 원인 표시가 TC27x에서 틀릴 수 있다.**
+    - probe-rs `45a95ee0`에서 `RSTSTAT` bit 26/27을 HSM 리셋으로 이름 붙였다. 칩을 가리지 않는다.
+    - 이 위치는 TC3xx 매뉴얼로만 확인했다. TC27x의 `RSTSTAT` 배치가 다르면 틀린 이름이 나온다.
+    - TC27x 매뉴얼로 확인하거나, 확인 전까지는 TC3xx에서만 붙인다.
+4. **PFLASH 읽기 보호 검사가 TC27x에는 없다.**
+    - TC3xx의 `DMU_HF_PROCONPF.RPRO` 검사를 TC27x에서는 하지 않는다. 레지스터가 `FLASH0` 쪽에 따로 있다(매뉴얼 필요).
+    - 읽기 보호가 걸린 장치에서는 모든 읽기가 버스 오류라, 백업이 전부 "지워짐"으로 남을 수 있다.
+5. **TC2xx 정오표 HSM_TC.H003.** TC2xx에서는 디버거의 접근이 HSM으로 버스 오류를 "새게" 한다. TC3xx에서 고쳐졌지만, 디버깅으로 생기는 버스 충돌은 남아 있다(델타 문서 186쪽). HSM이 도는 TC27x를 디버그할 때의 주의 사항이다.
+
+이미 문제없는 것:
+
+- **UCB:** TC2xx UCB는 `0xAF100000`부터다(UCB_DBG `0xAF101400`, UCB_HSM `0xAF101800`, AP32481). 우리 플래셔는 이 영역을 쓰지 않는다.
+- **HSM 데이터 플래시:** TC27x DFLASH의 HSM 섹터(8 × 8 KB, AP32489)는 우리 DFLASH 맵(EEPROM 48개 섹터, `0xAF000000`-`0xAF05FFFF`) 밖이라 쓰기가 거부된다. HSM 섹터의 정확한 주소는 확인하지 않았다.
+- **디버그 인터페이스 잠김:** JTAG ID는 읽히는데 `SCU_CHIPID`를 못 읽으면 "잠김"이라고 알리는 플래셔 검사는 TC27x에도 그대로 돈다.
+
+TC27x 매뉴얼과 TC275 보드가 있는 쪽에서 할 일: `FLASH0_PROCONHSMCOTP` 비트 배치(10.5.5.6), `RSTSTAT` 배치, PFLASH 읽기 보호 레지스터를 확인하고, 위 2번의 두 주소를 읽는다. 값이 오면 1·3·4번을 코드에 넣는다.
+
 ### SCR (XC800)
 
 - **디버그 하드웨어:** XC800 OCDS. 1.5 KB 모니터 ROM과 64 B 모니터 RAM이 있고, 단일 핀 DAP(SPD)가 있다. XRAM 8 KB는 SPB로 읽힌다.
@@ -191,6 +222,9 @@ flowchart TB
 - [ ] TC27x(이 보드)의 HSM 블록 주소와 열리는 조건. TC3xx의 블록 주소(`0xF0040000`-`0xF005FFFF`)는 이 보드에서 `HSM_ID`까지 모두 버스 오류다(2026-10-27). TC27x HSM 자료가 필요하다.
 - [x] GTM 1.5.5의 디버그 인터페이스가 GTM을 멈추는 레지스터. → GTM_OCS(0xF019FDE8)의 SUS = 2(Soft suspend), OTGS suspend 신호에 반응(매뉴얼 25.2.6, OCS).
 - [x] 이 칩의 step(A/B/C)과, A-step의 GTM 정지 주의가 해당하는지. → C-step(CHREV 0x20)이라 해당하지 않는다. 받은 매뉴얼은 D-step판(V2.2)이라 차이는 delta 문서로 확인한다.
+- [ ] TC27x의 `FLASH0_PROCONHSMCOTP`(`0xF8002034`) 비트 배치(HSMBOOTEN, S6·S16·S17 전용 비트, 매뉴얼 10.5.5.6). 플래셔의 HSM 섹터 보호를 TC27x에 넣는 데 필요하다(위 "TC27x에 필요한 것" 1번).
+- [ ] TC27x의 `RSTSTAT` 배치(bit 26/27이 HSM 리셋인지)와 PFLASH 읽기 보호 레지스터(위 3·4번).
+- [ ] TC275 보드에서 `0xF0040008`(HSM_ID)과 `0xF0041010`(DBGBASE) 읽기(읽기만). TC3xx와 같은 HSM 브리지인지 확인한다(위 2번).
 - [ ] 이 보드가 정말 ED가 아닌지(보드 부품 번호, CHID 0x70의 데이터시트 부록). ED가 아니면 WP-5와 GTM MCS BP에는 ED 보드(예: TriBoard TC275 ED)가 따로 필요하다.
 - [ ] SCR·PPU·CSRM을 쓸 프로젝트와 칩(WP-6과 함께 정한다).
 
@@ -202,6 +236,7 @@ flowchart TB
 - TASKING winIDEA: [HSM 디버깅](https://www.tasking.com/documentation/winidea/hsm-debugging.html), [TC3xx HSM 프로그래밍](https://www.tasking.com/documentation/winidea/tc3-hsm-programming.html), [SCR 디버깅](https://www.tasking.com/documentation/winidea/scr-debugging.html), [HSM BP와 리셋](https://kb.tasking.com/KB/123/Article/441)
 - Infineon TC3xx: [User's Manual Part 1 v1.0(공개, 9.4.5.4 Suspend Mode Support, `CBS_TLS.TL1`)](https://www.infineon.com/dgdl/Infineon-AURIX_TC3xx_Part1-UserManual-v01_00-EN.pdf), [Debug Support 교육 자료](https://www.infineon.com/assets/row/public/documents/10/56/infineon-aurix-tc3xx-debug-support-training-en.pdf)(Central Suspend Switch), [TC3xx 온라인 문서](https://documentation.infineon.com/aurixtc3xx/docs/ecm1708773291965)(OCDS 장 없음); TASKING: [WDT suspend와 TL1](https://kb.tasking.com/KB/85/Article/296), [동기화·주변장치 suspend 설정](https://kb.tasking.com/KB/125/Article/440)
 - Infineon: [TC3xx SCR 개요](https://documentation.infineon.com/aurixtc3xx/docs/luk1713080514892), [TC4x SCR](https://documentation.infineon.com/aurixtc4xx/docs/qnw1545140364277), [TC3xx 잠금 주의 사항](https://www.infineon.com/assets/row/public/documents/10/57/infineon-aurix-tc3xx-devicelocking-dos-and-donts-additionaltechnicalinformation-en.pdf)
+- Infineon TC2xx·TC3xx 비교: AP32489(HSM changes TC3xx vs TC2xx, 11쪽 TC2xx HSM 섹터), TC3xx_vs_TC2xx_Deltas V2.1(185-186쪽 HSM 재사용과 정오표 HSM_TC.H003, 36-37쪽 PFLASH와 HSM PCODE)
 - Infineon HSM 자료(사용자가 `D:\work\claude\infineon\10 AURIX TC3xx HSM`에 둔 사본, 저장소에는 넣지 않음): AP32481(UCB_HSM corner case, `DBGMEM`), AP32543(HSM 보안 부팅 디버그, `OSTATE.IF_LCK`), AP32555(18쪽, HSM 부팅 잠금), AP32349(HSM 부트로더 위치), 예제 코드 `AURIX_HSM Revealed_Training_Demo_1.0.zip`(`Tricore/registers_hsm.h`, `ArmCortexM3/peripherals/debugextension_hsm.h`·`bridge_hsm.h`, `IfxHsm_TestsCommon.c`)와 AP32391 예제(`CMSIS/Include/component/bridge.h`의 `HSM_DBGMEM_Type`, `DBGCTRL`). TC3xx User's Manual V2.1.0(6.5.4.1, 6.5.4.4.1)과 TC36x 부록(주소 맵 `0xF0040000`-`0xF005FFFF`)
 - HighTec: [개발 플랫폼](https://hightec-rt.com/products/development-platform)(GTM/MCS, PPU, Cortex-M 컴파일러)
 - Infineon AURIX TC27x D-Step User's Manual V2.2(2014-12, 사용자가 `docs/`에 둔 사본, 저장소에는 넣지 않음): 1.3 HSM, 1.4 OCDS, 7.4.8.2 CHIPID, 10.5.5.6 Flash 보호와 HSM 부팅, PROCONHSMCOTP·PROCONHSM, 25.2.6 GTM Software Debugger Support, GTM OCS·CLC, 25.22.12 GTM Debug Interface(OTGB, OTSS), 메모리 맵(DF0 `0xAF000000`, EMEM `0x9F000000`)
