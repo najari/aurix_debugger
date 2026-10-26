@@ -2,13 +2,19 @@
 //! registers and memory are, what a channel's registers say, the MCS instructions as text, and
 //! the GTM view of the standalone debugger (B).
 //!
-//! The figures are those of the TC27x (TC27x User's Manual, chapter 25, GTM V1.9): four MCS
-//! instances of eight channels each; channel `x` of MCS `i` has its registers at
+//! The TC27x (TC27x User's Manual, chapter 25, GTM V1.9) has four MCS instances of eight
+//! channels each; channel `x` of MCS `i` has its registers at
 //! `GTM + 0x30000 + i * 0x1000 + x * 0x80` (R0–R7, then `CTRL` at `+0x20`, `PC` at `+0x40`)
-//! and MCS `i` its memory at `GTM + 0x38000 + i * 0x8000`. The registers are read 32 bits at a
+//! and MCS `i` its memory at `GTM + 0x38000 + i * 0x8000`, a 4 KB page and a 2 KB page. The
+//! TC36x (TC36x User's Manual appendix, chapter 26, GTM 3) has three, its registers at
+//! `GTM + 0xF0000 + i * 0x1000` (from 0xF01F_0000, the channels laid out as on the TC27x), its
+//! memory where the TC27x has it but pages of 8 KB and 4 KB ([`Gtm`]); a word of that memory
+//! never written fails its ECC check when an MCS reads ahead of the instruction it runs, which
+//! stops the channel. The registers are read 32 bits at a
 //! time: a read across a hole between them fails, so a channel is read as two ranges (R0–R7
-//! with CTRL, and PC). The memory layout (MCFG_CTRL) moves pages between neighbouring MCS
-//! instances; [`memory_size`] follows the manual's table for `MCS_RAM1_EN_ADDR_MSB = 0`.
+//! with CTRL, and PC). The memory layout (MCFG_CTRL, DEFAULT, SWAP or BORROW on both) moves
+//! pages between neighbouring MCS instances; [`Gtm::memory_size`] follows the TC27x manual's
+//! table for `MCS_RAM1_EN_ADDR_MSB = 0`, with each chip's page sizes.
 //!
 //! The GTM is only read here. Halting it with the cores (`GTM_OCS.SUS`) and switching channels
 //! on and off are writes, left to a later step.
@@ -16,14 +22,13 @@
 use crate::memory::decode_base64;
 use crate::protocol::{MemoryRange, RangeData};
 
-/// The GTM of the TC27x.
+/// The GTM of the TC27x and of the TC3xx.
 pub const TC27X_GTM_BASE: u32 = 0xF010_0000;
-/// MCS instances of the TC27x GTM.
+/// MCS instances of a GTM at most (the TC27x's four; the TC36x has three).
 pub const MCS_COUNT: usize = 4;
 /// Channels of an MCS instance.
 pub const CHANNELS: usize = 8;
 
-const MCS_REGISTERS: u32 = 0x3_0000;
 const MCS_STRIDE: u32 = 0x1000;
 const CHANNEL_STRIDE: u32 = 0x80;
 const CHANNEL_CTRL: u32 = 0x20;
@@ -39,25 +44,55 @@ pub const GTM_CLC: u32 = 0x9_FD00;
 /// `GTM_OCS`: OCDS suspend control (`SUS`, bits 27–24: 2 = soft suspend).
 pub const GTM_OCS: u32 = 0x9_FDE8;
 
-/// Where the GTM of a chip is.
+/// Where the GTM of a chip is and how its MCS instances are laid out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gtm {
     pub base: u32,
+    /// The registers of MCS 0, from `base`.
+    pub mcs_registers: u32,
+    /// The MCS instances.
+    pub mcs_count: usize,
+    /// The sizes of an instance's two memory pages.
+    pub page0: u32,
+    pub page1: u32,
+    /// The bits of `MCSi_CHx_PC` that are the program counter.
+    pub pc_mask: u32,
 }
 
 impl Gtm {
-    /// The GTM of the chip named in an attach file (`TC275`, `TC27x`, …), if it is known.
+    pub const TC27X: Self = Self {
+        base: TC27X_GTM_BASE,
+        mcs_registers: 0x3_0000,
+        mcs_count: 4,
+        page0: 0x1000,
+        page1: 0x800,
+        pc_mask: 0x3FFC,
+    };
+    pub const TC36X: Self = Self {
+        base: TC27X_GTM_BASE,
+        mcs_registers: 0xF_0000,
+        mcs_count: 3,
+        page0: 0x2000,
+        page1: 0x1000,
+        pc_mask: 0xFFFC,
+    };
+
+    /// The GTM of the chip named in an attach file (`TC275`, `TC27x`, `TC36x`, …), if it is
+    /// known.
     pub fn for_chip(chip: &str) -> Option<Self> {
-        chip.to_ascii_uppercase()
-            .starts_with("TC27")
-            .then_some(Self {
-                base: TC27X_GTM_BASE,
-            })
+        let chip = chip.to_ascii_uppercase();
+        if chip.starts_with("TC27") {
+            Some(Self::TC27X)
+        } else if chip.starts_with("TC36") {
+            Some(Self::TC36X)
+        } else {
+            None
+        }
     }
 
     /// R0 of channel `channel` of MCS `mcs`; R1–R7 and CTRL follow it.
     pub fn channel_registers(&self, mcs: usize, channel: usize) -> u32 {
-        self.base + MCS_REGISTERS + mcs as u32 * MCS_STRIDE + channel as u32 * CHANNEL_STRIDE
+        self.base + self.mcs_registers + mcs as u32 * MCS_STRIDE + channel as u32 * CHANNEL_STRIDE
     }
 
     /// The control register (`EN`, the flags, `SP_CNT`) of channel `channel` of MCS `mcs`.
@@ -100,26 +135,34 @@ impl Layout {
     }
 }
 
-/// `(MP0, MP1)` of MCS `mcs`: page 0 is MCS addresses `0..MP0`, page 1 `MP0..MP1` (the
-/// manual's memory layout parameters, `MCS_RAM1_EN_ADDR_MSB = 0`). The instance before MCS 0
-/// is the last one.
+/// [`Gtm::memory_size`] of the TC27x.
 pub fn memory_size(mcfg_ctrl: u32, mcs: usize) -> (u32, u32) {
-    let before = (mcs + MCS_COUNT - 1) % MCS_COUNT;
-    let own = Layout::of(mcfg_ctrl, mcs);
-    let previous = Layout::of(mcfg_ctrl, before);
-    let mp0 = match previous {
-        Layout::Default => 0x1000,
-        Layout::Swap => 0x800,
-        Layout::Borrow => 0x0,
-    };
-    let extra = match own {
-        Layout::Default => 0x800,
-        Layout::Swap => 0x1000,
-        Layout::Borrow => 0x1800,
-    };
-    // Page 1 is the instance's own 2 KB page, unless it gave that away (SWAP) for the next
-    // instance's 4 KB page; BORROW adds the next instance's 4 KB page to its own 2 KB.
-    (mp0, mp0 + extra)
+    Gtm::TC27X.memory_size(mcfg_ctrl, mcs)
+}
+
+impl Gtm {
+    /// `(MP0, MP1)` of MCS `mcs`: page 0 is MCS addresses `0..MP0`, page 1 `MP0..MP1` (the
+    /// manual's memory layout parameters, `MCS_RAM1_EN_ADDR_MSB = 0`). The instance before MCS
+    /// 0 is the last one.
+    pub fn memory_size(&self, mcfg_ctrl: u32, mcs: usize) -> (u32, u32) {
+        let count = self.mcs_count;
+        let before = (mcs + count - 1) % count;
+        let own = Layout::of(mcfg_ctrl, mcs);
+        let previous = Layout::of(mcfg_ctrl, before);
+        let mp0 = match previous {
+            Layout::Default => self.page0,
+            Layout::Swap => self.page1,
+            Layout::Borrow => 0x0,
+        };
+        let extra = match own {
+            Layout::Default => self.page1,
+            Layout::Swap => self.page0,
+            Layout::Borrow => self.page0 + self.page1,
+        };
+        // Page 1 is the instance's own small page, unless it gave that away (SWAP) for the next
+        // instance's large page; BORROW adds the next instance's large page to its own small one.
+        (mp0, mp0 + extra)
+    }
 }
 
 /// What the registers of one MCS channel say.
@@ -151,8 +194,9 @@ impl Channel {
     pub fn stack_depth(&self) -> u32 {
         (self.ctrl >> 16) & 0b111
     }
+    /// The program counter, as [`GtmView`] kept it (`PC` with the GTM's [`Gtm::pc_mask`]).
     pub fn pc(&self) -> u32 {
-        self.pc & 0x3FFC
+        self.pc
     }
 }
 
@@ -363,7 +407,7 @@ impl GtmView {
 
     /// Shows MCS `mcs`: what was read of another one is forgotten.
     pub fn show_mcs(&mut self, mcs: usize) {
-        if mcs != self.mcs && mcs < MCS_COUNT {
+        if mcs != self.mcs && mcs < self.gtm.mcs_count {
             *self = Self {
                 mcs,
                 ..Self::new(self.gtm)
@@ -382,7 +426,7 @@ impl GtmView {
 
     /// The memory size `(MP0, MP1)` of the MCS shown, once MCFG_CTRL was read.
     pub fn memory_size(&self) -> Option<(u32, u32)> {
-        self.mcfg_ctrl.map(|m| memory_size(m, self.mcs))
+        self.mcfg_ctrl.map(|m| self.gtm.memory_size(m, self.mcs))
     }
 
     /// The code window to read: around the selected channel's last PC, inside its memory.
@@ -463,7 +507,7 @@ impl GtmView {
                     Ok(Channel {
                         r,
                         ctrl: regs[8],
-                        pc: pc[0],
+                        pc: pc[0] & self.gtm.pc_mask,
                     })
                 }
                 (Err(error), _) | (_, Err(error)) => Err(error),
@@ -605,7 +649,29 @@ mod tests {
         assert_eq!(gtm.channel_pc(3, 7), 0xF013_33C0);
         assert_eq!(gtm.memory(1), 0xF014_0000);
         assert_eq!(gtm.register(GTM_OCS), 0xF019_FDE8);
-        assert!(Gtm::for_chip("TC36x").is_none());
+        assert_eq!(Gtm::for_chip("TC36x"), Some(Gtm::TC36X));
+        assert!(Gtm::for_chip("TC39x").is_none());
+    }
+
+    /// The TC36x as the board reads it (gtm_demo -Board tc36x on MCS1) and the SFR headers say.
+    #[test]
+    fn the_tc36x_addresses_and_pages() {
+        let gtm = Gtm::for_chip("TC36x").unwrap();
+        assert_eq!(gtm.channel_registers(1, 0), 0xF01F_1000);
+        assert_eq!(gtm.channel_ctrl(1, 0), 0xF01F_1020);
+        assert_eq!(gtm.channel_pc(1, 1), 0xF01F_10C0);
+        assert_eq!(gtm.memory(1), 0xF014_0000);
+        assert_eq!(gtm.memory(2), 0xF014_8000);
+        // DEFAULT: 8 KB and 4 KB each.
+        for mcs in 0..gtm.mcs_count {
+            assert_eq!(gtm.memory_size(0, mcs), (0x2000, 0x3000));
+        }
+        // MCS2 borrows: MCS0, after it (the last one wraps), has no page 0 of its own.
+        assert_eq!(gtm.memory_size(0b10_0000, 2), (0x2000, 0x5000));
+        assert_eq!(gtm.memory_size(0b10_0000, 0), (0x0, 0x1000));
+        // MCS0 swaps with MCS1.
+        assert_eq!(gtm.memory_size(0b01, 0), (0x2000, 0x4000));
+        assert_eq!(gtm.memory_size(0b01, 1), (0x1000, 0x2000));
     }
 
     fn data(words: &[u32]) -> RangeData {

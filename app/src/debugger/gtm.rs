@@ -87,7 +87,7 @@ impl Debugger {
                 .p_2()
                 .text_sm()
                 .text_color(hsla(color::MUTED))
-                .child("No GTM view for this chip (the TC27x GTM is known)")
+                .child("No GTM view for this chip (the TC27x and TC36x GTMs are known)")
                 .into_any_element();
         };
         let mcs = view.mcs();
@@ -108,7 +108,7 @@ impl Debugger {
         const IDS: [&str; MCS_COUNT] = ["gtm-mcs-0", "gtm-mcs-1", "gtm-mcs-2", "gtm-mcs-3"];
         const NAMES: [&str; MCS_COUNT] = ["MCS0", "MCS1", "MCS2", "MCS3"];
         let mut picker = div().flex().items_center().gap_1();
-        for i in 0..MCS_COUNT {
+        for i in 0..view.gtm().mcs_count.min(MCS_COUNT) {
             picker = picker.child(button(
                 IDS[i],
                 NAMES[i],
