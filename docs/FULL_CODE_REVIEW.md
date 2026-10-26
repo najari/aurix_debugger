@@ -17,13 +17,13 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 5 | 높음 | 플래시 | `--restore-unwritten`이 0만 있는 페이지를 건너뛰고, 읽기 오류를 지워진 페이지로 봄 | probe-rs-infineon `flash.rs` (`read_pages`) | 수정됨 |
 | 6 | 높음 | GUI | 요청이 스레드풀 태스크마다 따로 나가 순서가 바뀜 (브레이크포인트 유실, 캐시 측정 왜곡) | `app/src/debugger.rs:386-416` | 수정됨 |
 | 7 | 높음 | DAP·스크립트 | 조건식·`expect`에 ASCII가 아닌 문자가 있으면 패닉 | `dap_server/server/condition.rs:68-77`, `crates/script/src/compare.rs:97` | 수정됨 |
-| 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 미착수 |
-| 9 | 중간 | TriCore | `on_device_reset`이 `SWEVT`를 다시 쓰지 않아 소프트웨어 브레이크포인트가 안 걸림 | `tricore/mod.rs:1438-1471` | 미착수 |
-| 10 | 중간 | TriCore | 스텝 중 오류가 나면 스텝용 트리거 창이 장치에 남음 | `tricore/mod.rs:1866-1933` | 미착수 |
-| 11 | 중간 | DAP | 비정상 종료 때 `clean_up`이 실행되지 않아 suspend 레지스터가 복원되지 않음 | `dap_server/server/peripheral_suspend.rs`, `session_data.rs` | 미착수 |
+| 8 | 중간 | TriCore | 정지 그룹 안에서 프로그램의 DEBUG 명령에 멈추면 계속 실행·스텝이 안 됨 | `tricore/mod.rs:1710-1712`, `1913`, `1944` | 수정됨 |
+| 9 | 중간 | TriCore | `on_device_reset`이 `SWEVT`를 다시 쓰지 않아 소프트웨어 브레이크포인트가 안 걸림 | `tricore/mod.rs:1438-1471` | 수정됨 |
+| 10 | 중간 | TriCore | 스텝 중 오류가 나면 스텝용 트리거 창이 장치에 남음 | `tricore/mod.rs:1866-1933` | 수정됨 |
+| 11 | 중간 | DAP | 비정상 종료 때 `clean_up`이 실행되지 않아 suspend 레지스터가 복원되지 않음 | `dap_server/server/peripheral_suspend.rs`, `session_data.rs` | 진행 중 |
 | 12 | 중간 | GUI | 서버 연결이 끊겨도 알아채지 못함 | `crates/dap-client/src/lib.rs:168`, `app/src/debugger.rs:441-475` | 수정됨 |
 | 13 | 중간 | GUI | GTM 탭에서 응답 전에 MCS를 바꾸면 언더플로 패닉(debug) 또는 잘못된 데이터(release) | `crates/debug-model/src/gtm.rs:536` | 수정됨 |
-| 14 | 중간 | 플래시 | 섹터 맵 불일치는 경고만 하고, TC27x BMHD0 섹터 지우기를 막지 않음 | probe-rs-infineon 플래시 | 미착수 |
+| 14 | 중간 | 플래시 | 섹터 맵 불일치는 경고만 하고, TC27x BMHD0 섹터 지우기를 막지 않음 | probe-rs-infineon 플래시 | 수정됨 |
 | 15 | 낮음 | DAP | C 식 파서에 재귀 깊이 제한이 없음 (스택 오버플로) | `dap_server` C 식 파서 | 미착수 |
 | 16 | 낮음 | DAP | 타입 있는 포인터 산술에 원소 크기를 곱하지 않음 | `dap_server` C 식 파서 | 미착수 |
 | 17 | 낮음 | DAP | 정렬 안 된 레지스터에 SVD 필드를 쓰면 옆 레지스터를 건드림 | `svd.rs:219-241` | 미착수 |
@@ -33,11 +33,13 @@ probe-rs 포크(tricore 브랜치)와 aurix_debugger(main)를 네 영역으로 �
 | 21 | 낮음 | TriCore | 저널 복구가 성능 카운터의 `CCTRL`을 되돌리지 않음 | `tricore/mod.rs:1217-1228` | 미착수 |
 | 22 | 중간 | 플래시 | `--restore-unwritten`이 TC3xx에서 지워진 페이지가 있는 섹터면 항상 실패 (지우기 전에 멈춰 데이터는 안전) | probe-rs `flashing/host_flasher.rs` `fill_unwritten` | 미착수 |
 
-1~7번과 12·13번은 고쳤고, 13번을 뺀 나머지는 TC36x 보드나 앱에서 확인했습니다(13번은 단위 테스트).
+1~10번, 12~14번은 고쳤고 11번은 일부만 고쳤습니다. 8~10번과 13·14번은 단위 테스트로, 나머지는 TC36x 보드나 앱에서 확인했습니다.
 
 - **1번:** 32비트 RFE 예외 오류도 함께 고쳤습니다. 코드가 op2 `0x06`을 RFE로 보았는데, 매뉴얼상 `0x06`은 RET이고 RFE는 `0x07`입니다.
 - **3번:** 예전 로더로 플래시하면 `WDTS_CON1.DR`이 1로 남고(와치독 꺼짐), 새 로더는 0을 되돌려 놓습니다. 호스트도 끝난 뒤 `DR`을 확인해 다르면 오류를 냅니다. TC27x 로더는 빌드만 했고 보드에서는 시험하지 않았습니다.
 - **22번(새 항목):** probe-rs의 `fill_unwritten`이 지워진 페이지를 읽다 ECC 오류(`0x8d`)를 만나 실패합니다. 지우기 전에 멈추므로 데이터는 잃지 않습니다.
+- **11번(일부):** 요청 처리 중 오류로 끝나거나 세션 시작이 `apply` 뒤에 실패하면 suspend 레지스터를 되돌립니다. dap-server 프로세스가 강제 종료되는 경우는 저널이 필요해 아직 남아 있습니다. 그룹의 TRC 저널 항목과도 엮여 있습니다.
+- **14번:** BMHD 위치 중 BMHD0(`0xA0000000`)만 AP32566으로 확인했고, BMHD1~3은 일반적으로 알려진 TC27x 주소입니다. 주소가 틀려도 거부가 줄어들 뿐 잘못 거부하지는 않습니다.
 
 ## 높음: 실제 사용 중 생기는 결함
 
