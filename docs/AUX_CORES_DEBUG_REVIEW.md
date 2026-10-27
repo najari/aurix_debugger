@@ -75,6 +75,11 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
     - **한 페이지:** Cortex-M의 디버그 레지스터는 모두 `0xE000xxxx` 한 64 KB 페이지에 있다. DWT `0xE0001000`, FPB `0xE0002000`, `DHCSR`·`DCRSR`·`DCRDR`·`DEMCR` `0xE000EDF0`-`0xE000EDFC`이다. 그래서 정지·한 단계·레지스터 접근은 `DBGBASE = 0xE0000000` 하나로 되고, `DBGBASE`를 바꾸는 것은 HSM 메모리를 읽고 쓸 때뿐이다.
     - **정지 그룹:** `HSMOTGB`가 HSM의 OCDS 트리거 버스 선택이라, TriCore와 묶는 정지(allStop)에 쓸 수 있을 것으로 보인다. 필드는 `TGS`(bit 1:0, `TGB`·`TG_P`의 쓰기 보호), `TGB`(bit 2, OTGB0/1 선택), `TG_P`(bit 3, OTGB0/1의 트리거 세트)다(AP32391 `bridge.h`). 어느 트리거 선이 정지를 뜻하는지는 예제에 없다.
     - **BP:** 위 "FPB의 Infineon 확장". HSM 플래시(`0x8xxxxxxx`)의 BP에는 `FP_COMPHn`을 같이 써야 한다.
+    - **만들어 둔 것(probe-rs `80afa18d`, 2026-10-27):** `probe-rs-infineon/src/hsm.rs`. probe-rs 코어·세션에는 아직 연결하지 않았다.
+        - `HsmStatus`: `HSM_ID`와 `DBGBASE`를 읽기만 해서 브리지가 응답하는지, 창이 열렸는지 알려 준다. TC36x 보드(예제 `hsm_status`): `HSM_ID 0x00bec002`, `DBGBASE` 버스 오류, "창 닫힘".
+        - `HsmWindow`: HSM 주소 공간의 `MemoryInterface`다. 위의 변환을 하고, `DBGBASE`는 페이지가 바뀔 때만 쓰며, HSM 리셋 뒤에는 `invalidate()`로 다시 쓰게 한다. 창은 정렬된 32비트로만 접근하고, 8·16비트 쓰기는 그 워드를 읽고-고치고-쓴다.
+        - `HsmFpb`: `FP_CTRL`의 코드 비교기 수를 읽고(revision 1만), BP를 `FP_COMPn`(bit 28:2)과 `FP_COMPHn`(bit 31:29)으로 건다. `FP_COMPHn`을 바꾸는 동안 `FP_COMPn`은 꺼 둔다.
+        - 단위 테스트(9개)는 가짜 브리지로 한다. 남은 일: 이 창 위에 probe-rs Armv7m의 정지·한 단계·레지스터 접근을 올리는 것, 그리고 실칩 시험.
     - **실칩 시험:** HSM 디버그가 열린 칩이 필요하다. HSM 코드를 쓰고 UCB에서 HSM 부팅을 켜야 하며, 잘못하면 칩이 영구히 잠긴다(HSM 코드 없이 부팅을 켬, AP32555 18쪽). 버려도 되는 시험용 칩에서만 한다.
     - **확인된 것(2026-10-27, HSM 예제 소스):** 창의 호스트 주소 `0xF0050000`, 창 접근 폭 32비트, `DBGCTRL.HOST`의 뜻(위).
     - **남은 확인:** `FP_COMPHn`이 주소 bit 31:29라는 것(추론), 8·16비트 창 접근, `HSMOTGB`의 트리거 선 뜻, HSM 부팅이 꺼진 TC27x에서 블록이 닫히는 조건. HSM Target Specification(NDA 사본)에 있을 것이다.
