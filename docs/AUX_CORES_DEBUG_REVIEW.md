@@ -75,7 +75,7 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
     - **한 페이지:** Cortex-M의 디버그 레지스터는 모두 `0xE000xxxx` 한 64 KB 페이지에 있다. DWT `0xE0001000`, FPB `0xE0002000`, `DHCSR`·`DCRSR`·`DCRDR`·`DEMCR` `0xE000EDF0`-`0xE000EDFC`이다. 그래서 정지·한 단계·레지스터 접근은 `DBGBASE = 0xE0000000` 하나로 되고, `DBGBASE`를 바꾸는 것은 HSM 메모리를 읽고 쓸 때뿐이다.
     - **정지 그룹:** `HSMOTGB`가 HSM의 OCDS 트리거 버스 선택이라, TriCore와 묶는 정지(allStop)에 쓸 수 있을 것으로 보인다. 필드는 `TGS`(bit 1:0, `TGB`·`TG_P`의 쓰기 보호), `TGB`(bit 2, OTGB0/1 선택), `TG_P`(bit 3, OTGB0/1의 트리거 세트)다(AP32391 `bridge.h`). 어느 트리거 선이 정지를 뜻하는지는 예제에 없다.
     - **BP:** 위 "FPB의 Infineon 확장". HSM 플래시(`0x8xxxxxxx`)의 BP에는 `FP_COMPHn`을 같이 써야 한다.
-    - **만들어 둔 것(probe-rs `80afa18d`·`aa61ea57`, 2026-10-27):** `probe-rs-infineon/src/hsm/`. probe-rs 세션·DAP 서버에는 아직 연결하지 않았다.
+    - **만들어 둔 것(probe-rs `80afa18d`·`aa61ea57`·`ab650a6f`, 2026-10-27):** `probe-rs/src/architecture/tricore/hsm/`(`probe-rs-infineon::hsm`은 다시 내보내기). probe-rs 세션까지 연결했고, DAP 서버·앱은 아직이다.
         - `HsmStatus`: `HSM_ID`와 `DBGBASE`를 읽기만 해서 브리지가 응답하는지, 창이 열렸는지 알려 준다. TC36x 보드(예제 `hsm_status`): `HSM_ID 0x00bec002`, `DBGBASE` 버스 오류, "창 닫힘".
         - `HsmWindow`: HSM 주소 공간의 `MemoryInterface`다. 위의 변환을 하고, `DBGBASE`는 페이지가 바뀔 때만 쓰며, HSM 리셋 뒤에는 `invalidate()`로 다시 쓰게 한다. 창은 정렬된 32비트로만 접근하고, 8·16비트 쓰기는 그 워드를 읽고-고치고-쓴다.
         - `HsmFpb`: `FP_CTRL`의 코드 비교기 수를 읽고(revision 1만), BP를 `FP_COMPn`(bit 28:2)과 `FP_COMPHn`(bit 31:29)으로 건다. `FP_COMPHn`을 바꾸는 동안 `FP_COMPn`은 꺼 둔다.
@@ -86,7 +86,14 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
             - 정지 이유(`DFSR`), BP(빈 비교기 배정, `FP_COMPH` 포함).
             - 리셋은 넣지 않았다. HSM 리셋이 칩에 무엇을 하는지 자료에 없다.
         - 단위 테스트(창 9개, 코어 9개)는 가짜 브리지와 그 뒤의 가짜 Cortex-M3(`hsm/fake.rs`)로 한다.
-        - 실칩에서 확인할 것: 창을 거친 쓰기로 `DHCSR.C_DEBUGEN`이 켜지는지(Cortex-M에서는 디버그 포트만 켤 수 있고 코어는 못 켬, 가정함), `FP_COMPH`가 bit 31:29인지. 남은 일: probe-rs 세션·DAP 서버에 HSM 코어로 올리는 것.
+        - 실칩에서 확인할 것: 창을 거친 쓰기로 `DHCSR.C_DEBUGEN`이 켜지는지(Cortex-M에서는 디버그 포트만 켤 수 있고 코어는 못 켬, 가정함), `FP_COMPH`가 bit 31:29인지. 남은 일: DAP 서버·앱에서 HSM 코어를 다루는 것.
+        - 세션 연결(`ab650a6f`): 타깃 변형에 `type: armv7m`, `core_access_options: !TriCoreHsm {}`인 코어를 두면 `Session::core`가 `TriCoreHsm`(`hsm/debug_core.rs`, `CoreInterface`)을 돌려준다.
+            - TriCore 버스 위의 32비트 접근(`TriCoreBusMemory`)으로 창을 쓴다. Cortex-M 레지스터 표·번호를 그대로 쓰고, 리셋·reset catch는 "지원 안 함"이다.
+            - 창이 닫혀 있으면 `Error::CoreDisabled`라, 세션의 "모든 코어" 처리(종료 등)가 건너뛴다. 세션이 끝나면 HSM의 BP를 지우고 디버그를 꺼, 멈춘 HSM이 계속 돈다.
+            - TriCore 전용 설정(정지 그룹, 성능 창)은 HSM 코어 번호를 받으면 패닉 대신 오류를 낸다. 타깃 검증은 HSM 코어를 TriCore 코어 옆에만 허용하고(`armv7m`만), `Target::architecture()`는 HSM 코어를 빼고 센다.
+            - `TC36x.yaml`에 `TC36x_HSM` 변형(cpu0, cpu1, hsm)을 더했다. 기본 `TC36x`와 자동 칩 인식은 그대로다.
+            - TC36x 보드(2026-10-27): `hsm_status -- TC36x_HSM`에서 HSM 코어는 "disabled"(창 닫힘), cpu0은 Running이고 세션이 경고 없이 끝난다. 기존 `tc36x_check`도 통과.
+            - 모든 코어를 멈추는 처리(`halted_access`)는 창이 열려 있으면 HSM도 멈춘다.
     - **실칩 시험:** HSM 디버그가 열린 칩이 필요하다. HSM 코드를 쓰고 UCB에서 HSM 부팅을 켜야 하며, 잘못하면 칩이 영구히 잠긴다(HSM 코드 없이 부팅을 켬, AP32555 18쪽). 버려도 되는 시험용 칩에서만 한다.
     - **확인된 것(2026-10-27, HSM 예제 소스):** 창의 호스트 주소 `0xF0050000`, 창 접근 폭 32비트, `DBGCTRL.HOST`의 뜻(위).
     - **남은 확인:** `FP_COMPHn`이 주소 bit 31:29라는 것(추론), 8·16비트 창 접근, `HSMOTGB`의 트리거 선 뜻, HSM 부팅이 꺼진 TC27x에서 블록이 닫히는 조건. HSM Target Specification(NDA 사본)에 있을 것이다.
