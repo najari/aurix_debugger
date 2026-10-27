@@ -71,8 +71,8 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - HSM 예제 `HsmDemo__Tc27xC.zip`.
 - TC27x CA 정오표 v2.1.
 
-1. **플래셔의 HSM 섹터 보호가 TC27x에는 없다(가장 중요). 넣을 값은 모두 확인했다.**
-    - 지금의 HSM 검사(`HsmProtection`)는 TC3xx에서만 돈다. TC27x는 BMHD 검사만 있다.
+1. **플래셔의 HSM 섹터 보호(가장 중요). TC27x에 넣었다(probe-rs `9c36544`, 2026-10-27).**
+    - 전에는 HSM 검사(`HsmProtection`)가 TC3xx에서만 돌고, TC27x는 BMHD 검사만 있었다. 이제 TC27x는 `Tc27xProtection`이 아래 규칙으로 검사한다.
     - **HSM 코드 섹터:** PF0 S6·S16·S17이다(AP32284 19쪽, UM 10.5.5.3-4). 우리 `tc27x_sectors()` 맵으로는 S6 `0xA0018000`(16 KB), S16 `0xA0060000`, S17 `0xA0070000`(64 KB씩)이다.
         - BMHD가 있는 S0·S3·S7·S8(AP32284 19쪽)과는 겹치지 않는다.
         - TC3xx와 달리 `BOOTSEL`이 없어, HSM 부트 코드는 세 섹터 어디에나 있을 수 있다(AP32284 11쪽).
@@ -96,7 +96,7 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
         - Cerberus는 HSM 디버그가 켜졌을 때만 HSM과 같은 권한을 얻고, 아니면 다른 마스터와 같다.
         - `SxROM`이면 누구도 쓸 수 없다.
         - `HSMBOOTEN`인데 HSM 코드가 없으면 HSM 펌웨어가 실패하고 SSW가 멈춰, 칩이 부팅하지 않는다(UM 10.5.5.6 "HSM Booting", AP32284 11쪽).
-    - **넣는 방법(TC3xx와 같음):** 지우기 전에 `PROCONHSMCOTP`를 읽고, S6·S16·S17을 지우려 하면 아래처럼 거부한다.
+    - **넣은 방법(TC3xx와 같음):** 로더가 시작할 때 `PROCONHSMCOTP`를 읽고, 지우기 전에 S6·S16·S17을 지우려 하면 아래처럼 거부한다. 섹터가 세 섹터와 겹치기만 해도 해당한다.
         - `HSMsX` 또는 `SxROM`이면 늘 거부한다.
         - `HSMBOOTEN`이면 `PROBE_RS_TRICORE_ALLOW_HSM_CODE_ERASE`가 없을 때 거부한다.
 2. **디버그 경로: 블록과 레지스터 주소는 TC3xx와 같다. 이 보드에서 닫혀 있는 이유는 자료에 없다.**
@@ -117,7 +117,7 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
     - TC27x C-step의 `RSTSTAT`(UM 7-102-7-105)은 다음과 같다. bit 0 ESR0, 1 ESR1, 3 SMU, 4 SW, 5-7 STM0-2, 16 PORST, 18 CB0, 19 CB1, 20 CB3(Cerberus 리셋), 23 EVR13, 24 EVR33, 25 SWD, 28 STBYR. **26·27은 예약 비트**라 0으로 읽힌다.
     - probe-rs `45a95ee0`이 bit 26/27에 붙인 HSM 리셋 이름은 TC27x에서는 나오지 않는다. 틀린 이름은 생기지 않는다.
     - TC27x의 리셋 트리거 표(UM 표 7-7, 7-9)에는 HSM이 없다.
-4. **PFLASH 읽기 보호 검사가 TC27x에는 없다. 레지스터는 확인했다(UM 10.5.5.3-4, 10-71-10-75).**
+4. **PFLASH 읽기 보호 검사. TC27x에 넣었다(probe-rs `9c36544`). 레지스터는 UM 10.5.5.3-4, 10-71-10-75로 확인했다.**
     - **`FLASH0_PROCONP0`(`0xF8002020`):** bit 31 `RPRO`는 PFLASH의 읽기 보호와 전역 쓰기 보호다.
     - **`FLASH0_FPRO`(`0xF800201C`):** 실제로 읽기를 막는 것은 이 레지스터의 비트다.
         - bit 1 `PRODISP`: 비밀번호로 보호를 풀었음.
@@ -126,12 +126,12 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
         - bit 18 `DDFPX`: 그 밖의 마스터의 읽기를 막는다. HSM 디버그가 꺼진 Cerberus, 곧 백업 읽기가 여기에 든다.
         - bit 20 `DDFD`: DFLASH 읽기를 막는다.
     - **SSW의 동작:** 내부 PFLASH에서 부팅하면 SSW가 `DCFP`·`DDFP`·`DDFPX`·`DDFD`를 지운다. 그 밖의 부팅에서는 `RPRO`가 있을 때 켠다(UM 10.5.5.6). 그래서 `RPRO`가 있어도 내부 부팅이면 읽기는 되지만, `PRODISP`가 없으면 쓰기·지우기는 PROER로 실패한다.
-    - **넣을 검사:** 아래 두 경우 지우기 전에 거부한다. TC3xx의 `DMU_HF_PROCONPF.RPRO` 검사와 같은 자리다.
+    - **넣은 검사:** 아래 두 경우 모든 섹터의 지우기를 그 전에 거부한다. TC3xx의 `DMU_HF_PROCONPF.RPRO` 검사와 같은 자리다.
         - `FPRO.DDFPX`: 백업 읽기가 버스 오류가 된다.
         - `PROCONP0.RPRO`이고 `FPRO.PRODISP`가 아님: 쓰기가 PROER로 실패한다.
 5. **정오표**
     - **HSM_TC.H003:** TC2xx에서는 디버거의 접근이 HSM으로 버스 오류를 "새게" 한다. TC3xx에서 고쳐졌지만, 디버깅으로 생기는 버스 충돌은 남아 있다(델타 문서 186쪽). TC2xx HSM 정오표(v2.0) 자체는 워터마크판으로만 배포돼 폴더에 없다.
-    - **FLASH_TC.H009(TC27x CA 정오표 4.76):** PFLASH를 쓰거나 지우는 동안 HSM은 자기 코드 섹터를 읽지 못한다. 그래서 HSM은 그동안 RAM에서 돌아야 한다. HSM이 도는 TC27x(`HSMBOOTEN = 1`)에 다운로드하면 PFLASH에서 도는 HSM이 멈출 수 있다. 플래셔가 경고할 만하다.
+    - **FLASH_TC.H009(TC27x CA 정오표 4.76):** PFLASH를 쓰거나 지우는 동안 HSM은 자기 코드 섹터를 읽지 못한다. 그래서 HSM은 그동안 RAM에서 돌아야 한다. HSM이 도는 TC27x(`HSMBOOTEN = 1`)에 다운로드하면 PFLASH에서 도는 HSM이 멈출 수 있다. 이제 플래셔는 `HSMBOOTEN`이면 로더를 시작할 때 이 정오표를 들어 경고한다(probe-rs `9c36544`).
     - **FLASH_TC.044(2.73):** DF0을 지우는 중에 지우기 일시 정지 요청이 거듭 오면, UCB가 조금씩 지워져 칩이 부팅하지 않을 수 있다. HSM이 DF1을 쓰면 이 요청을 스스로 낸다. 우리 DFLASH 지우기를 HSM이 DF1을 쓰는 칩에서 할 때의 위험이다(드묾).
 
 이미 문제없는 것:
@@ -140,10 +140,15 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - **HSM 데이터 플래시:** DF1 `0xAF110000`-`0xAF11FFFF`(64 KB, HSM0-HSM7 8 KB씩, UM 10장)다. HSM 전용 주소 `0xFF110000`도 있다. 우리 DFLASH 맵(DF0 EEPROM, `0xAF000000`-`0xAF05FFFF`) 밖이라 쓰기가 거부된다. `PROCONHSMCOTP.HSMDX`가 켜지면 HSM만 쓸 수 있다.
 - **디버그 인터페이스 잠김:** JTAG ID는 읽히는데 `SCU_CHIPID`를 못 읽으면 "잠김"이라고 알리는 플래셔 검사는 TC27x에도 그대로 돈다.
 
-남은 일:
+한 일(2026-10-27):
 
-- **코드:** 1·4번 검사와 5번의 경고(FLASH_TC.H009)를 TC27x 플래셔에 넣는다. 값은 모두 위에 있다.
-- **TC275 보드(읽기만):** `PROCONHSMCOTP`(`0xF8002034`), `PROCONHSM`(`0xF800205C`), `PROCONP0`(`0xF8002020`), `FPRO`(`0xF800201C`)를 읽어 검사가 읽을 값을 확인한다. HSM 부팅이 꺼져 있으니 `PROCONHSMCOTP` = 0으로 예상한다.
+- **코드(probe-rs `9c36544`):** 1·4번 검사와 5번의 경고(FLASH_TC.H009)를 TC27x 플래셔에 넣었다. 로더가 시작할 때 `FPRO`·`PROCONP0`·`PROCONHSMCOTP`를 읽는다. 단위 테스트(`tc27x_hsm_and_read_protection_refuse_sectors`)는 이 보드의 값, HSM 부팅, 전용 섹터, OTP 섹터, `RPRO`, `PRODISP`, `DDFPX`를 다룬다.
+- **TC275 보드(읽기만):** 읽은 값은 아래와 같다. 예상대로 보호가 하나도 없어 거부되는 섹터가 없다.
+    - `PROCONHSMCOTP`(`0xF8002034`) = 0: HSM 부팅·전용·OTP 모두 꺼짐.
+    - `PROCONHSM`(`0xF800205C`) = 0.
+    - `PROCONP0`(`0xF8002020`) = 0: `RPRO` 없음.
+    - `FPRO`(`0xF800201C`) = `0x004000A0`: bit 5·7은 예약 비트(SVD의 리셋 값 `0xA0`), bit 22는 `ENPE`(Enable Program/Erase). 읽기를 막는 bit 16-20은 0이다.
+    - 로더를 시작하고 멈추는 시험(`loader_check wdt`)도 전과 같이 지나갔다.
 
 ### SCR (XC800)
 
@@ -277,7 +282,7 @@ flowchart TB
 - [x] 이 칩의 step(A/B/C)과, A-step의 GTM 정지 주의가 해당하는지. → C-step(CHREV 0x20)이라 해당하지 않는다. 받은 매뉴얼은 D-step판(V2.2)이라 차이는 delta 문서로 확인한다.
 - [x] TC27x의 `FLASH0_PROCONHSMCOTP`(`0xF8002034`) 비트 배치. → `HSMBOOTEN` 0, `SSWWAIT` 1, `HSMDX` 2, `HSM6X`/`16X`/`17X` 3/4/5, `S6ROM`/`S16ROM`/`S17ROM` 6/16/17(UM 10-83, 위 "TC27x에 필요한 것" 1번).
 - [x] TC27x의 `RSTSTAT` 배치와 PFLASH 읽기 보호 레지스터. → `RSTSTAT` bit 26/27은 예약 비트라 고칠 것이 없다. 읽기 보호는 `PROCONP0.RPRO`(`0xF8002020` bit 31)와 `FPRO`(`0xF800201C`)의 `DDFP` 17·`DDFPX` 18·`PRODISP` 1이다(위 3·4번).
-- [ ] TC27x 플래셔에 HSM 섹터 보호, 읽기 보호 검사, HSM이 돌 때의 경고(FLASH_TC.H009)를 넣는다(위 1·4·5번). 그 전에 TC275 보드에서 네 레지스터를 읽어 본다.
+- [x] TC27x 플래셔에 HSM 섹터 보호, 읽기 보호 검사, HSM이 돌 때의 경고(FLASH_TC.H009)를 넣는다(위 1·4·5번). → probe-rs `9c36544`. TC275의 네 레지스터는 보호 없음(`FPRO` `0x004000A0`, 나머지 0)이다. 거부 경로는 HSM이 켜진 칩이 없어 단위 테스트로만 확인했다.
 - [ ] 이 보드가 정말 ED가 아닌지(보드 부품 번호, CHID 0x70의 데이터시트 부록). ED가 아니면 WP-5와 GTM MCS BP에는 ED 보드(예: TriBoard TC275 ED)가 따로 필요하다.
 - [ ] SCR·PPU·CSRM을 쓸 프로젝트와 칩(WP-6과 함께 정한다).
 
