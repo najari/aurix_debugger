@@ -7,7 +7,7 @@
 다섯 코어 가운데 지금 보드(TC275)에서 바로 할 수 있는 것은 GTM의 MCS 하나다. 그것도 실행 제어가 아니라 상태·메모리 보기와 GTM 전체 멈추기 수준이다. 나머지는 이 칩에 없거나(SCR·PPU·PCP), 자료가 공개되지 않았고 칩을 잠글 위험이 있다(HSM).
 
 - **GTM(MCS):** 모든 AURIX에 있다. 이 보드에는 GTM 1.5.5와 MCS 4개(채널 8개씩)가 있다. 레지스터와 메모리는 지금 버스(맵 0)로 읽힌다. GTM 전체 멈추기는 매뉴얼의 `GTM_OCS.SUS = 2`(Soft suspend)로 TriCore와 함께 할 수 있다. BP와 한 단계 실행은 GTM 4.1(TC4x)의 BP 유닛이나 Emulation Device의 MCDS가 필요한데, 이 보드는 ED가 아닌 것으로 보인다(CHIPID.EEA = 0, EMEM 읽기 거부).
-- **HSM(Cortex-M):** TC2xx·TC3xx 일부 칩에 있고, 이 보드에도 있지만(CHIPID.SEC = 1) HSM 부팅이 꺼져 있어 돌지 않는다. HSM 디버그는 디버거의 버스 마스터(Cerberus)가 시스템 버스의 64 KB 창(`DBGBASE`·`DBGMEM`)으로 HSM의 Cortex-M 디버그 레지스터에 닿는 방식이다(TC3xx 자료와 TC36x 보드로 확인, 창 주소는 추정). TC27x의 HSM 블록과 레지스터 주소는 TC3xx와 같다(TC27x 매뉴얼 주소 맵과 TC27x 예제 헤더). 다만 이 보드(TC275)에서는 HSM 부팅이 꺼져 있어 블록 전체가 버스 오류다. HSM 부팅이나 UCB를 잘못 건드리면 칩이 영구히 잠긴다. 자료와 시험용 칩이 생기기 전에는 하지 않는다.
+- **HSM(Cortex-M):** TC2xx·TC3xx 일부 칩에 있고, 이 보드에도 있지만(CHIPID.SEC = 1) HSM 부팅이 꺼져 있어 돌지 않는다. HSM 디버그는 디버거의 버스 마스터(Cerberus)가 시스템 버스의 64 KB 창(`DBGBASE`·`DBGMEM`)으로 HSM의 Cortex-M 디버그 레지스터에 닿는 방식이다(TC3xx 자료와 TC36x 보드로 확인, 창 주소 `0xF0050000`은 TC3xx 예제 헤더로 확인). TC27x의 HSM 블록과 레지스터 주소는 TC3xx와 같다(TC27x 매뉴얼 주소 맵과 TC27x 예제 헤더). 다만 이 보드(TC275)에서는 HSM 부팅이 꺼져 있어 블록 전체가 버스 오류다. HSM 부팅이나 UCB를 잘못 건드리면 칩이 영구히 잠긴다. 자료와 시험용 칩이 생기기 전에는 하지 않는다.
 - **SCR(XC800):** TC3xx 일부와 TC4x에 있고, TC27x에는 없다. 칩의 DAP으로 메모리에 매핑된 OCDS에 닿고, Infineon MCD(`mcdxdas`)도 `XC800` 코어로 내주므로 우리 구조에 가장 잘 맞는 다음 대상이다. TC3xx 보드(WP-6)가 있어야 한다.
 - **PPU(ARC EV71):** TC4x에만 있다. 레지스터 자료는 공개되지 않았지만, Infineon TCF 에이전트(vscode-aurix-tcf-debugger)는 PPU·CDSP를 MCD 코어로 멈추고 BP·한 단계를 한다. 우리도 MCD 프로브 경로로 같은 일을 할 수 있을 것으로 본다. TC4x 보드가 먼저다.
 - **PCP:** AUDO(TC1766, TC1797 등) 전용이다. AURIX에는 없어(TC27x SVD에도 없음) 범위 밖으로 둔다.
@@ -39,12 +39,29 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 ### HSM (Cortex-M)
 
 - **디버그 하드웨어:** HSM 코어는 Cortex-M3이고, 자기 주소 공간에 표준 디버그 장치가 있다. Infineon HSM 예제의 `debugextension_hsm.h`에 FPB(`0xE0002000`, `FP_COMPH0`-`7`)와 `DHCSR`(`0xE0002000` + 13180 × 4 = `0xE000EDF0`, 표준 위치)가 정의돼 있다.
+    - **FPB의 Infineon 확장 `FP_COMPH0`-`7`(BP에 꼭 필요):** 표준 `FP_COMP0`-`7`(`0xE0002008`-`0xE0002024`) 바로 뒤 `0xE0002028`-`0xE0002044`에 있다("Flash Patch Comparator High"). 쓸 수 있는 비트는 bit 2:0의 세 개다(`debugextension_hsm_internal.h`의 `wr_msk 0x7`, AP32349 예제).
+        - Cortex-M3 FPB rev 1의 `FP_COMPn.COMP`는 주소 bit 28:2만 담아, 코드 영역(`0x00000000`-`0x1FFFFFFF`)에만 BP를 건다. probe-rs도 `0x20000000` 이상은 거부한다(`armv7m.rs`의 `FpRev1CompX::breakpoint_configuration`).
+        - HSM 코드는 PFLASH `0x80000000`부터 링크되고(HSM 쪽 주소, AP32373 `Lcf_Gnuc_Arm_Hsm.lsl`, AP32391 `hsm20.ld`의 `0x80018000`), RAM은 `0x20000000`이다. 그래서 `FP_COMPHn`이 빠진 주소 bit 31:29를 채우는 것으로 본다. 예를 들어 `0x80004000`의 BP는 `FP_COMPHn = 0b100`, `FP_COMPn.COMP = 0x1000`이다. bit 31:29라는 것은 헤더에 적혀 있지 않은 **추론**이다(bit 2:0 세 개가 `COMP`에 빠진 세 비트와 맞음).
+        - probe-rs의 Armv7m BP 코드를 그대로 쓰면 HSM 플래시에 BP를 걸 수 없다. HSM용 FPB 설정에서 `FP_COMPHn`도 쓰고 지워야 한다.
+        - 이 블록의 `PID0`-`PID3`은 `0x01`·`0x10`·`0x1C`·`0x01`(리셋 값)이다. JEP106 코드 `0x41`(Infineon), 부품 번호 `0x001`이라, ARM의 FPB가 아니라 Infineon이 만든 블록으로 보인다. ROM 테이블로 FPB를 찾는 코드는 이 값을 알아야 한다.
 - **접근 경로(TC3xx 자료로 확인):** ARM의 AHB-AP가 아니라 **시스템 버스(SPB)의 창**이다. AURIX에는 ARM 디버그 포트가 없고, 디버거의 버스 마스터 Cerberus가 SPB의 HSM 블록(`0xF0040000`-`0xF005FFFF`, 128 KB)에 닿는다.
     - **블록 안:** TC36x 주소 맵(부록)이 이 블록을 System·Debug·Communication·Reset 레지스터로 나눈다. Debug와 Reset 부분은 호스트에게 "BE"(버스 오류)다.
-    - **호스트 쪽 디버그 레지스터:** HSM 예제의 TriCore 쪽 `registers_hsm.h`에 있다. `HSMCTRL` `0xF0041000`, `DBGBASE` `0xF0041010`("Debug Window Base Address", BASE = bit 31:16), `HSMOTGB` `0xF0041020`("OCDS Suspend and Trigger Bus Control", TGS/TGB/TG_P)이다.
+    - **호스트 쪽 디버그 레지스터:** HSM 예제의 TriCore 쪽 `registers_hsm.h`에 있다. `HSMCTRL` `0xF0041000`, `DBGBASE` `0xF0041010`("Debug Window Base Address", BASE = bit 31:16), `HSMOTGB` `0xF0041020`("OCDS Suspend and Trigger Bus Control", TGS/TGB/TG_P)이다. AP32391 TriCore 예제의 `hsm_Interface.h`는 이 셋을 "Bridge Registers (Host side access only)"라고 적는다. HSM 쪽 브리지 구조체에는 없다.
     - **창:** `DBGBASE`가 HSM 주소의 위 16비트를 고르는 64 KB 창(`DBGMEM`, HSM 쪽 `bridge.h`의 "Debug Memory Window", `DBGCTRL.HSM` = "HSM subsystem and debug memory window")이다. 예제는 `DBGBASE = 0xE0000000`("Halt after Reset" 뒤)과 `0x20000000`("SRAM을 본다")을 쓴다. AP32481은 호스트가 `DBGMEM`으로 HSM RAM을 읽을 수 있다고 적는다.
-    - **창의 호스트 주소:** 블록의 위쪽 절반 `0xF0050000`-`0xF005FFFF`로 보인다. HSM 쪽 `SAHMEM`(16384 단어, `+0x10000`)과 같은 배치이고, 레지스터 헤더는 `0x1020` 뒤를 비워 둔다. 이 위치는 자료에 그대로 적혀 있지 않은 **추정**이다.
+    - **창의 호스트 주소:** 블록의 위쪽 절반 `0xF0050000`-`0xF005FFFF`다. AP32391 TriCore 예제 `HSM_TC39xB_demo/.../crypto/hsm_Interface.h`가 호스트 쪽 브리지 레지스터 바로 아래에 "DBGMEM, debug memory window 0xF0050000--0xF005FFFFh"라고 적는다(2026-10-27 확인, 이전에는 추정).
+        - HSM 쪽에서는 같은 자리가 `SAHMEM`(호스트 메모리를 보는 창, `SAHBASE`가 위 16비트를 고름)이다. 두 창은 방향만 반대이고 같은 배치다.
+    - **창의 접근 폭:** 32비트다. HSM 쪽 `bridge.h`(AP32391)의 `HSM_DBGMEM_Type`이 32비트 `DATA` 하나("Data for debug access")다. 8·16비트 접근이 되는지는 적혀 있지 않으니, 우리 쪽은 32비트로 읽고 쓰고 나머지는 읽고-고치고-쓰기로 한다.
     - **열리는 조건:** 창과 디버그 레지스터는 HSM 디버그가 켜졌을 때만 열린다. HSM 펌웨어가 `PROCONHSM.HSMDBGDIS = 0`을 보고 켜며, 그 뒤 Cerberus는 HSM과 같은 권한을 얻는다(UM 6.5.4.4.1, 6.5.4.1).
+    - **`DBGCTRL`(HSM 쪽 `0xF0040060`, 호스트 쪽 헤더에는 없음):** HSM이 디버그를 여는 레지스터다(AP32373·AP32391 `bridge_hsm.h`/`bridge.h`, AP32349 `bridge_hsm_internal.h`의 `wr_msk 0x733`).
+        - `HSM`(bit 1:0): "Debug control for HSM subsystem and debug memory window". `11`(`HSMDEN`)이면 HSM 디버그와 위의 창이 열리고, `00`-`10`이면 닫힌다.
+        - `HOST`(bit 5:4): "Debug control for host system". 칩(TriCore) 디버그 인터페이스에 걸린 HSM 자신의 잠금이다. `11`(`HTDEN`)이면 푼다.
+        - `TREN`(bit 9:8), `TRDATA`(bit 10): SPB에서 HSM 접근을 호스트 쪽 트레이스로 보이게 하고(`11`), 주소(0)나 데이터(1)를 고른다.
+        - 2비트 필드는 `11`만 켜짐이다(한 비트가 뒤집혀도 열리지 않는 안전한 인코딩).
+    - **HSM이 디버그를 여는 순서(AP32562 예제 `Hsm_unlockDebugInterface`, AP32399를 따름):** 챌린지-응답으로 호스트를 인증한 뒤에 연다.
+        1. `DBGCTRL.HOST = 11`로 자기 잠금을 푼다.
+        2. `CBS_OSTATE.IF_LCK`(`0xF0000480` bit 16)가 켜져 있으면 `CBS_OEC`(`0xF0000478`)에 `0xA1`·`0x5E`·`0xA1`·`0x5E`를 쓰고 `0x00010000`을 써서 푼다.
+        3. `DBGCTRL.HSM = 11`로 HSM 디버그를 연다.
+        - 그러니 디버거가 할 일은 HSM 펌웨어에 따라 다르다. 펌웨어가 열어 주지 않으면 `DBGBASE`와 창은 계속 버스 오류다.
 - **TC36x 보드에서 확인(읽기만, 2026-10-27):** CHIPID.SEC = 1, `PROCONHSMCFG`-`COTP1` = 0(HSM 부팅 꺼짐).
     - `HSM_ID`(`0xF0040008`) = `0x00BEC002`, `HSMCTRL` = 0, `HT2HSMS`/`HSM2HTS` = 0으로 읽힌다.
     - `DBGBASE`, `HSMOTGB`, `0xF0050000`은 버스 오류(`0x8d`)다. HSM 펌웨어가 돌지 않아 HSM 디버그가 열리지 않은 상태이고, 주소 맵의 "BE"와 맞는다.
@@ -56,9 +73,11 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
 - **우리가 할 수 있는 것(TC3xx):** probe-rs의 Armv7m 구현을 그대로 쓰고, 그 아래에 "HSM 주소 → 창" 메모리 인터페이스를 둔다. TC27x도 블록과 레지스터 주소가 같다(아래 "TC27x에 필요한 것" 2번).
     - **변환:** HSM 주소 `a`의 접근은 `DBGBASE`에 `a & 0xFFFF0000`을 쓰고(바뀔 때만), `0xF0050000 + (a & 0xFFFF)`를 TriCore 버스(TAS)로 읽고 쓴다. 예를 들어 `DHCSR`은 `DBGBASE = 0xE0000000`, 호스트 `0xF005EDF0`이다.
     - **한 페이지:** Cortex-M의 디버그 레지스터는 모두 `0xE000xxxx` 한 64 KB 페이지에 있다. DWT `0xE0001000`, FPB `0xE0002000`, `DHCSR`·`DCRSR`·`DCRDR`·`DEMCR` `0xE000EDF0`-`0xE000EDFC`이다. 그래서 정지·한 단계·레지스터 접근은 `DBGBASE = 0xE0000000` 하나로 되고, `DBGBASE`를 바꾸는 것은 HSM 메모리를 읽고 쓸 때뿐이다.
-    - **정지 그룹:** `HSMOTGB`가 HSM의 OCDS 트리거 버스 선택이라, TriCore와 묶는 정지(allStop)에 쓸 수 있을 것으로 보인다(세부 미확인).
+    - **정지 그룹:** `HSMOTGB`가 HSM의 OCDS 트리거 버스 선택이라, TriCore와 묶는 정지(allStop)에 쓸 수 있을 것으로 보인다. 필드는 `TGS`(bit 1:0, `TGB`·`TG_P`의 쓰기 보호), `TGB`(bit 2, OTGB0/1 선택), `TG_P`(bit 3, OTGB0/1의 트리거 세트)다(AP32391 `bridge.h`). 어느 트리거 선이 정지를 뜻하는지는 예제에 없다.
+    - **BP:** 위 "FPB의 Infineon 확장". HSM 플래시(`0x8xxxxxxx`)의 BP에는 `FP_COMPHn`을 같이 써야 한다.
     - **실칩 시험:** HSM 디버그가 열린 칩이 필요하다. HSM 코드를 쓰고 UCB에서 HSM 부팅을 켜야 하며, 잘못하면 칩이 영구히 잠긴다(HSM 코드 없이 부팅을 켬, AP32555 18쪽). 버려도 되는 시험용 칩에서만 한다.
-    - **남은 확인:** 창의 호스트 주소(`0xF0050000` 추정), 창 접근 폭(32비트로 보임), `DBGCTRL.HOST`의 뜻. HSM Target Specification(NDA 사본)에 있을 것이다. HSM 부팅이 꺼진 TC27x에서 블록이 닫히는 조건도 같은 자료에 있을 것이다.
+    - **확인된 것(2026-10-27, HSM 예제 소스):** 창의 호스트 주소 `0xF0050000`, 창 접근 폭 32비트, `DBGCTRL.HOST`의 뜻(위).
+    - **남은 확인:** `FP_COMPHn`이 주소 bit 31:29라는 것(추론), 8·16비트 창 접근, `HSMOTGB`의 트리거 선 뜻, HSM 부팅이 꺼진 TC27x에서 블록이 닫히는 조건. HSM Target Specification(NDA 사본)에 있을 것이다.
 - **TC27x 매뉴얼(1.3, 10.5.5.6):** HSM은 "보안용 별도 프로세서 서브시스템, SPB에 마스터·슬레이브로 연결"이고 나머지는 Infineon 문의다(코어·디버그 레지스터 설명 없음). SSW가 `PROCONHSMCOTP.HSMBOOTEN`일 때 HSM을 부팅하고, HSM 펌웨어가 `HSMDBGDIS = 0`이면 HSM 디버그를 켜고 `PROCONHSM.DBGIFLCK = 0`이면 칩 디버그 인터페이스 잠금을 푼다. HSM 디버그가 켜지면 디버거의 버스 마스터 Cerberus가 HSM과 같은 권한으로 HSM 전용 플래시·자원에 닿는다. HSM 펌웨어가 실패하면(예: HSM 코드 없음) SSW가 멈춰 칩이 부팅하지 않는다. OCDS(OSTATE) 문서는 배포 제한이다.
 - **이 보드:** HSM은 있지만(SEC = 1) `HSMBOOTEN = 0`이라 돌지 않는다. HSM을 디버그하려면 HSM 코드를 쓰고 UCB_HSMCOTP에서 부팅을 켜야 하는데, 그 자체가 잠금 위험이 있는 UCB 쓰기다.
 
@@ -112,7 +131,7 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
         - 매뉴얼 본문(10.5.5.6)에는 `PROCONHSMCOTP.HSMDBGDIS`라고 적힌 곳이 있지만, 레지스터 표로는 `PROCONHSM`의 비트다.
         - HSM 부트 OS(BOS)가 `HSMDBGDIS`·`DBGIFLCK`를 보고 `DBGCTRL`의 HSM·Host 비트를 정한다(AP32284 3.2.2).
     - **Halt after Reset:** `HT2HSMS.HAR_ENABLE`이 켜져 있고 HSM 디버그가 열려 있으면, BOS가 사용자 OS의 첫 명령에 BREAK를 건다(AP32284 3.2.3). 위 "동작 주의"의 "리셋 뒤 HSM이 첫 명령에서 멈춤"이 이것이다.
-    - **우리에게의 뜻:** 위의 창 변환 설계가 TC27x에도 그대로 맞을 것이다. 창의 호스트 주소 `0xF0050000`은 TC27x에서도 추정이다.
+    - **우리에게의 뜻:** 위의 창 변환 설계가 TC27x에도 그대로 맞을 것이다. 창의 호스트 주소 `0xF0050000`은 TC3xx 예제 헤더로 확인했고, TC27x 예제에는 적혀 있지 않다(브리지 구조가 같으니 같을 것이다).
 3. **리셋 원인 표시: 고칠 것이 없다.**
     - TC27x C-step의 `RSTSTAT`(UM 7-102-7-105)은 다음과 같다. bit 0 ESR0, 1 ESR1, 3 SMU, 4 SW, 5-7 STM0-2, 16 PORST, 18 CB0, 19 CB1, 20 CB3(Cerberus 리셋), 23 EVR13, 24 EVR33, 25 SWD, 28 STBYR. **26·27은 예약 비트**라 0으로 읽힌다.
     - probe-rs `45a95ee0`이 bit 26/27에 붙인 HSM 리셋 이름은 TC27x에서는 나오지 않는다. 틀린 이름은 생기지 않는다.
@@ -275,7 +294,9 @@ flowchart TB
 ## 미결 사항
 
 - [x] TC275T(이 보드)에 HSM이 있는가. → 있다: CHIPID.SEC = 1(매뉴얼 7.4.8.2). 다만 HSMBOOTEN = 0이라 돌지 않는다.
-- [x] HSM Cortex-M 디버그 레지스터에 AURIX DAP에서 닿는 경로(AHB-AP인지, 시스템 버스 창인지). → 시스템 버스 창이다(TC3xx). Cerberus가 SPB의 HSM 블록에서 `DBGBASE`(`0xF0041010`)로 HSM 주소의 위 16비트를 고르고, 64 KB 디버그 메모리 창(`DBGMEM`)으로 읽고 쓴다. 창의 호스트 주소 `0xF0050000`은 추정이다. 창은 HSM 펌웨어가 HSM 디버그를 켰을 때만 열린다(TC36x 보드: 버스 오류). 자세한 것은 위 HSM 절.
+- [x] HSM Cortex-M 디버그 레지스터에 AURIX DAP에서 닿는 경로(AHB-AP인지, 시스템 버스 창인지). → 시스템 버스 창이다(TC3xx). Cerberus가 SPB의 HSM 블록에서 `DBGBASE`(`0xF0041010`)로 HSM 주소의 위 16비트를 고르고, 64 KB 디버그 메모리 창(`DBGMEM`)으로 읽고 쓴다. 창의 호스트 주소 `0xF0050000`은 AP32391 TriCore 예제 헤더로 확인했다. 창은 HSM 펌웨어가 `DBGCTRL.HSM = 11`로 HSM 디버그를 켰을 때만 열린다(TC36x 보드: 버스 오류). 자세한 것은 위 HSM 절.
+- [x] HSM 디버그 창의 접근 폭과 `DBGCTRL.HOST`의 뜻. → 창은 32비트(`HSM_DBGMEM_Type`). `HOST`는 칩 디버그 인터페이스에 걸린 HSM의 잠금이고, `11`이면 푼다(HSM 예제 소스).
+- [ ] HSM의 BP에 쓰는 `FP_COMPH0`-`7`(`0xE0002028`-)이 주소 bit 31:29인지. 헤더에는 3비트라는 것만 있다. probe-rs의 Armv7m BP 코드는 `0x20000000` 이상을 거부하므로, HSM 플래시(`0x8xxxxxxx`)의 BP에는 이 확장이 필요하다.
 - [x] TC27x(이 보드)의 HSM 블록 주소. → TC3xx와 같은 `0xF0040000`-`0xF005FFFF`다(TC27x 매뉴얼 표 3-3, `HsmDemo__Tc27xC`의 `registers_hsm.h`). `0xFF110000`의 "HSM"은 DF1이다.
 - [ ] TC275에서 HSM 블록이 `HSM_ID`까지 버스 오류인 이유. HSM 부팅이 꺼져 있어서로 보이지만, 그렇게 적힌 자료는 없다(HSM Target Specification, NDA).
 - [x] GTM 1.5.5의 디버그 인터페이스가 GTM을 멈추는 레지스터. → GTM_OCS(0xF019FDE8)의 SUS = 2(Soft suspend), OTGS suspend 신호에 반응(매뉴얼 25.2.6, OCS).
@@ -296,6 +317,7 @@ flowchart TB
 - Infineon: [TC3xx SCR 개요](https://documentation.infineon.com/aurixtc3xx/docs/luk1713080514892), [TC4x SCR](https://documentation.infineon.com/aurixtc4xx/docs/qnw1545140364277), [TC3xx 잠금 주의 사항](https://www.infineon.com/assets/row/public/documents/10/57/infineon-aurix-tc3xx-devicelocking-dos-and-donts-additionaltechnicalinformation-en.pdf)
 - Infineon TC27x 자료(사용자가 `D:\work\claude\infineon\AURIX TC2xx`에 둔 사본, 저장소에는 넣지 않음): TC27x C-step User's Manual V2.2(표 3-3 주소 맵, 7-102 `RSTSTAT`, 표 7-7·7-9 리셋 트리거, 10.5.5.3-6 Flash 보호와 HSM 부팅, 10-71 `FPRO`, 10-75 `PROCONP`, 10-83 `PROCONHSMCOTP`, 10-86 `PROCONHSM`, 표 10-19 FLASH0 레지스터), AP32284(HSM Startup: BOS, HSM 섹터, DF1), AP32285(HSM 데모, 디버그 조건), AP32387·AP32389(TC2xx HSM 디버그 보호), 예제 `HsmDemo__Tc27xC.zip`(`Tricore/registers_hsm.h`, `ArmCortexM3/IfxHsm.h`, `IfxHsm_TestsCommon.c`), TC27x CA 정오표 v2.1(FLASH_TC.H009, FLASH_TC.044)
 - Infineon TC2xx·TC3xx 비교: AP32489(HSM changes TC3xx vs TC2xx, 11쪽 TC2xx HSM 섹터), TC3xx_vs_TC2xx_Deltas V2.1(185-186쪽 HSM 재사용과 정오표 HSM_TC.H003, 36-37쪽 PFLASH와 HSM PCODE)
+- Infineon HSM 예제 소스(`10 AURIX TC3xx HSM\06 Application Notes`의 압축 파일, 2026-10-27): AP32391 `HSM_TC39xB_demo/0_Src/AppSw/Tricore/App/crypto/hsm_Interface.h`(호스트 쪽 브리지 레지스터, `DBGMEM` `0xF0050000`-`0xF005FFFF`), AP32391 `HSM20_app/CMSIS/Include/component/bridge.h`(`HSM_DBGMEM_Type`, `HSM_HSMOTGB_Type`, `DBGCTRL`)와 `hsm20.ld`, AP32373 `HSM_Demo_TC36A/.../ArmCortexM3/peripherals/bridge_hsm.h`(`DBGCTRL` `HSM`·`HOST`·`TREN`·`TRDATA`), `HSM_BootBasic/.../Lcf_Gnuc_Arm_Hsm.lsl`, AP32349 `HSM_BootBasic/src/peripherals/debugextension_hsm.h`·`debugextension_hsm_internal.h`(`FP_COMPH0`-`7`, PID)·`IFX_HSM.h`(HSM 쪽 주소), `HSM_Demo_TC39xA/.../bridge_hsm_internal.h`(`DBGCTRL` 쓰기 마스크), AP32562 `HSM_Demo_TC37A_AP32562_v0.5/.../ArmCortexM3/code_hsm.c`(`Hsm_unlockDebugInterface`), Lauterbach 스크립트(AP32391 `hsm_nocode.cmm`: `SYStem.CPU HSM`, 별도 TRACE32 인스턴스)
 - Infineon HSM 자료(사용자가 `D:\work\claude\infineon\10 AURIX TC3xx HSM`에 둔 사본, 저장소에는 넣지 않음): AP32481(UCB_HSM corner case, `DBGMEM`), AP32543(HSM 보안 부팅 디버그, `OSTATE.IF_LCK`), AP32555(18쪽, HSM 부팅 잠금), AP32349(HSM 부트로더 위치), 예제 코드 `AURIX_HSM Revealed_Training_Demo_1.0.zip`(`Tricore/registers_hsm.h`, `ArmCortexM3/peripherals/debugextension_hsm.h`·`bridge_hsm.h`, `IfxHsm_TestsCommon.c`)와 AP32391 예제(`CMSIS/Include/component/bridge.h`의 `HSM_DBGMEM_Type`, `DBGCTRL`). TC3xx User's Manual V2.1.0(6.5.4.1, 6.5.4.4.1)과 TC36x 부록(주소 맵 `0xF0040000`-`0xF005FFFF`)
 - HighTec: [개발 플랫폼](https://hightec-rt.com/products/development-platform)(GTM/MCS, PPU, Cortex-M 컴파일러)
 - Infineon AURIX TC27x D-Step User's Manual V2.2(2014-12, 사용자가 `docs/`에 둔 사본, 저장소에는 넣지 않음): 1.3 HSM, 1.4 OCDS, 7.4.8.2 CHIPID, 10.5.5.6 Flash 보호와 HSM 부팅, PROCONHSMCOTP·PROCONHSM, 25.2.6 GTM Software Debugger Support, GTM OCS·CLC, 25.22.12 GTM Debug Interface(OTGB, OTSS), 메모리 맵(DF0 `0xAF000000`, EMEM `0x9F000000`)
