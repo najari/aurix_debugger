@@ -121,11 +121,9 @@ impl Debugger {
         if expressions.is_empty() {
             return;
         }
-        // The core of the selected thread, else the first (an ORTI file describes one OS).
-        let core = self
-            .selected_thread
-            .or_else(|| self.threads.first().map(|t| t.id))
-            .and_then(|id| u64::try_from(id).ok());
+        // The core of the selected thread, else the first (an ORTI file describes one OS of the
+        // TriCore program, not the HSM's).
+        let core = self.bus_core();
         self.os_busy = true;
         self.request::<LiveWatchRequest>(
             LiveWatchArguments { expressions, core },

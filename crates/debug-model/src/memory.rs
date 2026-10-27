@@ -348,6 +348,23 @@ impl RamMap {
     }
 }
 
+/// The core of the HSM in a target variant that has it as a core (`TC36x_HSM`, as an attach
+/// file names it): after the TriCore cores. It is a Cortex-M core with an address space of its
+/// own, reached through the HSM debug window; it is not a TriCore core.
+pub fn hsm_core(chip: Option<&str>) -> Option<u64> {
+    let chip = chip?.to_ascii_uppercase();
+    if !chip.ends_with("_HSM") {
+        return None;
+    }
+    if chip.starts_with("TC36") {
+        Some(2)
+    } else if chip.starts_with("TC27") {
+        Some(3)
+    } else {
+        None
+    }
+}
+
 /// Where a core sees its own data and program scratch-pad RAM.
 const LOCAL_DSPR: u64 = 0xd000_0000;
 const LOCAL_PSPR: u64 = 0xc000_0000;
@@ -599,6 +616,23 @@ mod tests {
         assert!(writable_ram(0xd001_c000, 1, Some(1)).is_ok());
         assert!(writable_ram(0xc000_0000, 2, Some(2)).is_ok());
         assert!(writable_ram(0x7000_0000, 0, None).is_err());
+    }
+
+    #[test]
+    fn the_hsm_core_follows_the_tricore_cores() {
+        assert_eq!(hsm_core(Some("TC36x_HSM")), Some(2));
+        assert_eq!(hsm_core(Some("tc36x_hsm")), Some(2));
+        assert_eq!(hsm_core(Some("TC275_HSM")), Some(3));
+        assert_eq!(hsm_core(Some("TC36x")), None);
+        assert_eq!(hsm_core(Some("TC4D7_HSM")), None);
+        assert_eq!(hsm_core(None), None);
+        // The HSM variant has the TriCore chip's RAM.
+        assert_eq!(
+            RamMap::for_chip(Some("TC36x_HSM"))
+                .writable(0x7001_c000, 4, None)
+                .unwrap(),
+            "DSPR0"
+        );
     }
 
     #[test]

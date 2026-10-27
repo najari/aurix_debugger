@@ -37,6 +37,11 @@ impl Debugger {
         }
     }
 
+    /// The core of the HSM thread, if the session has one.
+    fn hsm_core(&self) -> Option<u64> {
+        self.hsm_thread.and_then(|id| u64::try_from(id).ok())
+    }
+
     /// The core memory is read through when none is named: the selected thread's, in a session
     /// of several cores.
     fn default_memory_core(&self) -> Option<u64> {
@@ -52,6 +57,14 @@ impl Debugger {
         let Some(address) = self.memory_focus else {
             return;
         };
+        // The RAM check knows the TriCore address map, not the HSM's own.
+        if self.memory.core().is_some() && self.memory.core() == self.hsm_core() {
+            self.memory_write_note = Some(Err(
+                "writes through the HSM core are not supported: its address space is its own"
+                    .into(),
+            ));
+            return;
+        }
         let prepared = parse_bytes(text).and_then(|bytes| {
             let (request, ram) = self.memory.write_request(address, &bytes)?;
             Ok((request, ram, bytes.len()))

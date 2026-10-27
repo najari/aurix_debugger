@@ -28,6 +28,8 @@ impl Debugger {
             .and_then(|summary| summary.chip);
         // The memory tab writes the RAM of this chip only.
         self.memory.set_chip(chip.as_deref());
+        self.hsm_thread = aurix_debug_model::memory::hsm_core(chip.as_deref())
+            .and_then(|core| i64::try_from(core).ok());
         self.cache = chip
             .and_then(|chip| Caches::for_chip(&chip))
             .map(CacheView::new);
@@ -60,11 +62,8 @@ impl Debugger {
             return;
         };
         let (ranges, generation) = view.ranges();
-        // The CSFRs are global addresses: any core reaches them.
-        let core = self
-            .selected_thread
-            .or_else(|| self.threads.first().map(|t| t.id))
-            .and_then(|id| u64::try_from(id).ok());
+        // The CSFRs are global addresses: any TriCore core reaches them.
+        let core = self.bus_core();
         self.cache_busy = true;
         self.request::<ReadRanges>(
             ReadRangesArguments { ranges, core },

@@ -91,6 +91,9 @@ enum ThreadState {
     /// The core runs no code (an AURIX core in boot halt): the server's
     /// [`CORE_STATUS_EVENT`]. It has no stack, and pause and step do nothing.
     Asleep,
+    /// The core cannot be reached now (the HSM while its debug window is closed), and why: the
+    /// server's [`CORE_STATUS_EVENT`]. It takes no request until the server says it is back.
+    Unavailable(String),
     Stopped(String),
 }
 
@@ -164,6 +167,9 @@ pub struct Debugger {
     gtm_busy: bool,
     /// The cores' caches, for a chip whose caches are known.
     cache: Option<aurix_debug_model::cache::CacheView>,
+    /// The thread of the HSM core, for a target variant that has it (`TC36x_HSM`): not a
+    /// TriCore core, so the TriCore views do not read through it.
+    hsm_thread: Option<i64>,
     /// A read of the cache registers is under way.
     cache_busy: bool,
     /// The software trace of the binary RTT channels.
@@ -248,6 +254,7 @@ impl Debugger {
             gtm: None,
             gtm_busy: false,
             cache: None,
+            hsm_thread: None,
             cache_busy: false,
             sw_trace: Default::default(),
             sw_trace_names: None,
@@ -607,12 +614,35 @@ impl Debugger {
                 }
             }
             CORE_STATUS_EVENT => {
-                if let Ok(status) = serde_json::from_value::<CoreStatusEvent>(event.body)
-                    && status.status == "sleeping"
-                {
-                    self.set_state(status.thread_id, ThreadState::Asleep);
-                    if self.selected_thread == Some(status.thread_id) {
-                        self.clear_stack();
+                if let Ok(status) = serde_json::from_value::<CoreStatusEvent>(event.body) {
+                    let thread = status.thread_id;
+                    match status.status.as_str() {
+                        "sleeping" => {
+                            self.set_state(thread, ThreadState::Asleep);
+                            if self.selected_thread == Some(thread) {
+                                self.clear_stack();
+                            }
+                        }
+                        "unavailable" => {
+                            let why = if status.description.is_empty() {
+                                "The core is not available.".to_string()
+                            } else {
+                                status.description
+                            };
+                            self.log(format!("thread {thread}: {why}"));
+                            self.set_state(thread, ThreadState::Unavailable(why));
+                            if self.selected_thread == Some(thread) {
+                                self.clear_stack();
+                            }
+                        }
+                        // Back: its state comes with the next stopped or continued event.
+                        "available" => {
+                            self.set_state(thread, ThreadState::Unknown);
+                            if self.selected_thread == Some(thread) {
+                                self.read_stack_unless_told(thread, cx);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -644,6 +674,20 @@ impl Debugger {
             .iter()
             .find(|t| t.id == thread)
             .map(|t| &t.state)
+    }
+
+    /// The core that global TriCore addresses (CSFRs, the GTM, the OS variables) are read
+    /// through: the selected thread's, else the first. The HSM core and a core that cannot be
+    /// reached are passed over.
+    fn bus_core(&self) -> Option<u64> {
+        let usable = |id: i64| {
+            Some(id) != self.hsm_thread
+                && !matches!(self.state(id), Some(ThreadState::Unavailable(_)))
+        };
+        self.selected_thread
+            .filter(|&id| usable(id))
+            .or_else(|| self.threads.iter().map(|t| t.id).find(|&id| usable(id)))
+            .and_then(|id| u64::try_from(id).ok())
     }
 
     fn set_state(&mut self, thread: i64, state: ThreadState) {
@@ -679,9 +723,12 @@ impl Debugger {
                     name: thread.name,
                 })
                 .collect();
+            // Live Watch evaluates the expressions of the TriCore program: not on the HSM.
+            let hsm = this.hsm_thread;
             let cores = this
                 .threads
                 .iter()
+                .filter(|row| Some(row.id) != hsm)
                 .filter_map(|row| Some((u64::try_from(row.id).ok()?, row.name.clone())))
                 .collect::<Vec<_>>();
             this.live_watch.set_threads(&cores);
@@ -773,7 +820,7 @@ impl Debugger {
         };
         if matches!(
             self.state(thread),
-            Some(ThreadState::Running | ThreadState::Asleep)
+            Some(ThreadState::Running | ThreadState::Asleep | ThreadState::Unavailable(_))
         ) {
             return;
         }
@@ -1070,8 +1117,14 @@ impl Debugger {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.selected_thread.and_then(|id| self.state(id));
         let stopped = matches!(state, Some(ThreadState::Stopped(_)));
-        // A thread of unknown state may run: pause is offered. A sleeping core takes none.
-        let running = state.is_some() && !stopped && state != Some(&ThreadState::Asleep);
+        // A thread of unknown state may run: pause is offered. A sleeping core takes none, nor
+        // does one that cannot be reached.
+        let running = state.is_some()
+            && !stopped
+            && !matches!(
+                state,
+                Some(ThreadState::Asleep | ThreadState::Unavailable(_))
+            );
         div()
             .flex()
             .items_center()
@@ -1153,6 +1206,7 @@ impl Debugger {
                     ThreadState::Unknown => "?".to_string(),
                     ThreadState::Running => "running".to_string(),
                     ThreadState::Asleep => "asleep".to_string(),
+                    ThreadState::Unavailable(_) => "unavailable".to_string(),
                     ThreadState::Stopped(reason) => format!("stopped: {reason}"),
                 };
                 div()

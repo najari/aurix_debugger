@@ -40,11 +40,8 @@ impl Debugger {
         };
         let asked = view.ranges();
         let ranges = asked.ranges.clone();
-        // Any core reaches the GTM: the selected thread's, else the first.
-        let core = self
-            .selected_thread
-            .or_else(|| self.threads.first().map(|t| t.id))
-            .and_then(|id| u64::try_from(id).ok());
+        // Any TriCore core reaches the GTM: the selected thread's, else the first.
+        let core = self.bus_core();
         self.gtm_busy = true;
         self.request::<ReadRanges>(
             ReadRangesArguments { ranges, core },
