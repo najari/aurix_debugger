@@ -531,7 +531,13 @@ impl Debugger {
                 let thread = body.get("threadId").and_then(Value::as_i64);
                 if body.get("allThreadsStopped").and_then(Value::as_bool) == Some(true) {
                     for row in &mut self.threads {
-                        if !matches!(row.state, ThreadState::Stopped(_) | ThreadState::Asleep) {
+                        // The server leaves the cores it cannot reach out of "every core".
+                        if !matches!(
+                            row.state,
+                            ThreadState::Stopped(_)
+                                | ThreadState::Asleep
+                                | ThreadState::Unavailable(_)
+                        ) {
                             row.state = ThreadState::Stopped("stopped".into());
                         }
                     }
@@ -556,7 +562,9 @@ impl Debugger {
             "continued" => {
                 if body.get("allThreadsContinued").and_then(Value::as_bool) == Some(true) {
                     for row in &mut self.threads {
-                        row.state = ThreadState::Running;
+                        if !matches!(row.state, ThreadState::Unavailable(_)) {
+                            row.state = ThreadState::Running;
+                        }
                     }
                 } else if let Some(thread) = body.get("threadId").and_then(Value::as_i64) {
                     self.set_state(thread, ThreadState::Running);
@@ -632,7 +640,8 @@ impl Debugger {
                             self.log(format!("thread {thread}: {why}"));
                             self.set_state(thread, ThreadState::Unavailable(why));
                             if self.selected_thread == Some(thread) {
-                                self.clear_stack();
+                                // No stack; the source pane shows why.
+                                self.read_stack(cx);
                             }
                         }
                         // Back: its state comes with the next stopped or continued event.
@@ -818,9 +827,14 @@ impl Debugger {
         let Some(thread) = self.selected_thread else {
             return;
         };
+        // An unavailable core shows why in place of its source.
+        if let Some(ThreadState::Unavailable(why)) = self.state(thread) {
+            self.source = Err(why.clone());
+            return;
+        }
         if matches!(
             self.state(thread),
-            Some(ThreadState::Running | ThreadState::Asleep | ThreadState::Unavailable(_))
+            Some(ThreadState::Running | ThreadState::Asleep)
         ) {
             return;
         }
