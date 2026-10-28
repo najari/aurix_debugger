@@ -188,6 +188,48 @@ TC4x에는 이 밖에 CSRM(보안용 TriCore)과 cDSP가 있다. CSRM은 TriCore
     - `FPRO`(`0xF800201C`) = `0x004000A0`: bit 5·7은 예약 비트(SVD의 리셋 값 `0xA0`), bit 22는 `ENPE`(Enable Program/Erase). 읽기를 막는 bit 16-20은 0이다.
     - 로더를 시작하고 멈추는 시험(`loader_check wdt`)도 전과 같이 지나갔다.
 
+#### EB tresos HSM 부트로더 프로젝트 검토 (2026-10-28)
+
+HSM을 쓰는 EB tresos 부트로더·부트매니저 프로젝트(사용자가 `D:\work\claude\EB_PH3_HSM_eva2_backup`에 둔 양산 프로젝트 사본, 저장소에는 넣지 않음)를 미결 사항에 비추어 보았다.
+
+- **칩:** SAK-TC364DP(TC36x)로, 이 보드와 같은 계열이다. Crypto 플러그인은 `Crypto_TS_T16D29M1I18R0_TRICORE_TC36XD`다.
+- **플래시 배치**(배포 HEX와 각 출력 HEX를 비교함):
+
+    | 주소 | 내용 |
+    |---|---|
+    | `0xA0008000`-`0xA0009700`(PF0 S2) | HSM 코드 |
+    | `0xA000C000`-`0xA0027A20`(S3 부근부터) | HSM 코드 |
+    | `0xA0050000`-`0xA0060000` | 부트매니저 |
+    | `0xA0060000`-`0xA0090000` | CAN 부트로더 |
+    | `0xA0100000`- | 애플리케이션 |
+
+    두 HSM 영역은 Cortex-M 벡터 테이블로 시작한다. 초기 SP `0x20002000`(HSM RAM), 리셋 벡터 `0x800082DD`·`0x80003399`(Thumb)다. 실제 HSM 코드도 `0x8000xxxx`에서 도니, HSM 플래시의 BP에는 `FP_COMPH`가 꼭 필요하다(위 "FPB의 Infineon 확장"). `0xA000C000` 쪽 리셋 벡터는 테이블 위치와 맞지 않아, HSM 쪽 주소 배치는 확실하지 않다.
+- **HSM 펌웨어:** EB HSM 펌웨어는 바이너리로만 있다. 소스는 호스트 쪽 프록시(`lib_src/eb_hsm_proxy.c`, `lib_include/eb_hsm_*.h`)뿐이다. `eb_hsm_bridge.h`의 브리지 레지스터(`0xF0040000`, `DBGCTRL`의 HSM·HOST 비트, 64 KB `SAHMEM`)는 우리가 아는 것과 같다.
+- **미결 사항에 대해:** `FP_COMPH`의 비트 뜻, 창의 8·16비트 접근, `HSMOTGB` 트리거 선의 뜻은 이 자료로도 풀리지 않는다. TC275의 HSM 블록 버스 오류는 TC36x 프로젝트라 해당하지 않는다.
+- **EB 펌웨어의 `HSM2HTS`:** EB 펌웨어는 `HSM2HTS`(`0xF0040034`)를 자기 방식으로 쓴다(`eb_hsm_comm.h`). Infineon의 정의가 아니라 EB 펌웨어에서만 맞는 해석이다.
+
+    | 비트 | 뜻 |
+    |---|---|
+    | 7:0 | 채널 상태 |
+    | 9 | 초기화 대기 |
+    | 16:10 | 일반 오류 |
+    | 24:17 | SHE 상태(bit 17 busy, 18 secure boot, 19 boot init, 20 boot finished, 21 boot ok, 22 RNG init, 23 External Debugger, 24 Internal Debugger) |
+    | 30 | alive(호스트가 `HT2HSMF` bit 2로 물으면 HSM이 뒤집음) |
+
+    TC36x에서는 HSM 부팅이 꺼져도 `HSM_ID`가 읽혔다. 그러니 `HSM2HTS`도 디버그 창 없이 읽혀, `hsm_status`가 EB 펌웨어의 상태를 보여 줄 수 있을 것이다(선택 기능).
+- **EB의 "debug activation"은 Cortex-M 디버그를 여는 것이 아니다.**
+    - `eb_hsm_get_challenge(COMM_CHALLENGE_MODE_DEBUG)`와 `eb_hsm_debug_activation(authorization)`(명령 `0x24`)은 SHE의 `CMD_DEBUG_CHALLENGE`·`CMD_DEBUG`다.
+    - SHEReset 패키지 사용자 설명서는 이것이 MASTER_ECU_KEY, KEY_n, BOOT_MAC_KEY, BOOT_MAC을 모두 지운다고 적는다. 인증은 MASTER_ECU_KEY에서 만든 KDEBUG로 challenge와 UID에 CMAC을 건다.
+    - 디버거가 HSM 디버그 창을 여는 경로가 아니고, 키를 지우므로 써서도 안 된다.
+- **이 펌웨어로 HSM을 부팅하면 창이 열릴 가능성이 크다.**
+    - AP32284(4.2.3)는 UCB_HSM을 기본값 `0x00000000`으로 두면 HSM 디버그가 켜진다고 적는다. 그러면 BOS가 `DBGCTRL.HSM`을 연다.
+    - EB 펌웨어가 그 뒤에 다시 잠그는지는 바이너리라 알 수 없다.
+    - `doc/EB_FBL_2022_07_29_Release/HSM_Utility.zip`의 `tc36x_sswwait.cmm`이 부팅 설정을 바꾸는 방법을 보여 준다. UCB_HSMCOTP0 원본 `0xAF402800`·복사본 `0xAF403800`의 `PROCONHSMCFG` 워드(+0x18)를 고치고, 확인 코드 `0x43211234`를 쓴다(Lauterbach `FLASH.AUTO`).
+- **실칩 시험에 쓸지:** 이 보드에서는 하지 않는다.
+    - HSM 코드를 쓰고 UCB_HSMCOTP에서 `HSMBOOTEN`을 켜야 하는데, UCB는 쓰지 않기로 했고 잘못하면 칩이 영구히 잠긴다(AP32555).
+    - 펌웨어는 양산 프로젝트에 라이선스된 EB 펌웨어다.
+    - 쓴다면 버려도 되는 TC36x에서 하고, 쓸지는 사용자가 정한다.
+
 ### SCR (XC800)
 
 - **디버그 하드웨어:** XC800 OCDS. 1.5 KB 모니터 ROM과 64 B 모니터 RAM이 있고, 단일 핀 DAP(SPD)가 있다. XRAM 8 KB는 SPB로 읽힌다.
@@ -336,6 +378,7 @@ flowchart TB
 - Infineon: [TC3xx SCR 개요](https://documentation.infineon.com/aurixtc3xx/docs/luk1713080514892), [TC4x SCR](https://documentation.infineon.com/aurixtc4xx/docs/qnw1545140364277), [TC3xx 잠금 주의 사항](https://www.infineon.com/assets/row/public/documents/10/57/infineon-aurix-tc3xx-devicelocking-dos-and-donts-additionaltechnicalinformation-en.pdf)
 - Infineon TC27x 자료(사용자가 `D:\work\claude\infineon\AURIX TC2xx`에 둔 사본, 저장소에는 넣지 않음): TC27x C-step User's Manual V2.2(표 3-3 주소 맵, 7-102 `RSTSTAT`, 표 7-7·7-9 리셋 트리거, 10.5.5.3-6 Flash 보호와 HSM 부팅, 10-71 `FPRO`, 10-75 `PROCONP`, 10-83 `PROCONHSMCOTP`, 10-86 `PROCONHSM`, 표 10-19 FLASH0 레지스터), AP32284(HSM Startup: BOS, HSM 섹터, DF1), AP32285(HSM 데모, 디버그 조건), AP32387·AP32389(TC2xx HSM 디버그 보호), 예제 `HsmDemo__Tc27xC.zip`(`Tricore/registers_hsm.h`, `ArmCortexM3/IfxHsm.h`, `IfxHsm_TestsCommon.c`), TC27x CA 정오표 v2.1(FLASH_TC.H009, FLASH_TC.044)
 - Infineon TC2xx·TC3xx 비교: AP32489(HSM changes TC3xx vs TC2xx, 11쪽 TC2xx HSM 섹터), TC3xx_vs_TC2xx_Deltas V2.1(185-186쪽 HSM 재사용과 정오표 HSM_TC.H003, 36-37쪽 PFLASH와 HSM PCODE)
+- EB tresos HSM 부트로더 프로젝트(사용자가 `D:\work\claude\EB_PH3_HSM_eva2_backup`에 둔 양산 프로젝트 사본, 저장소에는 넣지 않음): 배포 HEX와 부트매니저·부트로더 출력 HEX(주소 배치, HSM 벡터 테이블), `plugins/Crypto_TS_T16D29M1I18R0_TRICORE_TC36XD/lib_include/eb_hsm_bridge.h`·`eb_hsm_comm.h`·`eb_hsm_comm_types.h`·`eb_hsm_proxy.h`, `lib_src/eb_hsm_proxy.c`(`eb_hsm_debug_activation`), `doc/EB_FBL_2022_07_29_Release/HSM_Utility.zip`(`tc36x_sswwait.cmm`, SHEReset 패키지와 사용자 설명서)
 - Infineon HSM 예제 소스(`10 AURIX TC3xx HSM\06 Application Notes`의 압축 파일, 2026-10-27): AP32391 `HSM_TC39xB_demo/0_Src/AppSw/Tricore/App/crypto/hsm_Interface.h`(호스트 쪽 브리지 레지스터, `DBGMEM` `0xF0050000`-`0xF005FFFF`), AP32391 `HSM20_app/CMSIS/Include/component/bridge.h`(`HSM_DBGMEM_Type`, `HSM_HSMOTGB_Type`, `DBGCTRL`)와 `hsm20.ld`, AP32373 `HSM_Demo_TC36A/.../ArmCortexM3/peripherals/bridge_hsm.h`(`DBGCTRL` `HSM`·`HOST`·`TREN`·`TRDATA`), `HSM_BootBasic/.../Lcf_Gnuc_Arm_Hsm.lsl`, AP32349 `HSM_BootBasic/src/peripherals/debugextension_hsm.h`·`debugextension_hsm_internal.h`(`FP_COMPH0`-`7`, PID)·`IFX_HSM.h`(HSM 쪽 주소), `HSM_Demo_TC39xA/.../bridge_hsm_internal.h`(`DBGCTRL` 쓰기 마스크), AP32562 `HSM_Demo_TC37A_AP32562_v0.5/.../ArmCortexM3/code_hsm.c`(`Hsm_unlockDebugInterface`), Lauterbach 스크립트(AP32391 `hsm_nocode.cmm`: `SYStem.CPU HSM`, 별도 TRACE32 인스턴스)
 - Infineon HSM 자료(사용자가 `D:\work\claude\infineon\10 AURIX TC3xx HSM`에 둔 사본, 저장소에는 넣지 않음): AP32481(UCB_HSM corner case, `DBGMEM`), AP32543(HSM 보안 부팅 디버그, `OSTATE.IF_LCK`), AP32555(18쪽, HSM 부팅 잠금), AP32349(HSM 부트로더 위치), 예제 코드 `AURIX_HSM Revealed_Training_Demo_1.0.zip`(`Tricore/registers_hsm.h`, `ArmCortexM3/peripherals/debugextension_hsm.h`·`bridge_hsm.h`, `IfxHsm_TestsCommon.c`)와 AP32391 예제(`CMSIS/Include/component/bridge.h`의 `HSM_DBGMEM_Type`, `DBGCTRL`). TC3xx User's Manual V2.1.0(6.5.4.1, 6.5.4.4.1)과 TC36x 부록(주소 맵 `0xF0040000`-`0xF005FFFF`)
 - HighTec: [개발 플랫폼](https://hightec-rt.com/products/development-platform)(GTM/MCS, PPU, Cortex-M 컴파일러)
