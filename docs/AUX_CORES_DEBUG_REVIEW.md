@@ -349,8 +349,19 @@ flowchart TB
 - **주의:** 앞선 시험이 CPU1·CPU2에서 플래시 데모를 돌려 두면, 그 데모가 같은 DSPR 주소(`0x7000A000`)에 전역 변수를 써서 RAM 시험 펌웨어의 변수가 깨진다. 시험 전에 보드를 리셋한다.
 - **GTM 전체 멈추기 실험**(probe-rs `62120fa`, 예제 `gtm_suspend`): `GTM_OCS.SUS = 2`를 쓰고 CPU0을 (1) halt 요청으로, (2) SUSP가 켜진 데이터 BP로 멈췄다. 두 경우 모두 GTM은 계속 돌았다(`SUSSTA = 0`, MCS R0 증가, (2)에서 `DBGSR.SUSP = 1`). CPU의 suspend 신호는 기본으로 주변장치에 가지 않는다. 트리거 스위치(Cerberus)의 라우팅은 배포 제한 OCDS 문서에 있어, 문서 없이 다른 레지스터는 쓰지 않았다. `GTM_OCS`는 0으로 되돌렸다.
 - **2차 실험(2026-10-26, probe-rs `91ebe88`):** 먼저 OCDS가 켜져 있는지 확인했다: `CBS_OSTATE` = `0x00080001`(OEN = 1), `PROCONDBG` = 0(OCDSDIS = 0, UCB_DBG 잠금 없음), CPU0 `DBGSR.DE` = 1. 주변장치의 OCS는 "디버그 모드에서만 유효"한데 그 조건은 충족된다. TC3xx 공개 매뉴얼(Part 1, 9.4.5.4)에 따르면 시스템 suspend 신호는 트리거 선 TL1(`CBS_TLS.TL1`)이다. CPU0의 halt 상태를 선으로 보내는 `CBS_TRC0.HALT`(시작 값 2)를 바꿔 보았다. HALT = 1이면 CPU0이 멈출 때 CPU1·CPU2가 Suspend-In(`DBGSR.SIH` = 1)으로 함께 멈췄다(CPU suspend 선). HALT = 2·3·4에서는 아무것도 멈추지 않았다. 어느 경우에도 GTM과 STM0(`STM0_OCS.SUS = 2`)은 멈추지 않았다(SUSSTA = 0, 계속 증가). 주변장치 쪽 suspend는 "Central Suspend Switch"의 설정(어느 CPU·주변장치를 멈출지)이 더 필요한데, 이 레지스터는 TC27x·TC3xx 공개 매뉴얼과 Infineon 교육 자료에 없다(배포 제한 OCDS 문서). 실험 뒤 `CBS_TRC0` = 2, `GTM_OCS` = 0, `STM0_OCS` = 0으로 되돌렸다.
+- **TC36x 보드의 3차 실험(2026-10-28, probe-rs 예제 `gtm_suspend`, `PROBE_RS_CHIP=TC36x`, `TRC_HALT=1`):** TC36x(`GTM_OCS` `0xF019FD38`)에서 CPU0을 멈추면 STM0은 함께 멈추지만(`SUSSTA` = 1) GTM은 멈추지 않는다.
+    - **STM0은 멈춘다:** 선 1(시스템 suspend)이 CPU0을 suspend시키고(`CBS_TL1ST.C0`), STMx는 `CPUxSUSOUT`을 따른다(TC3xx 매뉴얼, STM OCS). TC275에서는 STM0도 멈추지 않았다.
+    - **GTM은 안 멈춘다:** `GTM_OCS.SUS` = 2(soft)와 1(hard) 모두 `SUSSTA` = 0이고 MCS1이 계속 돈다. TC3xx 매뉴얼(GTM 28.25.19.1.1)은 "suspend는 OTGS에서 전역으로, GTM에서는 OCS 레지스터로 국소로 제어한다"고 적는다. 코어의 suspend 선이 GTM에 가지 않고, OTGS의 전역 suspend 설정은 매뉴얼에 없다(OCDS 장은 별도 규격).
+    - **더 해 본 것(모두 GTM에는 효과 없음, 매번 STM0은 멈춤):**
+        - CPU0의 halt 상태를 선 1–6 각각에 싣기(`CBS_TRC0.HALT`)
+        - 선 1을 잡아 두기(`CBS_TLCHE.TL1`. 풀 때까지 CPU0이 돌지 않음)
+        - OCDS 제어 비트 `OC0`–`OC5`(`CBS_OCNTRL`)
+        - 선 1의 대상으로 `M0`–`M2`, `DMA`, `DMA1`(`CBS_TLC`)
+        - 신호 처리 `TLC.TLSP1`의 1–15
+    - **막힌 곳:** `CBS_TL1ST`에는 GTM 항목이 없다. GTM을 멈추게 하는 Central Suspend Switch 설정은 배포 제한 OCDS 규격에 있다. 그래서 TriCore 멈춤에 GTM을 맞춰 멈추는 것은 공개 자료만으로는 되지 않는다. 지금 쓸 수 있는 것은 GTM의 채널 정지(`CTRL.EN`)이고, 멈춘 TriCore와 같은 순간에 맞춰 멈추는 것은 아니다.
+    - 시험 뒤 레지스터를 되돌렸고(예제가 `EXTRA`·`OCNTRL` 값을 복구함) 보드를 리셋했다.
 - **채널 정지·재개**: GTM 탭의 채널마다 Stop/Run 버튼. `MCSi_CHx_CTRL.EN`(쓸 수 있는 유일한 비트)을 DAP `writeMemory` 4바이트(TriCore 버스에서 32비트 한 번)로 쓴다. 앱은 MCS 채널 CTRL 주소에만 쓴다. TC275에서 채널 0을 Stop하자 PC `0x000C`, R0 `0x11F34E`가 그대로 머물고 채널 1은 계속 돌았다. Run 뒤에는 그 자리에서 이어 돌았다(콘솔에 `MCS1 channel 0: stop (CTRL.EN = 0)`·`run (CTRL.EN = 1)`).
-- **남은 것:** GTM 전체 멈추기(OCDS 문서의 Central Suspend Switch 설정이 있으면. CPU0 halt를 CPU suspend 선에 싣는 것까지는 확인됨), MCS 한 단계 실행(GTM 4.1 또는 ED의 MCDS), 다른 칩의 GTM.
+- **남은 것:** GTM 전체 멈추기(OCDS 문서의 Central Suspend Switch 설정이 있으면. CPU0 halt를 CPU suspend 선에 싣는 것과 TC36x에서 STM0이 함께 멈추는 것까지는 확인됨), MCS 한 단계 실행(GTM 4.1 또는 ED의 MCDS), 다른 칩의 GTM.
 
 ## 미결 사항
 
