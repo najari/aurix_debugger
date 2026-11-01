@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -248,7 +248,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
-| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. 다음 후보는 EB 프로젝트에 있는 Spi, FlsLoader |
+| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). 다음 후보는 EB 프로젝트에 있는 FlsLoader |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
 
@@ -275,11 +275,25 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-ui` | egui 0.37 편집기. EB tresos 구성: Project Explorer(`Port` > `PortGeneral`, `PortConfigSet` > `PortContainer` > `PortPin`, 오류·경고 표시), 경로 표시와 모듈 탭, PortContainer 표(본딩된 핀 전부, 설정 안 된 핀은 흐리게, `+`로 추가), PortPin 폼(AUTOSAR 파라미터 이름, 해당 없는 항목은 흐리게, 설명은 마우스를 올리면), Pin Information(패드, 리드, 리셋 상태, 대체 기능 표), Problems(누르면 그 핀으로), Verify·Generate |
 | `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
 | `mcal-mcu` | 클럭 설정 타입(`no_std`): `ClockConfig`(SYSPLLCON·PERPLLCON·CCUCON, CPU 분주비, 주요 주파수) |
+| `mcal-spi` | SPI 설정 타입(`no_std`): `SpiConfig`(QSPI 모듈의 `PISEL`·`SSOC`, 채널, 장치의 `GLOBALCON.TQ`·`ECONz`·`BACON`, 작업, 시퀀스) |
 | `mcal-wdg` | 워치독 설정 타입(`no_std`): `WdgConfig`(모드별 `REL`·`WDTCPUyCON1`, 트리거 ATOM 채널의 `CTRL`·주기·`IRQ_EN`) |
 | `mcal-can` | CAN 설정 타입(`no_std`): `CanConfig`(모듈, 컨트롤러별 `NPCR`·`NBTP`·메시지 RAM 레지스터·`IE`와 필터 요소, 수신·송신 객체) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### SPI (2026-11-02)
+
+- **자료:** 매뉴얼 QSPI 장의 보율과 지연 계산(`BR = fQSPI / ((TQ+1)(Q+1)(A+1+B+C))`, B와 C가 0이면 C는 1, 한 비트는 TQ 4개 이상; 지연 `4^PRE × (LEN+1)` 주기), 레지스터(`GLOBALCON.TQ` 7:0, `ECONz`의 `Q` 5:0·`A` 7:6·`B` 9:8·`C` 11:10·`CPH` 12·`CPOL` 13·`PAREN` 14, `BACON`의 `IPRE` 3:1 … `TRAIL` 18:16·`PARTYP` 19·`DL` 27:23·`CS` 31:28, `SSOC`의 `AOL` 15:0·`OEN` 31:16, `PISEL.MRIS` 2:0), 메모리 맵(QSPI0 `F000 1C00H`, 모듈마다 256바이트), TC36x SPIRIT의 QSPI0–3 신호.
+- **모델(`[spi]`):** Tresos처럼 QSPI 모듈(`SpiHwConfigurationQspi`), 채널, 외부 장치, 작업, 시퀀스를 받는다. 동기 전송만 있다.
+- **계산:**
+    - 보율 인수는 오차가 가장 작은 것, 그다음 비트당 TQ 수가 가장 적은 것(TQ가 가장 큰 것), 그다음 `A+1+B+C`가 가장 짧은 것으로 고른다. Tresos의 5 Mbit/s(TQ 4, Q 1, A 0, B 0, C 1)와 1 Mbit/s(TQ 24)가 이 규칙과 같다. 맞지 않는 보율은 실제 값과 함께 경고한다.
+    - `SSOC`는 장치들의 SLSO 허용과 극성, `ECONz`는 `cs % 8`에 둔다. 같은 ECON을 쓰는 두 장치(SLSOz, SLSOz+8)의 값이 다르면 오류다.
+    - 검사: MRST 입력이 패키지의 핀에 있는지, SLSO가 칩에 있는지, Port 설정에 MRST 입력 핀과 SCLK·MTSR·SLSO 출력 핀이 있는지(경고), 이름 참조, 폭 2–32, 기본 데이터가 폭에 맞는지.
+- **비교:** `mcal-gen compare-tresos-spi`. 작업·채널·시퀀스는 이름으로 맞춘다(드라이버 배열은 QSPI 순서). 작업마다 12개, 채널마다 6개, QSPI 모듈마다 5개, 시퀀스마다 2개, 모듈 지도와 개수 7개. 네 작업공간 모두 58개 값이 같다. 네 곳의 `Spi.xdm`이 같아서 설정은 한 가지다(QSPI1 SLSO3 1 Mbit/s와 QSPI0 SLSO2 5 Mbit/s).
+- **비교하지 않은 것:** 시퀀스의 모듈 값(드라이버의 인코딩)과 SLSO0 스트로브 지연(외부 디멀티플렉서에서만 쓴다). 내부 버퍼 채널, 수동 보율 인수, 시간으로 주는 지연, 패리티, 여러 채널 작업은 이 설정에 없어 Tresos와 맞춰 보지 못했다.
+- **편집기:** Spi 모듈(`SpiGeneral`, `SpiDriver` 아래 채널·장치·작업·시퀀스, `SpiHwConfiguration`). 장치 폼에 보율 인수, `ECONz`, `BACON`, 지연 시간(ns)을 계산 값으로 보인다. 진단은 `job Sbc`처럼 종류와 이름으로 가리킨다.
+- **아직 없는 것:** 비동기 전송과 DMA, 외부 디멀티플렉서, GPIO 슬레이브 선택, 시간으로 주는 지연의 자동 계산, 여러 코어.
 
 ### 워치독 (2026-11-01)
 
