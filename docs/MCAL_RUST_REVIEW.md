@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -247,7 +247,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 |---|---|---|---|
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
-| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | `Can_17_McmCan_PBcfg.c`의 값과 같다 |
+| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
 | 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
@@ -275,9 +275,24 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-ui` | egui 0.37 편집기. EB tresos 구성: Project Explorer(`Port` > `PortGeneral`, `PortConfigSet` > `PortContainer` > `PortPin`, 오류·경고 표시), 경로 표시와 모듈 탭, PortContainer 표(본딩된 핀 전부, 설정 안 된 핀은 흐리게, `+`로 추가), PortPin 폼(AUTOSAR 파라미터 이름, 해당 없는 항목은 흐리게, 설명은 마우스를 올리면), Pin Information(패드, 리드, 리셋 상태, 대체 기능 표), Problems(누르면 그 핀으로), Verify·Generate |
 | `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
 | `mcal-mcu` | 클럭 설정 타입(`no_std`): `ClockConfig`(SYSPLLCON·PERPLLCON·CCUCON, CPU 분주비, 주요 주파수) |
+| `mcal-can` | CAN 설정 타입(`no_std`): `CanConfig`(모듈, 컨트롤러별 `NPCR`·`NBTP`·메시지 RAM 레지스터·`IE`와 필터 요소, 수신·송신 객체) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### CAN (2026-11-01)
+
+- **자료:** 매뉴얼 MCMCAN 장의 레지스터(`NPCR`, `NBTP`, `SIDFC`, `XIDFC`, `RXBC`, `RXESC`, `TXEFC`, `TXBC`, `TXESC`, `IE`)와 필터 요소(표준 `S0`, 확장 `F0`/`F1`), TC36x 부록 표 303·304(CAN0은 노드 4개와 32 KB RAM, CAN1은 노드 4개와 16 KB RAM, 노드 레지스터는 모듈 + `0x8100 + 0x400 × n`)와 노드별 수신 입력 연결.
+- **모델(`[can]`):** Tresos처럼 컨트롤러는 노드, 수신 입력, 비트 레이트와 시간 양자(PropSeg, Seg1, Seg2, SJW)를 받는다. 클럭은 Mcu의 fMCAN이다. 하드웨어 객체 하나가 전용 버퍼 하나이고, 핸들은 수신 객체 다음 송신 객체다.
+- **계산:**
+    - 분주비 = fMCAN / (비트 레이트 × 양자 수). 정수가 아니면 맞는 양자 수 목록과 함께 오류를 낸다. `NBTP`의 범위(NTSEG1 2–256, NTSEG2 2–128, NBRP 1–512)를 확인한다.
+    - 메시지 RAM은 모듈마다 노드 순서로, 노드 안에서는 표준 필터(4바이트), 확장 필터(8), Rx 버퍼(16), Tx 이벤트(8), Tx 버퍼(16) 순서로 놓는다. 노드와 RAM의 한계를 확인한다.
+    - 수신 필터는 정확한 ID를 Rx 버퍼에 넣는 요소다(`SFEC`/`EFEC` = 111, 버퍼 번호는 `SFID2`/`EFID2`). `IE`는 Tx 이벤트(`TEFNE`), Rx 버퍼(`DRXE`), 버스오프(`BOE`) 중 인터럽트로 처리하는 것만 켠다.
+- **칩·Port 검사:** 노드에 그 수신 입력이 있는 핀이 패키지에 있어야 한다. Port 모듈에 그 입력을 받는 입력 핀과 `CANxy_TXD` 출력 핀이 없으면 경고한다.
+- **비교:** `mcal-gen compare-tresos-can`. 네 작업공간의 `Can.xdm`은 같은 설정(CAN01, 500 kbit/s, 수신 2개, 송신 1개)이고, 생성된 CAN 출력은 한 작업공간에만 있다. 그 작업공간에서 노드 주소, `NPCR`, `NBTP` = `0x0407_0E03`, 객체 범위, 메시지 RAM 주소 7개와 크기, 처리 방식, 폴링 마스크, `IE` = `0x0208_1000`, 필터 요소, Tx 객체, 모듈의 노드 사용까지 50개 값이 모두 같다.
+- **아직 확인 못 한 것:** 이번 설정에 없어 Tresos 값과 맞춰 보지 못했다. 루프백(`NPCR.LBM`)의 인코딩, 확장 필터 요소, 폴링 마스크, 여러 컨트롤러가 메시지 RAM을 나누는 순서가 그렇다.
+- **편집기:** Can 모듈(`CanGeneral`, `CanConfigSet` > `CanController`, `CanHardwareObject`). 컨트롤러 폼은 노드와 수신 입력(그 입력의 핀과 함께), 비트 타이밍, 계산된 분주비·샘플 포인트·메시지 RAM 주소·레지스터 값을 보인다. 객체 폼은 핸들, 버퍼, 필터 요소를 보인다.
+- **아직 없는 것:** Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, 인터럽트 노드 배정(ILE, SRC), 웨이크업, Pretended Networking, TTCAN.
 
 ### 클럭 계산 (2026-11-01)
 
