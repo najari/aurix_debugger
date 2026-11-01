@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -246,7 +246,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 단계 | 관문 | 할 일 | 수용 기준 |
 |---|---|---|---|
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
-| 가2. Mcu 클럭 | 매뉴얼의 클럭 한계 표 | PLL 분주비 찾기, K2 단계, CCUCON 값. 편집기에 Mcu 모듈 | EB 부트로더와 같은 주파수 설정에서 `Mcu_PBcfg.c`의 CCUCON·PLL 값과 같다 |
+| 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | `Can_17_McmCan_PBcfg.c`의 값과 같다 |
 | 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로 |
 
@@ -274,9 +274,23 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-gen` | `pins`·`check`·`generate`(`--check`). 같은 입력이면 같은 출력. 기대 출력 시험은 생성된 코드를 시험 안에서 컴파일한다 |
 | `mcal-ui` | egui 0.37 편집기. EB tresos 구성: Project Explorer(`Port` > `PortGeneral`, `PortConfigSet` > `PortContainer` > `PortPin`, 오류·경고 표시), 경로 표시와 모듈 탭, PortContainer 표(본딩된 핀 전부, 설정 안 된 핀은 흐리게, `+`로 추가), PortPin 폼(AUTOSAR 파라미터 이름, 해당 없는 항목은 흐리게, 설명은 마우스를 올리면), Pin Information(패드, 리드, 리셋 상태, 대체 기능 표), Problems(누르면 그 핀으로), Verify·Generate |
 | `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
+| `mcal-mcu` | 클럭 설정 타입(`no_std`): `ClockConfig`(SYSPLLCON·PERPLLCON·CCUCON, CPU 분주비, 주요 주파수) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### 클럭 계산 (2026-11-01)
+
+- **자료:** 매뉴얼 Clocking System 장의 식과 레지스터(SYSPLLCON0/1, PERPLLCON0/1, CCUCON0/1/2/5, CCUCON6 이후 CPU 분주비), TC36x 데이터시트 표 3-3(도메인 최대 주파수)과 표 3-35·3-36(fREF 10–40 MHz, fDCO 400–800 MHz).
+- **모델(`[mcu]`):** Tresos처럼 PLL 분주비(P, N, K2, K3, 1.6/2 분주, fsource1 = fPLL1/2)는 직접 받고, 클럭 도메인은 주파수로 받는다. 분주비는 매뉴얼 식의 값(N)이고 레지스터 필드는 N − 1이다.
+- **계산:**
+    - 도메인마다 CCU가 가진 분주비(1, 2, 3, 4, 5, 6, 8, 10, 12, 15)에서 맞는 값을 찾는다.
+    - GTMDIV = 1은 2 × fSPB라는 규칙(매뉴얼 식 10.8), FSIDIV 2·3은 SRIDIV 1·2일 때만이라는 제약, CPU 분주비 `fSRI × (64 − n) / 64`를 지킨다.
+    - 맞는 분주비가 없으면 가능한 주파수 목록과 함께 오류를 낸다.
+- **칩별 규칙:** TC36x에는 EBU·HSPDM이 없어, 그 클럭 비트(`CCUCON2.EBUPERON`, `HSPDMPERON`)는 리셋 값(켜짐)으로 둔다. Tresos 출력도 그렇다.
+- **비교:** 사용자 설정(`config/Mcu.xdm`)을 옮겨 계산한 값과 `Mcu_PBcfg.c`를 맞췄다(`mcal-gen compare-tresos-mcu`). 네 작업공간 모두 매뉴얼의 300 MHz 설정(fPLL0 300, fPLL1 320, fPLL2 200, fSRI 300, fSPB 100, fGTM 200, fMCAN 80, fQSPI 100 MHz)이고, 15개 항목이 모두 같다. 예: `CCUCON0 = 0x17230113`, `CCUCON1 = 0x22000012`, `CCUCON2 = 0x05000001`, `CCUCON5 = 0x30`.
+- **편집기:** Mcu 모듈(`McuGeneralConfiguration`, `McuClockSettingConfig`의 시스템 PLL·주변 PLL·분배). 계산된 주파수(fDCO, fPLL, fsource, fADC, fERAY, fHSCT, CPU)를 Tresos의 계산 파라미터처럼 보이고, 레지스터 값을 접어서 보인다.
+- **아직 없는 것:** K2 단계 변경 지연, 시스템 PLL FM 변조, 클럭 모니터, 외부 클럭 출력(FOUT), 백업 클럭 K 분주비, CCUCON3/4(REFCLK), RAM 초기화·저전력 모드 설정.
 
 ### Tresos 출력과의 비교 (2026-11-01)
 
