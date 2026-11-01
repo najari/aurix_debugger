@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같고, FlsLoader는 네 작업공간(설정 두 가지)에서 차이가 없다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같고, FlsLoader는 네 작업공간(설정 두 가지)에서 차이가 없다. Dio·Gpt(EB 프로젝트에 없어 매뉴얼로 확인)와 ECUC ARXML 가져오기·내보내기도 되었다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -248,7 +248,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
-| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다 |
+| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
 
@@ -276,12 +276,35 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
 | `mcal-mcu` | 클럭 설정 타입(`no_std`): `ClockConfig`(SYSPLLCON·PERPLLCON·CCUCON, CPU 분주비, 주요 주파수) |
 | `mcal-spi` | SPI 설정 타입(`no_std`): `SpiConfig`(QSPI 모듈의 `PISEL`·`SSOC`, 채널, 장치의 `GLOBALCON.TQ`·`ECONz`·`BACON`, 작업, 시퀀스) |
+| `mcal-dio` | DIO 설정 타입(`no_std`): 채널, 채널 그룹(마스크, 오프셋), 포트별 채널 |
+| `mcal-gpt` | GPT 설정 타입(`no_std`): STM 비교 레지스터 채널(`CMCON`·`ICR` 값, 모드, 알림) |
+| `mcal-ecuc` | 프로젝트를 ECUC 값 ARXML로 쓰고 읽는다 |
 | `mcal-fls-loader` | 플래시 로더 설정 타입(`no_std`): `FlsLoaderConfig`(스위치, 콜아웃, PFLASH·DFLASH 뱅크, 대상이 아닌 UCB 범위) |
 | `mcal-wdg` | 워치독 설정 타입(`no_std`): `WdgConfig`(모드별 `REL`·`WDTCPUyCON1`, 트리거 ATOM 채널의 `CTRL`·주기·`IRQ_EN`) |
 | `mcal-can` | CAN 설정 타입(`no_std`): `CanConfig`(모듈, 컨트롤러별 `NPCR`·`NBTP`·메시지 RAM 레지스터·`IE`와 필터 요소, 수신·송신 객체) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### Dio, Gpt, ECUC ARXML (2026-11-02)
+
+- **Dio(`[dio]`):** AUTOSAR `DioGeneral`(오류 검사, `Dio_FlipChannel`, `Dio_MaskedWritePort`), 채널(핀), 채널 그룹(포트와 마스크, 오프셋은 가장 낮은 핀), 통째로 쓰는 포트. 검사:
+    - 핀이 칩에 있고 패키지에 본딩되었는지, 그룹 마스크의 핀이 다 있는지, 이름이 겹치지 않는지
+    - Port 모듈에 없는 핀(경고), 주변장치에 준 출력 핀(경고)
+
+  생성된 `dio.rs`는 `channel`·`group` 모듈의 상수와, 포트마다 채널 비트를 담은 `DIO_CONFIG`다.
+- **Gpt(`[gpt]`):** 계획 표대로 STM 기반이다.
+    - **자료:** 매뉴얼 System Timer 장. `CMCON`(`MSIZE0` 4:0, `MSTART0` 12:8, `MSIZE1` 20:16, `MSTART1` 28:24), `ICR`(`CMP0EN` 0, `CMP0OS` 2, `CMP1EN` 4, `CMP1OS` 6), TC36x 부록 메모리 맵(STM0 `F000 1000H`, STM1 `F000 1100H`).
+    - **채널:** `CMPx`와 STM의 `MSTARTx` 비트부터 32비트를 비교하므로 틱 주파수는 `fSTM / 2^n`만 된다. 다른 값은 가까운 값을 알려 주는 오류다. `CMP0`은 `STMIR0`, `CMP1`은 `STMIR1`로 보낸다.
+    - **검사:** 같은 비교 레지스터를 두 채널이 쓰면 오류다. 알림이 있는데 `GptEnableDisableNotificationApi`가 꺼져 있으면 경고다.
+    - **알림:** 알림 함수는 FlsLoader 콜아웃과 같은 방식(`#[unsafe(no_mangle)]` 정의, 생성된 설정은 선언)이다. 생성기 시험이 알림을 직접 정의해 링크까지 확인한다.
+    - **아직 없는 것:** GTM·GPT12·CCU6 채널, 미리 정해진 타이머, 깨우기, 인터럽트 우선순위.
+- **ECUC ARXML(`mcal-ecuc`, `export-ecuc`·`import-ecuc`, 편집기의 Import·Export ECUC):** 이 저장소의 정의(`/AurixMcal/EcucDefs/<Module>`) 아래에 프로젝트 파일을 그대로 옮긴다.
+    - **이름:** 모듈에 바로 있는 값은 `<Module>General`에, 표는 컨테이너에, 표의 배열은 원소마다 컨테이너에 들어간다. 키는 `<Module><CamelCase>` 파라미터다.
+    - **타입:** 값의 타입은 `DEST`(`ECUC-BOOLEAN/INTEGER/FLOAT/STRING-PARAM-DEF`)로 나타낸다.
+    - **가져오기:** serde로 모델에 바로 읽는다. ARXML은 어떤 키가 배열인지 말하지 않으므로, 모델이 배열로 읽는 키는 값을 전부, 다른 키는 하나만 받는다. 원소가 하나인 배열도 그래서 맞다. 다른 정의 아래의 모듈은 건너뛰고 알린다.
+    - **확인:** 예제와 로컬 프로젝트 네 개를 내보내고 가져온 뒤 다시 내보내도 같다(로컬은 2,566–2,759줄).
+    - **아직 없는 것:** 모듈 정의 파일(`ECUC-MODULE-DEF`), AUTOSAR 표준·벤더 정의(Tresos가 내보낸 ECUC)로의 대응.
 
 ### 플래시 로더 (2026-11-02)
 
