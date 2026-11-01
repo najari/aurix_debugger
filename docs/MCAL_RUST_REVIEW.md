@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같고, FlsLoader는 네 작업공간(설정 두 가지)에서 차이가 없다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -248,7 +248,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
-| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). 다음 후보는 EB 프로젝트에 있는 FlsLoader |
+| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
 
@@ -276,11 +276,27 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
 | `mcal-mcu` | 클럭 설정 타입(`no_std`): `ClockConfig`(SYSPLLCON·PERPLLCON·CCUCON, CPU 분주비, 주요 주파수) |
 | `mcal-spi` | SPI 설정 타입(`no_std`): `SpiConfig`(QSPI 모듈의 `PISEL`·`SSOC`, 채널, 장치의 `GLOBALCON.TQ`·`ECONz`·`BACON`, 작업, 시퀀스) |
+| `mcal-fls-loader` | 플래시 로더 설정 타입(`no_std`): `FlsLoaderConfig`(스위치, 콜아웃, PFLASH·DFLASH 뱅크, 대상이 아닌 UCB 범위) |
 | `mcal-wdg` | 워치독 설정 타입(`no_std`): `WdgConfig`(모드별 `REL`·`WDTCPUyCON1`, 트리거 ATOM 채널의 `CTRL`·주기·`IRQ_EN`) |
 | `mcal-can` | CAN 설정 타입(`no_std`): `CanConfig`(모듈, 컨트롤러별 `NPCR`·`NBTP`·메시지 RAM 레지스터·`IE`와 필터 요소, 수신·송신 객체) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### 플래시 로더 (2026-11-02)
+
+- **자료:** TC36x 부록의 메모리 맵(PFI0 비캐시 `A000 0000H`와 PFI1 `A030 0000H` 각 2 MB, DF0 `AF00 0000H`와 DF1 `AFC0 0000H` 각 128 KB, UCB `AF40 0000H`–`AF40 5FFFH`), 매뉴얼 NVM 장의 섹터 구조(2 MB PFLASH 뱅크는 16 KB 논리 섹터 S0–S127, DFLASH EEPROM은 4 KB 논리 섹터).
+- **모델(`[fls_loader]`):** Tresos의 `FlsLoaderGeneral`과 `FlsLoaderOptionalApi`(오류 검사, 잠금 검사, 콜아웃과 그 주기, DeInit·Lock/UnLock API)를 받는다. 뱅크는 칩 데이터에서 온다.
+- **보호:** 읽기·쓰기·OTP·한 번 쓰기 보호는 UCB에 들어가는 설정이라 모델에 넣지 않았다. 가져오기는 보호가 있는 설정을 오류로 거부한다. 생성된 설정에 UCB 범위가 들어가고, 드라이버는 그 범위를 대상으로 받지 않는다.
+- **콜아웃:** 애플리케이션이 `#[unsafe(no_mangle)] fn name()`으로 정의하고, 생성된 설정은 `unsafe extern "Rust" { safe fn name(); }`로 선언한다. 설정 크레이트가 애플리케이션에 의존하지 않는다. 대신 설정 크레이트만으로는 시험 바이너리가 링크되지 않아, 예제의 `mcal-cfg`는 시험을 끈다.
+- **비교:** `mcal-gen compare-tresos-fls-loader`. 맞추는 값:
+    - 뱅크마다 시작·끝·크기·섹터 수, PFLASH 섹터 크기
+    - `FlsLoader_PFlashOffset`·`FlsLoader_PFlashSectorCount`·`FlsLoader_PFlashEndAddress`(끝 주소 배열은 DET를 켰을 때만 생성된다)
+    - UCB 범위, 스위치 여섯 개
+    - 보호가 없는지(PROCON 값 96개가 모두 0인지)
+
+  DET를 켠 세 곳은 37개, 끈 한 곳은 35개 값이 같다.
+- **아직 없는 것:** 보호와 암호, 실제 쓰기·지우기(칩 쪽 드라이버).
 
 ### SPI (2026-11-02)
 
