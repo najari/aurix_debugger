@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 되었다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기다. 편집기는 EB tresos의 화면 구성을 따른다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -245,7 +245,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 
 | 단계 | 관문 | 할 일 | 수용 기준 |
 |---|---|---|---|
-| 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입 | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. 남은 것: EB 부트로더의 Port 설정을 옮겨 `Port_PBcfg.c` 값과 비교 |
+| 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 매뉴얼의 클럭 한계 표 | PLL 분주비 찾기, K2 단계, CCUCON 값. 편집기에 Mcu 모듈 | EB 부트로더와 같은 주파수 설정에서 `Mcu_PBcfg.c`의 CCUCON·PLL 값과 같다 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | `Can_17_McmCan_PBcfg.c`의 값과 같다 |
 | 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로 |
@@ -265,7 +265,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 
 ## 진행 상황 (2026-11-01)
 
-저장소 `D:\work\claude\aurix_mcal`(Cargo 워크스페이스, 아직 커밋 전)에 가1(Port)을 만들었다.
+저장소 `D:\work\claude\aurix_mcal`([najari/aurix_mcal](https://github.com/najari/aurix_mcal), private)에 가1(Port)을 만들었다.
 
 | 크레이트 | 된 것 |
 |---|---|
@@ -273,9 +273,22 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-model` | `project.toml` 모델(`[chip]`, `[generate]`, `[port.general]`, `[[port.pin]]`). 검사 규칙: 없는 핀, 패키지에 없는 핀, 중복, 이름, 입력 전용 핀, 없는 기능, `HWOUT1` 기능, 패드에 없는 드라이버, 같은 신호를 여러 핀에, Changeable과 API 설정의 어긋남. 레지스터 값: `PCx`(TC3xx 매뉴얼 Ports의 코딩), `PDx`(패드 종류별), `PLx`, `OUT`, 설정된 핀의 마스크 |
 | `mcal-gen` | `pins`·`check`·`generate`(`--check`). 같은 입력이면 같은 출력. 기대 출력 시험은 생성된 코드를 시험 안에서 컴파일한다 |
 | `mcal-ui` | egui 0.37 편집기. EB tresos 구성: Project Explorer(`Port` > `PortGeneral`, `PortConfigSet` > `PortContainer` > `PortPin`, 오류·경고 표시), 경로 표시와 모듈 탭, PortContainer 표(본딩된 핀 전부, 설정 안 된 핀은 흐리게, `+`로 추가), PortPin 폼(AUTOSAR 파라미터 이름, 해당 없는 항목은 흐리게, 설명은 마우스를 올리면), Pin Information(패드, 리드, 리셋 상태, 대체 기능 표), Problems(누르면 그 핀으로), Verify·Generate |
-| `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·마스크) |
+| `mcal-port` | 생성기가 채우는 설정 타입(`no_std`): `PortConfig`, `PortGeneral`, `PortInit`(`IOCR`·`PDR`·`OUT`·`PDISC`·마스크) |
+| `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### Tresos 출력과의 비교 (2026-11-01)
+
+EB 프로젝트의 네 작업공간의 Port 설정을 옮겨 비교했다.
+
+- **포트:** Tresos 설정의 포트는 14개(0, 2, 10, 11, 13, 14, 15, 20, 21, 22, 23, 32, 33, 40)다. SPIRIT IO 설명의 TQFP144 포트와 같다. 이 양산 ECU는 TQFP144다.
+- **비교 결과:** 작업공간마다 101핀 전부가 같았다(IOCR, PDR, OUT, PDISC, mode·direction changeable). 옮긴 설정은 검사 오류·경고가 없었다.
+- **들어간 설정:** 출력 45개(그중 대체 기능 16개: QSPI MTSR·SCLK·SLSO, GTM TOUT, CAN TXD), 입력 56개(pull-down 35개), HIGH 레벨 5개, 아날로그 입력 전용 10개(P40)다. 드라이버 세기, TTL 레벨, open-drain, Changeable 핀은 이 설정에 없어 단위 시험으로만 확인했다.
+- **이번에 더한 것:** 아날로그 입력 전용(`PortPinEnableAnalogInputOnly`, `Pn_PDISC`). P40 설정이 이것을 써서 모델·생성기·비교·편집기에 넣었다.
+- **아직 모델에 없는 것:** PCSR(이 설정에서는 모두 0), 비상 정지(켜진 핀 없음), LVDS, 방향을 바꿀 때 쓰는 두 번째 port control 값, 대체 입력 신호 이름(Tresos 출력에 없음). 이 설정에서는 값의 차이로 이어지지 않는다.
+- **동작 차이:** Infineon 드라이버는 설정된 포트의 16핀을 다 쓰고, 설정하지 않은 핀에는 `PORT_PIN_DEFAULT`(입력 pull-up)를 쓴다. 우리 설정은 설정된 핀만 마스크로 쓰고 나머지는 리셋 값으로 둔다. 비교는 설정된 핀만 한다.
+- 옮긴 설정 파일은 고객 프로젝트의 핀 이름이 들어 있어 저장소에 넣지 않았다(`*.local.toml`).
 
 ## 확인할 것
 
@@ -284,7 +297,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 - 양산 ECU의 ASIL 요구.
 - API 모양: Rust다운 API만으로 갈지, AUTOSAR 모양 층도 둘지. AUTOSAR 규격 사용 조건.
 - 설정 형식: TOML만으로 갈지, ECUC ARXML 호환이 처음부터 필요한지.
-- 이 보드의 TC36x 패키지(예제는 TQFP144로 두었다).
+- 이 보드(TriBoard)의 TC36x 패키지. 예제는 EB 양산 ECU와 같은 TQFP144로 두었다.
 - 우리 코드의 공개 범위.
 - HighTec LLVM의 TriCore DWARF가 probe-rs 포크의 언와인더와 맞는지(1단계에서 확인).
 
