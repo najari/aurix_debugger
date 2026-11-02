@@ -247,7 +247,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 |---|---|---|---|
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
-| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
+| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. **Rx FIFO와 마스크 필터 됨(2026-11-03).** 남은 것: Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
 | 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다. **Fls·Fee, Gpt의 GTM·GPT12 채널, ECUC 모듈 정의 됨(2026-11-02).** 이로써 가)의 PC 쪽 모듈은 다 했다. **Mcu의 GTM 클럭 됨(2026-11-02):** 네 작업공간의 `Mcu_PBcfg.c` GTM 값 13개가 같다(Mcu 비교는 28개). **Irq 됨(2026-11-02):** EB 프로젝트에 Irq가 없어 매뉴얼로 확인했다. CAN 인터럽트 라인(`GRINT1`·`GRINT2`)도 됐다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
@@ -338,7 +338,8 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - 매뉴얼에 따르면 CPU 워치독의 `CON0`는 그 CPU만 쓸 수 있어, 디버거로는 풀 수 없다.
     - `EICON0`·`SEICON0`는 SCU의 접근 보호만 따른다. 워치독 카운터도 건드리지 않는다.
     - Port의 `PDR`·`PDISC`는 `E`, 클럭 레지스터(`SYSPLLCON`, `CCUCON`)는 `SE`다.
-- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개가 되었다. 리셋한 보드에서 160개가 모두 통과했다.
+- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개, CAN Rx FIFO를 더해 176개가 되었다. 리셋한 보드에서 176개가 모두 통과했다.
+    - CAN Rx FIFO: 내부 루프백에서 범위 0x700–0x70F(마스크 0x7F0)의 두 프레임이 Rx FIFO 0에 쌓였다가 오래된 것부터 나왔고, 확장 그룹 0x18DAxxF1(마스크 0x1FFF00FF)은 Rx FIFO 1로 왔다. 범위 바로 밖의 0x710은 버려졌다.
     - FlsLoader: DF0 마지막 섹터에서 DFLASH 경로만 돌렸다(지우기 118 ms, 쓰기·다시 읽기, UCB 거부). PFLASH 경로(안전 ENDINIT)는 사용자가 허락한 PF1 마지막 섹터(A04F C000H)에서 돌렸다: 지우기 315 ms, 버스트·페이지 쓰기와 다시 읽기, `DMU_HF_ERRSR` 0, 안전 ENDINIT이 다시 걸림, 다시 지움. 지운 PFLASH는 ECC 오류로 읽히므로, 시험은 섹터가 그렇게 읽힐 때만 돈다.
     - Fls: 사용자가 허락한 DF0 마지막 섹터(AF01 F000H)만 드라이버의 섹터로 두었다. Fee를 위해 마지막 두 섹터(AF01 E000H부터)로 넓혔다(역시 허락받음).
         - 지우기는 약 120 ms였고, 지운 워드는 0으로 읽혔다.
@@ -472,17 +473,18 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 
 ### CAN (2026-11-01)
 
-- **자료:** 매뉴얼 MCMCAN 장의 레지스터(`NPCR`, `NBTP`, `SIDFC`, `XIDFC`, `RXBC`, `RXESC`, `TXEFC`, `TXBC`, `TXESC`, `IE`)와 필터 요소(표준 `S0`, 확장 `F0`/`F1`), TC36x 부록 표 303·304(CAN0은 노드 4개와 32 KB RAM, CAN1은 노드 4개와 16 KB RAM, 노드 레지스터는 모듈 + `0x8100 + 0x400 × n`)와 노드별 수신 입력 연결.
-- **모델(`[can]`):** Tresos처럼 컨트롤러는 노드, 수신 입력, 비트 레이트와 시간 양자(PropSeg, Seg1, Seg2, SJW)를 받는다. 클럭은 Mcu의 fMCAN이다. 하드웨어 객체 하나가 전용 버퍼 하나이고, 핸들은 수신 객체 다음 송신 객체다.
+- **자료:** 매뉴얼 MCMCAN 장의 레지스터(`NPCR`, `NBTP`, `SIDFC`, `XIDFC`, `RXF0C`·`RXF1C`와 상태·확인, `RXBC`, `RXESC`, `TXEFC`, `TXBC`, `TXESC`, `IE`, `GRINT1`·`GRINT2`)와 필터 요소(표준 `S0`, 확장 `F0`/`F1`, 클래식 필터는 `SFT`/`EFT` = 10: ID와 마스크), TC36x 부록 표 303·304(CAN0은 노드 4개와 32 KB RAM, CAN1은 노드 4개와 16 KB RAM, 노드 레지스터는 모듈 + `0x8100 + 0x400 × n`)와 노드별 수신 입력 연결.
+- **모델(`[can]`):** Tresos처럼 컨트롤러는 노드, 수신 입력, 비트 레이트와 시간 양자(PropSeg, Seg1, Seg2, SJW)를 받는다. 클럭은 Mcu의 fMCAN이다. 수신 객체는 전용 Rx 버퍼이거나 `fifo`(AUTOSAR `CanHwObjectCount`)를 주면 Rx FIFO 0·1이고, FIFO 객체만 마스크 필터를 가질 수 있다. 핸들은 수신 객체 다음 송신 객체다.
 - **계산:**
     - 분주비 = fMCAN / (비트 레이트 × 양자 수). 정수가 아니면 맞는 양자 수 목록과 함께 오류를 낸다. `NBTP`의 범위(NTSEG1 2–256, NTSEG2 2–128, NBRP 1–512)를 확인한다.
-    - 메시지 RAM은 모듈마다 노드 순서로, 노드 안에서는 표준 필터(4바이트), 확장 필터(8), Rx 버퍼(16), Tx 이벤트(8), Tx 버퍼(16) 순서로 놓는다. 노드와 RAM의 한계를 확인한다.
-    - 수신 필터는 정확한 ID를 Rx 버퍼에 넣는 요소다(`SFEC`/`EFEC` = 111, 버퍼 번호는 `SFID2`/`EFID2`). `IE`는 Tx 이벤트(`TEFNE`), Rx 버퍼(`DRXE`), 버스오프(`BOE`) 중 인터럽트로 처리하는 것만 켠다.
+    - 메시지 RAM은 모듈마다 노드 순서로, 노드 안에서는 표준 필터(4바이트), 확장 필터(8), Rx FIFO 0(16), Rx FIFO 1(16), Rx 버퍼(16), Tx 이벤트(8), Tx 버퍼(16) 순서로 놓는다. Tresos 출력의 메시지 RAM 표와 같은 순서다. 노드와 RAM의 한계를 확인한다.
+    - 전용 버퍼의 필터는 정확한 ID를 Rx 버퍼에 넣는 요소다(`SFEC`/`EFEC` = 111, 버퍼 번호는 `SFID2`/`EFID2`). FIFO의 필터는 클래식 필터(`SFT`/`EFT` = 10, ID와 마스크)이고 `SFEC`/`EFEC` = 001(FIFO 0) 또는 010(FIFO 1)이다. 필터는 처음 맞는 것이 가져가므로 정확한 필터를 앞에, FIFO의 필터를 뒤에 두고, 앞의 필터가 모두 덮는 필터는 경고한다.
+    - `IE`는 Tx 이벤트(`TEFNE`), Rx 버퍼(`DRXE`), Rx FIFO(`RF0NE`, `RF1NE`), 버스오프(`BOE`) 중 인터럽트로 처리하는 것만 켠다. 수신 셋은 같은 수신 라인으로 보낸다(`GRINT2`의 `REINT`, `RxF1N`, `RxF0N`).
 - **칩·Port 검사:** 노드에 그 수신 입력이 있는 핀이 패키지에 있어야 한다. Port 모듈에 그 입력을 받는 입력 핀과 `CANxy_TXD` 출력 핀이 없으면 경고한다.
 - **비교:** `mcal-gen compare-tresos-can`. 네 작업공간의 `Can.xdm`은 같은 설정(CAN01, 500 kbit/s, 수신 2개, 송신 1개)이고, 생성된 CAN 출력은 한 작업공간에만 있다. 그 작업공간에서 노드 주소, `NPCR`, `NBTP` = `0x0407_0E03`, 객체 범위, 메시지 RAM 주소 7개와 크기, 처리 방식, 폴링 마스크, `IE` = `0x0208_1000`, 필터 요소, Tx 객체, 모듈의 노드 사용까지 50개 값이 모두 같다.
 - **아직 확인 못 한 것:** 이번 설정에 없어 Tresos 값과 맞춰 보지 못했다. 루프백(`NPCR.LBM`)의 인코딩, 확장 필터 요소, 폴링 마스크, 여러 컨트롤러가 메시지 RAM을 나누는 순서가 그렇다.
-- **편집기:** Can 모듈(`CanGeneral`, `CanConfigSet` > `CanController`, `CanHardwareObject`). 컨트롤러 폼은 노드와 수신 입력(그 입력의 핀과 함께), 비트 타이밍, 계산된 분주비·샘플 포인트·메시지 RAM 주소·레지스터 값을 보인다. 객체 폼은 핸들, 버퍼, 필터 요소를 보인다.
-- **아직 없는 것:** Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, 인터럽트 노드 배정(ILE, SRC), 웨이크업, Pretended Networking, TTCAN.
+- **편집기:** Can 모듈(`CanGeneral`, `CanConfigSet` > `CanController`, `CanHardwareObject`). 컨트롤러 폼은 노드와 수신 입력(그 입력의 핀과 함께), 비트 타이밍, 계산된 분주비·샘플 포인트·메시지 RAM 주소·레지스터 값을 보인다. 객체 폼은 Rx FIFO와 원소 수, 핸들, 버퍼나 FIFO, 필터 요소와 그 번호를 보인다.
+- **아직 없는 것:** 범위·이중 ID 필터, FIFO 워터마크와 덮어쓰기 모드, 한 객체에 필터 여럿, Tx FIFO/큐, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, 인터럽트 노드 배정(ILE, SRC), 웨이크업, Pretended Networking, TTCAN.
 
 ### 클럭 계산 (2026-11-01)
 
