@@ -248,7 +248,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
-| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다. **Fls·Fee, Gpt의 GTM·GPT12 채널, ECUC 모듈 정의 됨(2026-11-02).** 이로써 가)의 PC 쪽 모듈은 다 했다 |
+| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다. **Fls·Fee, Gpt의 GTM·GPT12 채널, ECUC 모듈 정의 됨(2026-11-02).** 이로써 가)의 PC 쪽 모듈은 다 했다. **Mcu의 GTM 클럭 됨(2026-11-02):** 네 작업공간의 `Mcu_PBcfg.c` GTM 값 13개가 같다(Mcu 비교는 28개). **Irq 됨(2026-11-02):** EB 프로젝트에 Irq가 없어 매뉴얼로 확인했다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
 
@@ -280,6 +280,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-gpt` | GPT 설정 타입(`no_std`): STM 비교 레지스터 채널(`CMCON`·`ICR` 값, 모드, 알림) |
 | `mcal-ecuc` | 프로젝트를 ECUC 값 ARXML로 쓰고 읽고, 모델 타입에서 모듈 정의(`ECUC-MODULE-DEF`)를 뽑는다 |
 | `mcal-fls` | DFLASH 드라이버 설정 타입(`no_std`): 뱅크, 페이지·버스트, 호출당 읽기·쓰기 바이트, 알림 |
+| `mcal-irq` | 인터럽트 설정 타입(`no_std`): SRC 주소와 값 |
 | `mcal-fee` | Fee 설정 타입(`no_std`): 두 반쪽, 블록(번호, 크기, 레코드, 즉시 쓰기) |
 | `mcal-fls-loader` | 플래시 로더 설정 타입(`no_std`): `FlsLoaderConfig`(스위치, 콜아웃, PFLASH·DFLASH 뱅크, 대상이 아닌 UCB 범위) |
 | `mcal-wdg` | 워치독 설정 타입(`no_std`): `WdgConfig`(모드별 `REL`·`WDTCPUyCON1`, 트리거 ATOM 채널의 `CTRL`·주기·`IRQ_EN`) |
@@ -287,6 +288,40 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### Irq (2026-11-02)
+
+- **까닭:** GPT와 워치독 트리거가 인터럽트를 쓰는데, 우선순위와 CPU를 정할 곳이 없었다.
+- **자료:** 부록 인터럽트 라우터. SRC는 `F003 8000H`부터다.
+    - `SRC_STMxSRy` `00300H + x*8 + y*4`
+    - `SRC_GPT120CIR` `002E0H`, `T2`–`T6` `002E4H`부터
+    - `SRC_CANxINTy` `005B0H + x*40H + y*4`
+    - `SRC_QSPIx{TX,RX,ERR,PT,U}` `000F0H` + `x*14H`
+    - `SRC_GTMTOMwx` `00E10H + w*20H + x*4`(채널 둘에 하나)
+    - `SRC_GTMATOMwx` `00EF0H + w*10H + x*4`
+    - 필드는 `SRPN` 7:0, `SRE` 10, `TOS` 13:11이다. TC36x의 TOS는 CPU0 `000B`, DMA `001B`, CPU1 `010B`다.
+    - 표 전체는 옮기지 않고, 쓰는 모듈의 주소식만 칩 데이터에 넣었다.
+- **모델(`[[irq.request]]`):** SRC 이름, 우선순위, 처리자(cpu0·cpu1·dma)를 받는다.
+    - **검사:** 모르는 SRC, 중복, CPU 우선순위 0, 한 CPU의 우선순위 겹침은 오류다. GPT 채널과 워치독 트리거가 쓰는데 설정되지 않은 SRC는 경고다. 로컬 프로젝트 네 개는 워치독 트리거(`SRC_GTMATOM00`) 경고가 난다(EB 프로젝트에 Irq가 없다).
+- **생성:** `irq.rs`의 `IRQ_CONFIG`에 SRC 주소와 값을 넣는다.
+- **편집기:** 요청 표를 보여 주고, 다른 모듈이 쓰는 인터럽트를 버튼으로 더한다.
+- **아직 없는 것:** CAN 인터럽트 라인 선택(`ILS`), 인터럽트 처리기와 벡터 테이블(애플리케이션이나 OS의 몫).
+
+### Mcu의 GTM 클럭 (2026-11-02)
+
+- **까닭:** 워치독 트리거 클럭은 손으로 적어야 했다. GPT의 TOM 채널은 `CMU_GCLK`를 fGTM으로 보았는데, 리셋 값과 Tresos 설정의 클러스터 분주가 2라서 실제로는 절반이다.
+- **자료:** 매뉴얼 GTM 장.
+    - `GTM_CLS_CLK_CFG`: 클러스터마다 2비트(`00B` 끔, `01B` 분주 없음, `10B` 2분주), 리셋 값 `00AA AAAAH`.
+    - CMU는 `cls0_clk`로 돈다.
+    - `CMU_CLK_EN`: 클럭마다 2비트, `10B`로 켬. `EN_FXCLK`는 23:22.
+    - `CMU_GCLK_NUM`·`DEN`: 24비트이고, NUM이 DEN보다 작으면 하드웨어가 둘 다 1로 바꾼다.
+    - `CMU_CLK_z_CTRL.CLK_CNT`는 분주 − 1이다. `CMU_FXCLK_CTRL.FXCLK_SEL`은 0이 `CMU_GCLK`, n이 `CMU_CLK(n-1)`이다.
+- **모델(`[mcu.gtm]`):** 키를 빼면 리셋 값과 같은 값이 되고, 모든 클럭이 켜진다. 이것은 Tresos 기본과 같다.
+    - 워치독 트리거의 `clock_mhz`는 선택으로 바꿨다. 빼면 `CMU_CLKn`에서 오고, 주면 그 값과 같아야 한다.
+    - TOM 채널은 `CMU_FXCLKn`에서 틱을 정하고, `[mcu.gtm]`이 없으면 오류다.
+- **비교:** `compare-tresos-mcu`가 `McuGtmClockManagementConf`와 `GtmClusterConf`를 옮기고, `Mcu_kGtmClockConfigPtr_Config`의 `CMU_CLK_EN`(`0x0080AAAA`), NUM·DEN, `CLK_CTRL` 8개, `FXCLK_CTRL`, 클러스터(`0xAA`) 13개와 맞춘다. 네 작업공간 모두 차이가 없다.
+    - 로컬 프로젝트의 워치독 `clock_mhz` 100(Tresos의 `Wdg.xdm`과 `Mcu.xdm`으로 계산)과 `[mcu.gtm]`의 `CMU_CLK0` 100 MHz도 맞는다.
+- **아직 없는 것:** 클러스터별 `CCM` 클럭 선택(`GtmClusterConfClockSetting`)과 외부 클럭(`ECLK`).
 
 ### Fls, Fee, Gpt의 GTM·GPT12, ECUC 모듈 정의 (2026-11-02)
 
@@ -300,7 +335,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - **GPT12:** 부록(GPT120 `F000 1800H`), 매뉴얼 GPT12. `TxCON`은 `TxI` 2:0, `TxM` 5:3, `TxR` 6, `TxUD` 7이다. `T3CON.BPS1` 12:11은 `00`=/8, `01`=/4, `10`=/32, `11`=/16이다. `T6CON.BPS2`는 `00`=/4, `01`=/2, `10`=/16, `11`=/8이다. fGPT는 fSPB다.
     - **블록 분주:** 한 블록의 채널이 모두 쓸 수 있는 블록 분주를 작은 것부터 찾고, 없으면 오류다.
     - **주기:** TOM과 GPT12는 16비트다. `tick_max`를 빼면 타이머의 최대값이다.
-- **ECUC 모듈 정의(`ecuc-definitions`):** `serde-reflection`으로 모델 타입을 추적해 `ECUC-MODULE-DEF` 11개(Mcal과 모듈 10개)를 쓴다.
+- **ECUC 모듈 정의(`ecuc-definitions`):** `serde-reflection`으로 모델 타입을 추적해 `ECUC-MODULE-DEF`를 Mcal과 모듈마다 하나씩 쓴다(Irq까지 12개).
     - **추적의 한계와 대책:**
         - 이름이 같은 enum(`Mode`)이 여러 모듈에 있어, 모듈마다 따로 추적한다.
         - 추적기가 배열 안의 enum은 첫 값만 찾는다. 그래서 enum 값은 모르는 값을 넣었을 때 serde가 돌려주는 값 목록으로 얻는다.
