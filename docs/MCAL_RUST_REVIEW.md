@@ -263,6 +263,8 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 나6. 플래시 | 나5 | FlsLoader, Fls, Fee | 정해 둔 시험 섹터만 지우고 쓴다. UCB 주소는 코드에서 거부한다 |
 | 나7. 나머지 | 필요 | Spi, Adc, Icu, Pwm, Dma … | 모듈마다 같은 방식으로 |
 
+**컴파일러 전에 앞당긴 것 (2026-11-02):** 나2(Port·Dio), 나3의 ENDINIT·Gpt(STM), 나4의 PLL·CCUCON 드라이버를 레지스터 접근 trait 위에 썼다. 시험 보드에서 디버거로 돌려 레지스터 값과 STM 주파수를 확인했다(아래 "컴파일러 없이 드라이버"). 컴파일러가 생기면 같은 코드를 칩에서 빌드해 같은 확인을 되풀이한다. Wdg(CPU 워치독)와 실제 인터럽트 진입은 디버거로는 볼 수 없어 그때로 남는다.
+
 ## 진행 상황 (2026-11-01)
 
 저장소 `D:\work\claude\aurix_mcal`([najari/aurix_mcal](https://github.com/najari/aurix_mcal), private)에 가1(Port)을 만들었다.
@@ -310,6 +312,33 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - **검사:** 같은 모듈의 두 노드가 한 라인을 쓰면 경고다. 인터럽트로 처리하는 사건의 `CANxINTy`가 `[irq]`에 없으면 경고다.
     - **Tresos 비교 없음:** Infineon 드라이버는 라인을 설정으로 두지 않는다(드라이버 안에 고정). 그래서 비교하지 않았다. 로컬 프로젝트 네 개는 이 경고도 난다.
 - **아직 없는 것:** 인터럽트 처리기와 벡터 테이블(애플리케이션이나 OS의 몫).
+
+### 컴파일러 없이 드라이버 (2026-11-02)
+
+드라이버를 레지스터 접근 trait(`mcal_hw::Registers`) 위에 썼다. 그래서 TriCore 컴파일러 없이 두 곳에서 확인한다.
+
+- **가짜 레지스터(PC 시험):** 쓰기 순서, 값, ENDINIT 해제를 본다.
+- **실제 보드(디버거):** probe-rs DAP 서버의 `readMemory`·`writeMemory`로 실제 칩의 레지스터를 쓴다.
+
+컴파일러가 생기면 trait 구현만 `Mmio`(volatile 접근)로 바뀐다.
+
+- **드라이버:** 다섯 개를 썼다.
+    - Port: `Port_Init`, `Port_RefreshPortDirection`
+    - Dio: AUTOSAR 호출 전부
+    - Gpt: STM 채널. TOM·GPT12는 아직
+    - Irq: `SRC` 쓰기
+    - Mcu: `Mcu_InitClock`. 매뉴얼의 Clock Ramp-up 예를 따른다. GTM 클럭은 아직
+- **ENDINIT:** 워치독 `CON0` 대신 `EICON0`(시스템, `E`)과 `SEICON0`(안전, `SE`)를 쓴다.
+    - 매뉴얼에 따르면 CPU 워치독의 `CON0`는 그 CPU만 쓸 수 있어, 디버거로는 풀 수 없다.
+    - `EICON0`·`SEICON0`는 SCU의 접근 보호만 따른다. 워치독 카운터도 건드리지 않는다.
+    - Port의 `PDR`·`PDISC`는 `E`, 클럭 레지스터(`SYSPLLCON`, `CCUCON`)는 `SE`다.
+- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 46개 검사가 모두 통과했다.
+    - Port·Dio: LED 네 개. ENDINIT 보호된 `P33_PDR0`도 바뀌었다.
+    - Mcu: 보드가 돌던 300 MHz(P 2, N 60)에서 백업 클럭으로 바꾸고, 우리 값(P 1, N 30)으로 PLL을 다시 잡았다. 그 뒤 K2를 6에서 2까지 내렸다. 디버거로 1.6초 걸렸고, PC 시계로 잰 `fSTM`은 99.3 MHz다.
+    - Gpt·Irq: 비교 플래그와 `SRR`이 섰다. 인터럽트 처리 함수(시험이 직접 부름)로 연속 틱이 다음 주기로 가고, 한 번 타임아웃은 멈췄다.
+    - ENDINIT 타임아웃 플래그(`EISR.TO`·`SEISR.TO`)는 서지 않았다.
+    - 끝난 뒤 보드를 리셋했고, 데모 프로그램이 원래 클럭으로 다시 돈다.
+- **디버거로 못 보는 것:** 실제 인터럽트 진입, 실시간 타이밍, CPU 워치독(Wdg 드라이버). 이것들은 컴파일러가 있어야 한다.
 
 ### Mcu의 GTM 클럭 (2026-11-02)
 
