@@ -16,7 +16,7 @@
     - 가) PC 도구(컴파일러 없이): Port → Mcu 클럭 계산 → CAN 비트 타이밍·메시지 RAM → 나머지 모듈의 설정과 생성.
     - 나) 칩 위(컴파일러가 생긴 뒤): 런타임·PAC와 깜빡이를 probe-rs 포크로 디버깅 → Port·Dio 드라이버 → Stm·Gpt·공통 라이브러리·Wdg → Mcu → CAN → 플래시(FlsLoader·Fls·Fee) → 나머지.
     - 모듈마다 PC에서는 Tresos 출력 값과, 보드에서는 C MCAL이 쓴 레지스터 값과 비교해 검증한다.
-- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같고, FlsLoader는 네 작업공간(설정 두 가지)에서 차이가 없다. Dio·Gpt(EB 프로젝트에 없어 매뉴얼로 확인)와 ECUC ARXML 가져오기·내보내기도 되었다(아래 "진행 상황").
+- **진행(2026-11-01):** 가)의 Port가 끝났다. 칩 데이터 읽기, 설정 모델과 검사, Port 레지스터 값 계산, 생성기 CLI, egui 편집기(EB tresos 화면 구성)다. EB 프로젝트 네 작업공간의 Port 설정(각 101핀)을 옮겨 Tresos 출력 값과 비교해 모두 같았다. 가2(Mcu 클럭 계산)도 되어, 같은 네 작업공간의 클럭 설정에서 PLL 필드·CCUCON 값이 Tresos와 같다. 가3(CAN)은 CAN 출력이 있는 작업공간에서 50개 값이 Tresos와 같다. 가4는 Wdg부터 했고, 네 작업공간(설정 두 가지)에서 26개 값이 같다. Spi는 네 작업공간(설정 한 가지)에서 58개 값이 같고, FlsLoader는 네 작업공간(설정 두 가지)에서 차이가 없다. Dio·Gpt·Fls·Fee(EB 프로젝트에 없어 매뉴얼로 확인)와 ECUC ARXML 가져오기·내보내기·모듈 정의도 되었다(아래 "진행 상황").
 
 ## 목표와 범위
 
@@ -248,7 +248,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
 | 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. 남은 것: Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트, 인터럽트 노드 배정(ILE·SRC), 웨이크업 |
-| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다 |
+| 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다. **Fls·Fee, Gpt의 GTM·GPT12 채널, ECUC 모듈 정의 됨(2026-11-02).** 이로써 가)의 PC 쪽 모듈은 다 했다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
 
@@ -278,13 +278,37 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | `mcal-spi` | SPI 설정 타입(`no_std`): `SpiConfig`(QSPI 모듈의 `PISEL`·`SSOC`, 채널, 장치의 `GLOBALCON.TQ`·`ECONz`·`BACON`, 작업, 시퀀스) |
 | `mcal-dio` | DIO 설정 타입(`no_std`): 채널, 채널 그룹(마스크, 오프셋), 포트별 채널 |
 | `mcal-gpt` | GPT 설정 타입(`no_std`): STM 비교 레지스터 채널(`CMCON`·`ICR` 값, 모드, 알림) |
-| `mcal-ecuc` | 프로젝트를 ECUC 값 ARXML로 쓰고 읽는다 |
+| `mcal-ecuc` | 프로젝트를 ECUC 값 ARXML로 쓰고 읽고, 모델 타입에서 모듈 정의(`ECUC-MODULE-DEF`)를 뽑는다 |
+| `mcal-fls` | DFLASH 드라이버 설정 타입(`no_std`): 뱅크, 페이지·버스트, 호출당 읽기·쓰기 바이트, 알림 |
+| `mcal-fee` | Fee 설정 타입(`no_std`): 두 반쪽, 블록(번호, 크기, 레코드, 즉시 쓰기) |
 | `mcal-fls-loader` | 플래시 로더 설정 타입(`no_std`): `FlsLoaderConfig`(스위치, 콜아웃, PFLASH·DFLASH 뱅크, 대상이 아닌 UCB 범위) |
 | `mcal-wdg` | 워치독 설정 타입(`no_std`): `WdgConfig`(모드별 `REL`·`WDTCPUyCON1`, 트리거 ATOM 채널의 `CTRL`·주기·`IRQ_EN`) |
 | `mcal-can` | CAN 설정 타입(`no_std`): `CanConfig`(모듈, 컨트롤러별 `NPCR`·`NBTP`·메시지 RAM 레지스터·`IE`와 필터 요소, 수신·송신 객체) |
 | `mcal-tresos` | Tresos가 Infineon MCAL용으로 생성한 `Port_PBcfg.c`·`Port_Cfg.h`를 읽는다. 핀별 기호를 우리 설정으로 옮기고(`mcal-gen compare-tresos --write`), 같은 기호를 Tresos·Infineon 파일의 `#define` 숫자(`Port_PBcfg.c`, 드라이버의 `Port.h`)로 계산한 값과 우리 인코더 값을 핀마다 비교한다. 드라이버 코드는 보지 않고 생성 결과의 값만 쓴다 |
 
 예제 `examples/tc364-tqfp144`: TC364 TQFP144에서 P20.8 `CAN00_TXD`(O5), P20.7 `CAN00_RXDB`, P33.4 GPIO 출력. `check` 0 오류, `generate`로 만든 `mcal-cfg`가 빌드된다. 보드의 실제 패키지는 아직 확인하지 않았다.
+
+### Fls, Fee, Gpt의 GTM·GPT12, ECUC 모듈 정의 (2026-11-02)
+
+- **Fls(`[fls]`):** DFLASH 뱅크 하나(기본 DF0)에 AUTOSAR `FlsGeneral`의 API 스위치, 기본 모드, 호출당 읽기·쓰기 바이트, 작업 끝·오류 알림을 둔다.
+    - **자료:** 매뉴얼 NVM 장의 용어(DFLASH 페이지 8바이트, 버스트 4페이지 32바이트, 논리 섹터 4 KB)와 부록 메모리 맵(DF1은 HSM EEPROM).
+    - **검사:** 쓰기 바이트가 페이지 배수가 아니면 오류, DF1을 고르면 경고다.
+- **Fee(`[fee]`):** 배치는 이 저장소가 정했다. 뱅크를 두 반쪽으로 나누고, 레코드(헤더 페이지와 페이지 단위 데이터)를 활성 반쪽에 이어 쓴다. 반쪽이 차면 블록마다 최신 레코드를 다른 반쪽으로 옮긴다.
+    - **검사:** 모든 레코드에 가장 큰 블록 하나를 더한 크기가 반쪽을 넘으면 오류, 3/4을 넘으면 경고다. 블록 번호(1–0xFFFE)가 겹치면 오류다. `[fls]`가 없어도 오류다.
+- **Gpt 타이머:** 채널마다 `timer = "stm" | "tom" | "gpt12"`와 `unit`·`channel`을 둔다. 그래서 STM 전용이던 `stm`·`comparator` 키를 바꿨다.
+    - **TOM:** 부록 GTM 구성(TOM0–1, 각 16채널), 매뉴얼 GTM(`TOMi_CHx_CTRL`은 GTM `F010 0000H` + `008000H + i*800H + x*40H`, `CLK_SRC_SR` 14:12, `CMU_FXCLK0..4`는 `CMU_GCLK / 2^0, 2^4, 2^8, 2^12, 2^16`). Mcu의 GTM 분주가 모델에 없어 `CMU_GCLK`를 fGTM으로 본다.
+    - **GPT12:** 부록(GPT120 `F000 1800H`), 매뉴얼 GPT12. `TxCON`은 `TxI` 2:0, `TxM` 5:3, `TxR` 6, `TxUD` 7이다. `T3CON.BPS1` 12:11은 `00`=/8, `01`=/4, `10`=/32, `11`=/16이다. `T6CON.BPS2`는 `00`=/4, `01`=/2, `10`=/16, `11`=/8이다. fGPT는 fSPB다.
+    - **블록 분주:** 한 블록의 채널이 모두 쓸 수 있는 블록 분주를 작은 것부터 찾고, 없으면 오류다.
+    - **주기:** TOM과 GPT12는 16비트다. `tick_max`를 빼면 타이머의 최대값이다.
+- **ECUC 모듈 정의(`ecuc-definitions`):** `serde-reflection`으로 모델 타입을 추적해 `ECUC-MODULE-DEF` 11개(Mcal과 모듈 10개)를 쓴다.
+    - **추적의 한계와 대책:**
+        - 이름이 같은 enum(`Mode`)이 여러 모듈에 있어, 모듈마다 따로 추적한다.
+        - 추적기가 배열 안의 enum은 첫 값만 찾는다. 그래서 enum 값은 모르는 값을 넣었을 때 serde가 돌려주는 값 목록으로 얻는다.
+        - 키를 빼도 되는지(하한 0 또는 1)는 완전한 견본에서 그 키를 빼고 다시 읽어 본다.
+    - **값 내보내기:** 선택지는 이제 `ECUC-ENUMERATION-PARAM-DEF`와 리터럴(`one-shot` → `ONE_SHOT`)로 쓴다.
+    - **고친 버그:** `k3_divide_by_2`처럼 `_` 뒤에 숫자가 오는 키는 내보낼 수 없었다. 이제 `K3DivideBy_2`로 쓴다.
+    - **확인:** 예제와 로컬 프로젝트 네 개의 모든 값이 정의를 따른다(경로, 타입, 리터럴, 개수). 다시 가져와 내보내도 같다.
+    - **아직 없는 것:** 기본값(`DEFAULT-VALUE`)과 설명, AUTOSAR 표준·벤더 정의로의 대응.
 
 ### Dio, Gpt, ECUC ARXML (2026-11-02)
 
