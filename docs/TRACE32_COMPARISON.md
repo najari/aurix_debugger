@@ -7,7 +7,7 @@
 우리 디버거는 TC275에서 TRACE32의 일상 디버깅 기능을 대부분 갖췄다. 실행 제어, 하드웨어·소프트웨어·데이터 BP, 세 코어 동시 정지, 소스·디스어셈블리, 변수·레지스터·주변장치, 실행 중 메모리 읽기, 플래시 쓰기가 보드에서 확인됐다. 크게 모자란 것은 트레이스(MCDS·AGBT)와 그 위의 분석, 안전 인증이다. OS 인식(ORTI 태스크 보기)과 스크립트 자동화는 2026-10-25에 기본 기능을 갖췄다.
 
 - **같거나 비슷함:** 실행 제어와 step 중 인터럽트 막기, 온칩 BP 8개(같은 하드웨어), 멀티코어 동시 정지, 리셋 뒤 BP 복원, PFLASH·DFLASH 쓰기, 실행 중 변수 읽기, 성능 카운터.
-- **모자람:** 조건·횟수 BP의 실시간성(소프트웨어로 따져 적중마다 63–185 ms 멈춤, 2026-10-25 추가), 캐시 내용 보기(설정·히트율은 2026-10-26에 됨), 지원 칩(TC27x·TC36x뿐), 메모리 속도(보드 내장 어댑터 6 MHz에서 131 KiB/s, 2026-10-25에 19.4 KiB/s에서 올림), MCDS 기록(만들었으나 이 어댑터에서 검증하지 못함).
+- **모자람:** 조건·횟수 BP의 실시간성(소프트웨어로 따져 적중마다 63–185 ms 멈춤, 2026-10-25 추가), 캐시 내용 보기(설정·히트율은 2026-10-26에 됨), 지원 칩(TC27x·TC36x뿐), 메모리 속도(보드 내장 어댑터 6 MHz에서 131 KiB/s, 2026-10-25에 19.4 KiB/s에서 올림; DAP miniWiggler 30 MHz에서 TC36x 약 1.97 MiB/s, 2026-11-04), MCDS 기록(만들었으나 이 어댑터에서 검증하지 못함).
 - **없음:** 온칩·오프칩 트레이스 분석, 코드 커버리지, AUTOSAR 프로파일링(ORTI 태스크·ISR 보기는 있음, runnable·멀티 OS는 없음), GTM·HSM 보조 코어, 도구 인증(TQSK).
 - **우리가 나음:** 라이선스와 전용 하드웨어가 필요 없고(보드의 Infineon DAS 프로브), DAP·GDB 표준이라 VS Code·Zed·자체 앱을 고를 수 있으며, 코어별 SEGGER RTT 입출력과 쓰기 보호가 기본이다.
 
@@ -81,7 +81,7 @@ TRACE32를 직접 돌려 본 수치(속도, 지연)는 없다. 속도 비교는 
 
 ## 연결과 하드웨어
 
-TRACE32는 전용 디버그 모듈과 케이블(라이선스 포함)이 필요하고, 우리는 보드에 있는 Infineon DAS 프로브로 붙는다. 그 대신 우리 속도는 보드 내장 어댑터의 JTAG 클럭(최대 6 MHz)에 묶인다.
+TRACE32는 전용 디버그 모듈과 케이블(라이선스 포함)이 필요하고, 우리는 보드에 있는 Infineon DAS 프로브로 붙는다. 그 대신 우리 속도는 어댑터의 클럭에 묶인다. 보드 내장 어댑터는 최대 6 MHz, DAP miniWiggler는 30 MHz다.
 
 | 항목 | TRACE32 | 우리 디버거 |
 | --- | --- | --- |
@@ -102,7 +102,23 @@ TRACE32는 전용 디버그 모듈과 케이블(라이선스 포함)이 필요�
 | DAP continue → BP 정지 | 121 ms | 42 ms |
 | DAP attach | 1.9 s | 1.8 s |
 
-TRACE32 수치는 이번에 재지 않았다. 메모리 속도는 크기와 경로(TAS, Infineon MCD 라이브러리)에 상관없이 어댑터 클럭이 정했다. 이 보드의 어댑터는 6 MHz가 최대라, 더 빠르려면 다른 어댑터(예: DAP miniWiggler)가 필요하다. 그 측정은 아직 없다.
+TRACE32 수치는 이번에 재지 않았다. 메모리 속도는 크기와 경로(TAS, Infineon MCD 라이브러리)에 상관없이 어댑터 클럭이 정했다. 이 보드의 어댑터는 6 MHz가 최대라, 더 빠르려면 다른 어댑터(예: DAP miniWiggler)가 필요하다.
+
+DAP miniWiggler(TriBoard TC3X5의 TC36x, TAS, 릴리스 빌드, `tas_clock`과 `perf_measure`, 중앙값, 2026-11-04). 클럭은 30 MHz까지 올라갔다(20 MHz를 주면 15 MHz, 40 MHz를 주면 30 MHz가 되고, 어느 클럭에서나 읽은 내용이 같았다). 칩이 TC275가 아니라 위 표와 바로 견줄 수는 없다. PFLASH는 지워진 워드를 읽으면 ECC 오류라 앱이 쓴 `A030 0000H`부터 16 KiB를 읽었다(`PROBE_RS_PFLASH`).
+
+| 작업 | 400 kHz | 6 MHz | 30 MHz |
+| --- | --- | --- | --- |
+| 레지스터 하나 읽기 | - | 0.17 ms | 0.19 ms |
+| halt / run | - | 2.2 / 1.2 ms | 2.7 / 1.2 ms |
+| 단일 step(하드웨어) | - | 5.7 ms | 4.2 ms |
+| 메모리 읽기(DSPR0 32 KiB) | 39 KiB/s | 533 KiB/s | 1970 KiB/s |
+| 메모리 쓰기(PSPR 16 KiB) | - | 386 KiB/s | 1190 KiB/s |
+| MCAL 보드 시험 전체(346개, DAP) | 98 s | 34 s | 32 s |
+
+- **읽기 속도:** 클럭에 거의 비례한다(1 MHz 97 KiB/s, 10 MHz 834 KiB/s, 15 MHz 1166 KiB/s). 4 MB PFLASH를 30 MHz로 읽으면 약 2초다.
+- **지연:** halt·run·레지스터 읽기는 6 MHz에서 이미 클럭보다 USB와 TAS 왕복이 정한다. MCAL 보드 시험도 6 MHz와 30 MHz의 차이가 작다.
+- **파워온 뒤 연결:** USB를 바꿔 꽂아 보드가 꺼졌다 켜진 뒤에는 `CBS_OSTATE`가 0(OCDS 꺼짐)이라 핫 어태치만으로는 halt가 되지 않았다(`CoreDidNotHalt`, `DBGSR` 0). `probe-rs reset` 한 번 뒤 `OSTATE` = `0x00080001`이 되고 모든 시험이 통과했다.
+- **세션마다 다른 지연:** 같은 설정의 DAP 세션 약 20번 중 6번꼴로, 세션 내내 요청 하나가 2–5배 느렸다(30 MHz에서도). 프로브와 주고받는 시간이 늘어난 것이고, 원인은 조사 중이다.
 
 ## 우리 쪽이 나은 점
 
@@ -127,7 +143,7 @@ TRACE32 수치는 이번에 재지 않았다. 메모리 속도는 크기와 경�
 | 조건·횟수 BP | "1000번째 호출", "값이 0이 될 때" 멈추기 | 소프트웨어 조건은 됨(2026-10-25). 멈추지 않는 하드웨어 조건은 ED의 MCDS가 필요하다 | 작음(남은 것은 MCDS) |
 | 스크립트 자동화 | 보드 설정·반복 시험을 한 번에 재현 | `aurix-run`으로 명령 파일 시험(2026-10-25), 변수·반복·분기와 다른 스크립트 불러오기(`include`, PRACTICE `DO`), 트레이스 CSV 저장(2026-10-26)은 됨. 일반 파일 입출력(`file write`·`append`·`delete`, `let … = file read`·`lines`·`line <n>`·`exists`, PRACTICE `OPEN`/`READ`/`WRITE`)도 됨(2026-10-26, `file_table.aurix` 5/5). PRACTICE의 GUI 창 조작은 없다 | 작음 |
 | 칩·보조 코어 | TC3xx·TC4x 프로젝트, GTM·HSM 코드 | TC27x·TC36x만, TriCore 코어만 | 중간 |
-| 속도 | 큰 이미지 플래시, 메모리 덤프 | 보드 내장 어댑터 6 MHz에서 131 KiB/s(2026-10-25, 이전 19.4 KiB/s). 더 빠른 어댑터는 시험하지 않음 | 작음 |
+| 속도 | 큰 이미지 플래시, 메모리 덤프 | 보드 내장 어댑터 6 MHz에서 131 KiB/s(2026-10-25, 이전 19.4 KiB/s). DAP miniWiggler 30 MHz에서 약 1.97 MiB/s(TC36x, 2026-11-04) | 작음 |
 | 캐시 보기 | 캐시와 메모리가 다른 값을 가질 때 찾기 | 앱 B Cache 탭(2026-10-26): PCON·DCON·PMA로 코어별 캐시 크기·켜짐·캐시 세그먼트를 실행 중에 읽고, CCTRL로 히트·미스를 잰다(TC275 보드: 세 코어 PCACHE 히트 100%). TC36x도 된다(TC1.6.2P 두 코어; TC36x 보드: 캐시를 켠 데모에서 CPU0 PCACHE 히트 100%, 같은 시간에 명령 수가 바이패스일 때의 약 6.5배). 메모리 탭은 보이는 주소를 write-back DCACHE가 들고 있을 수 있으면 알린다. 캐시 라인 내용은 읽지 않는다: 태그 RAM은 캐시를 끄고 MTU_MEMMAP으로 매핑해야 보이고 태그 형식이 공개되지 않았다 | 작음 |
 | 도구 인증 | 안전 프로젝트에서 도구를 믿을 근거 | 인증 과정이 없다 | 큼 |
 
@@ -141,7 +157,7 @@ TRACE32 수치는 이번에 재지 않았다. 메모리 속도는 크기와 경�
 2. ~~**조건·횟수 BP:** DAP의 `condition`·`hitCondition`을 호스트에서 평가한다. 멈췄다 다시 도는 방식이라 느리지만, 가장 자주 아쉬운 기능이다.~~ 2026-10-25 구현(probe-rs `c18738d`, 앱 B 편집 줄). 전역 변수만 쓰는 조건은 프레임을 풀지 않아 한 번에 63 ms다.
 3. ~~**ORTI 태스크 보기:** ORTI 파일을 읽어 태스크·ISR 상태를 변수 패널에 보인다. AUTOSAR 보드가 대상이다.~~ 2026-10-25 구현(`debug-model` `orti`, 앱 B OS 탭, probe-rs `d8954dd`). 서버 `liveWatch`가 경로(`OsTcb[1].prio`, `OsRunningTcb->state`)를 풀어, 멈춘 코어와 도는 코어 모두에서 읽는다. 지원하지 않는 식은 그 칸만 "not supported"로 보이고, ORTI 파일이 없거나 깨져도 디버깅은 그대로다. `Os…->prio == 2` 같은 조건으로 태스크별 BP도 된다(`script/examples/orti_paths.aurix`). 시험은 직접 만든 3-태스크 데모 OS(`zed/aurix_tcf_demo/orti_demo.ort`)로 했고, 실제 AUTOSAR OS의 ORTI 파일은 아직 돌려 보지 못했다.
 4. ~~**스크립트 실행:** DAP 클라이언트 위에 명령 파일을 돌리는 도구를 둔다(attach, BP, continue, 값 확인). CI의 보드 시험에 바로 쓸 수 있다.~~ 2026-10-25 구현(`crates/script`, `aurix-run`). 이 도구로 probe-rs 포크의 문제 하나를 찾아 고쳤다(`149db65`): 명령 BP가 켜져 있으면 데이터 BP가 멈추지 않았다. TC275에서는 break-before-make 트리거가 켜진 동안 break-after-make 트리거가 동작하지 않는다. 데이터 트리거도 접근 전에 멈추게 하고, 그 접근 하나를 데이터 트리거만 켠 채 실행해 접근 뒤에 멈춘 상태로 만든다(`script/examples/watch_after_break.aurix`). 2026-10-26에 PRACTICE의 매크로·`IF`·`WHILE`·`RePeaT`에 해당하는 스크립트 변수(`let n = n + 1`, `let i = read i`, `read live`, `read memory`), `if`/`else`/`end`, `while`, `repeat`, `check`, `fail`, `print`를 더했다. 식은 C의 정수·연산자·우선순위를 따른다. 보드에서 `loop_until.aurix`가 `while i < 3`으로 `accumulate()` 루프를 11번 step over하고 `sum == 18`을 확인했다.
-5. ~~**속도 측정:** MCD 경로와 다른 어댑터로 같은 측정을 돌려, 19.4 KiB/s가 TAS의 한계인지 확인한다.~~ 2026-10-25(probe-rs `86680be`). 한계는 TAS도 MCD도 아닌 어댑터 JTAG 클럭(TAS 서버 기본 400 kHz)이었다. TAS 프로브가 probe-rs의 `speed`로 클럭을 정하게 했고, 6 MHz에서 메모리 6.7배(131 KiB/s), step 4배(10 ms), DAP step·continue 3배가 됐다. 다른 어댑터는 WP-5의 어댑터가 오면 잰다.
+5. ~~**속도 측정:** MCD 경로와 다른 어댑터로 같은 측정을 돌려, 19.4 KiB/s가 TAS의 한계인지 확인한다.~~ 2026-10-25(probe-rs `86680be`). 한계는 TAS도 MCD도 아닌 어댑터 JTAG 클럭(TAS 서버 기본 400 kHz)이었다. TAS 프로브가 probe-rs의 `speed`로 클럭을 정하게 했고, 6 MHz에서 메모리 6.7배(131 KiB/s), step 4배(10 ms), DAP step·continue 3배가 됐다. 2026-11-04에 DAP miniWiggler로 TC36x에서 쟀다: 클럭이 30 MHz까지 올라가 메모리 읽기 약 1.97 MiB/s, 쓰기 1.19 MiB/s, step 4.2 ms(위 표).
 6. **칩 확대:** TC36x를 붙인 방식대로 프로젝트가 쓰는 TC3xx 칩을 더한다.
 
 당분간은 일상 디버깅은 우리 디버거로, 트레이스·커버리지·인증이 필요한 일은 TRACE32로 나눠 쓰는 것이 현실적이다.
