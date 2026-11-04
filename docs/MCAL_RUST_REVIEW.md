@@ -247,7 +247,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 |---|---|---|---|
 | 가1. Port | 없음 | `mcal-chipdb`(SPIRIT IO 읽기), `mcal-model`(설정·검사·레지스터 값), `mcal-gen`(CLI), `mcal-ui`(편집기), `mcal-port`의 설정 타입, `mcal-tresos`(Tresos 출력 비교) | **됨(2026-11-01).** 예제 프로젝트를 검사·생성하고, 생성된 크레이트가 빌드된다. EB 프로젝트 네 작업공간의 Port 설정이 Tresos 출력과 같다 |
 | 가2. Mcu 클럭 | 데이터시트의 클럭 한계 | PLL 분주비에서 주파수, 도메인 주파수에서 CCU 분주비, SYSPLLCON·PERPLLCON·CCUCON 값. 편집기에 Mcu 모듈 | **됨(2026-11-01).** EB 프로젝트 네 작업공간의 `Mcu_PBcfg.c`와 PLL 필드 9개, CCUCON 4개, CPU 분주비 2개가 같다. **리셋 설정 됨(2026-11-03):** 네 작업공간의 `RSTCON`(0x240)·`ARSTDIS`(0)가 같다(Mcu 비교는 30개). 남은 것: K2 단계 변경 지연, FM 변조, 클럭 모니터, 외부 클럭 출력, RAM·저전력 설정 |
-| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. **Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트(`Can_SetBaudrate`), 슬립 모드 됨(2026-11-03).** 남은 것: 인터럽트 노드 배정(ILE·SRC), 버스 활동으로 깨우기(트랜시버·ERU) |
+| 가3. CAN | 가2(클럭) | 비트 타이밍, 메시지 RAM 배치, 필터 | **됨(2026-11-01).** EB 프로젝트의 `Can_17_McmCan_PBcfg.c`와 50개 값이 같다. **Rx FIFO와 마스크 필터, Tx FIFO/큐, CAN FD, 여러 비트 레이트(`Can_SetBaudrate`), 슬립 모드 됨(2026-11-03).** **웨이크업 됨(2026-11-04):** 수신 핀의 ERU 하강 에지(`Can_CheckWakeup`). 인터럽트 라인은 `rx_line`·`tx_line`·`bus_off_line`(`GRINT1`·`GRINT2`)이고 SRC의 CPU·DMA는 `[irq]`가 정한다(MCMCAN에 `ILE`는 없다) |
 | 가4. 나머지 | 필요 | Dio, Gpt, Wdg, Fls … 설정과 생성. ECUC ARXML 가져오기·내보내기 | 모듈마다 같은 방식으로. **Wdg 됨(2026-11-01):** 네 작업공간의 `Wdg_17_Scu_PBcfg.c`와 26개 값이 같다. **Spi 됨(2026-11-02):** 네 작업공간의 `Spi_PBcfg.c`와 58개 값이 같다(네 곳의 `Spi.xdm`이 같아 설정은 한 가지). **FlsLoader 됨(2026-11-02):** 네 작업공간의 `FlsLoader_Cfg.c`·`FlsLoader_Cfg.h`와 37개(DET를 끈 곳은 35개) 값이 같다. 이로써 EB 프로젝트에 있는 MCAL 모듈은 다 했다. **Dio·Gpt·ECUC ARXML 됨(2026-11-02):** Dio·Gpt는 EB 프로젝트에 없어 매뉴얼로 확인했다. 예제와 로컬 프로젝트 네 개가 ECUC 값으로 내보냈다 가져와도 같다. **Fls·Fee, Gpt의 GTM·GPT12 채널, ECUC 모듈 정의 됨(2026-11-02).** 이로써 가)의 PC 쪽 모듈은 다 했다. **Mcu의 GTM 클럭 됨(2026-11-02):** 네 작업공간의 `Mcu_PBcfg.c` GTM 값 13개가 같다(Mcu 비교는 28개). **Irq 됨(2026-11-02):** EB 프로젝트에 Irq가 없어 매뉴얼로 확인했다. CAN 인터럽트 라인(`GRINT1`·`GRINT2`)도 됐다 |
 
 ### 나) 칩 위 (컴파일러가 생긴 뒤)
@@ -263,7 +263,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 | 나6. 플래시 | 나5 | FlsLoader, Fls, Fee | 정해 둔 시험 섹터만 지우고 쓴다. UCB 주소는 코드에서 거부한다 |
 | 나7. 나머지 | 필요 | Spi, Adc, Icu, Pwm, Dma … | 모듈마다 같은 방식으로. **Adc(EVADC), Pwm(GTM TOM), Icu(GTM TIM), Dma 드라이버 됨(2026-11-03, 디버거로 보드 확인)** |
 
-**컴파일러 전에 앞당긴 것 (2026-11-02):** 나2(Port·Dio), 나3의 ENDINIT·Gpt(STM·TOM·GPT12), 나4의 PLL·CCUCON·GTM 클럭·리셋 원인, 나3의 Wdg, 나5의 Can, 나6의 Fls·Fee·FlsLoader, 나7의 Spi·Adc·Pwm·Icu·Dma 드라이버를 레지스터 접근 trait 위에 썼다. 시험 보드에서 디버거로 돌려 레지스터 값과 STM 주파수를 확인했다(아래 "컴파일러 없이 드라이버"). 컴파일러가 생기면 같은 코드를 칩에서 빌드해 같은 확인을 되풀이한다. Wdg는 안전 워치독으로 설정·서비스·모드를 보드에서 확인했다. CPU 워치독, 실제 타임아웃 리셋, 실제 인터럽트 진입은 디버거로는 할 수 없어 그때로 남는다.
+**컴파일러 전에 앞당긴 것 (2026-11-02):** 나2(Port·Dio), 나3의 ENDINIT·Gpt(STM·TOM·GPT12), 나4의 PLL·CCUCON·GTM 클럭·리셋 원인, 나3의 Wdg, 나5의 Can, 나6의 Fls·Fee·FlsLoader, 나7의 Spi·Adc·Pwm·Icu·Dma 드라이버를 레지스터 접근 trait 위에 썼다. 시험 보드에서 디버거로 돌려 레지스터 값과 STM 주파수를 확인했다(아래 "컴파일러 없이 드라이버"). 컴파일러가 생기면 같은 코드를 칩에서 빌드해 같은 확인을 되풀이한다. Wdg는 안전 워치독으로 설정·서비스·모드를 보드에서 확인했다. 실제 타임아웃 리셋, 실제 인터럽트 진입은 디버거로는 할 수 없어 그때로 남는다. CPU 워치독은 CPU0에 대리 코드를 돌려 확인했다(2026-11-04).
 
 ## 진행 상황 (2026-11-01)
 
@@ -338,7 +338,12 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - 매뉴얼에 따르면 CPU 워치독의 `CON0`는 그 CPU만 쓸 수 있어, 디버거로는 풀 수 없다.
     - `EICON0`·`SEICON0`는 SCU의 접근 보호만 따른다. 워치독 카운터도 건드리지 않는다.
     - Port의 `PDR`·`PDISC`는 `E`, 클럭 레지스터(`SYSPLLCON`, `CCUCON`)는 `SE`다.
-- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개, CAN Rx FIFO를 더해 176개, Mcu 리셋을 더해 189개, 안전 워치독을 더해 200개, CAN Tx FIFO를 더해 212개, Adc를 더해 231개, Pwm을 더해 254개, Icu를 더해 278개, Dma를 더해 296개, `Port_SetPinDirection`을 더해 300개, CAN FD를 더해 313개, `Can_SetBaudrate`를 더해 322개, Can 슬립을 더해 330개, Pwm의 ATOM 채널을 더해 335개, Dma 원형 버퍼를 더해 337개, Dma 링크드 리스트를 더해 338개, Dma 더블 버퍼를 더해 346개, Dma 패턴 검출과 자원 구획을 더해 352개, Pwm 알림과 데드 타임을 더해 370개가 되었다. 리셋한 보드에서 370개가 모두 통과했다(DAP miniWiggler 6 MHz, 28초).
+- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개, CAN Rx FIFO를 더해 176개, Mcu 리셋을 더해 189개, 안전 워치독을 더해 200개, CAN Tx FIFO를 더해 212개, Adc를 더해 231개, Pwm을 더해 254개, Icu를 더해 278개, Dma를 더해 296개, `Port_SetPinDirection`을 더해 300개, CAN FD를 더해 313개, `Can_SetBaudrate`를 더해 322개, Can 슬립을 더해 330개, Pwm의 ATOM 채널을 더해 335개, Dma 원형 버퍼를 더해 337개, Dma 링크드 리스트를 더해 338개, Dma 더블 버퍼를 더해 346개, Dma 패턴 검출과 자원 구획을 더해 352개, Pwm 알림과 데드 타임을 더해 370개, Icu 타임스탬프·필터·알림·모드, Adc 하드웨어 트리거·결과 버퍼·한계 검사, Mcu 클럭 모니터·외부 클럭, Can 웨이크업, CPU 워치독을 더해 419개가 되었다. 리셋한 보드에서 419개가 모두 통과했다(DAP miniWiggler 6 MHz, 34초).
+    - CPU 워치독: `WDTCPU0CON0`은 CPU0만 쓸 수 있어, CPU0의 PSPR에 대리 코드(메일박스에서 주소와 값을 받아 CPU0으로 저장하는 44바이트, `tricore-as`로 어셈블)를 두고 디버거가 `ICR.IE`를 끄고 `PSW`·`PC`를 맞춘 뒤 CPU0을 돌렸다. 그 저장을 거치는 `Registers`로 Rust Wdg 드라이버를 그대로 돌려 `Wdg_Init`(REL·PW·`LCK`·`ENDINIT`, `CON1`), fast 모드, 서비스, off(`DR`·`DS`)가 칩에서 맞았고 오류 플래그가 없었다. 끝에 CPU0을 멈추고 `PSW`·`PC`·`ICR`을 되돌렸다.
+    - Can 웨이크업: M_CAN은 전원 차단 중 버스를 보지 않고 TC36x에는 WCAN이 없어, 수신 핀(P33.7, `CAN00_RXDE`)의 ERU 입력(`SCU_E_REQ4_0`, 채널 4 입력 A)을 칩 데이터에서 찾아 하강 에지를 잠든 동안만 켰다. Dio로 그 핀(LED4)을 내리자 `EIFR.INTF4`와 `SRC_SCUERU0.SRR`가 서고 `Can_CheckWakeup`이 참이었다. 따로 적었던 `ILE`는 MCMCAN이 아니라 FlexRay의 레지스터였고, CAN 라인은 이미 `GRINT1`·`GRINT2`로 고르고 SRC의 CPU·DMA는 `[irq]`가 정한다.
+    - Mcu 클럭 모니터·외부 클럭: `CCUCON3`·`CCUCON4`(fBACK 범위 문턱값 153–188, fPLL0 300 MHz)를 켜도 경보가 새로 서지 않았고, 시험 비트로 `ALM8[1]`(범위)과 `ALM8[2]`(생존)가 섰다. 그 전에 `AG8CF0`–`2`·`AG8FSP`를 읽어 반응이 없음을 확인했다. PLL·fSPB의 시험 비트는 대기 SMU의 `ALM21[15]`로 가 반응을 확인하지 않아 쓰지 않았다. 외부 클럭은 `FDR`·`EXTCON` 값까지 봤다(EXTCLK0 P23.1, EXTCLK1 P11.12는 보드의 연결을 몰라 구동하지 않았다).
+    - Adc: G2의 VDDK를 TOM0 채널 6(100 Hz)의 상승 에지로 변환했다. 트리거는 `GTM_ADCTRIG0OUT0.SEL2` = 1(`ADC_TRIG0_2`)에서 G2의 `REQTRI`(`XTSEL` 8)로 들어간다. PWM이 돌기 전에는 결과가 없었고, 네 샘플 모두 `SRC_VADCG2SR0`와 함께 선형 결과 버퍼에 들어온 뒤 트리거가 꺼졌다. GTM의 ADC 트리거 선택 표는 부록에서 뽑았다. 한계 검사(3000 넘음)에서 VAREF는 채널 이벤트와 함께 읽혔고(4092), VAGND는 버려졌다. 결과 레지스터는 읽으면 VF가 지워져서, 시험이 드라이버보다 먼저 읽으면 결과가 사라진다.
+    - Icu: TBU 채널 0(`TBU_TS0`, CMU_CLK0)을 Mcu의 GTM 설정에 넣었다. LED3 상승 에지의 타임스탬프 다섯 개가 정확히 9999872틱 간격으로 네 칸 순환 버퍼에 들어갔고(위치 1, 알림 두 번), up/down 디글리치 필터(`FLT_RE` 199, `FLT_FE` 49)가 LED3의 high를 정확히 150틱 줄였다. 슬립 모드에서는 웨이크업이 아닌 Led1Edge의 `IRQ_EN`이 0이 되어 요청과 알림이 없었고, 타임스탬프(웨이크업)는 그대로였다.
     - Pwm 알림·데드 타임: LED2의 채널을 TOM1 채널 5로 옮겨, 그 DTM(CDTM1_DTM1 채널 1)의 정상 출력을 TOUT27(LED2), 반전 출력을 TOUT28(LED3)로 냈다. TIM이 잰 LED2의 high는 TOM의 듀티에서 상승 에지 데드 타임 500틱을 뺀 값(9999872틱 중 2499341, 7499276), LED3의 high는 나머지에서 300틱을 뺀 값(7499732, 2499796)으로 1틱 안에서 맞았다(TOM·DTM·TIM이 모두 같은 GTM 클럭). 알림은 상승·하강·둘 다에서 `IRQ_EN`, 플래그, `SRC_GTMTOM12.SRR`가 서고 인터럽트 단계가 알림을 한 번 불렀다. 0 %와 `Pwm_DisableNotification` 뒤에는 부르지 않았다. 반전 출력을 고르는 `GTM_TOUTSELn` 값은 부록의 레지스터 설명에서 뽑았고, 같은 읽기가 이미 손으로 확인한 정상 출력 표 126개 TOUT를 그대로 다시 만들었다.
     - Dma 패턴 검출·자원 구획: 8비트 채널이 `PRR0` = `0x0D0A`(`PATSEL` 011B)로 CR LF를 찾아, 앞의 홀로 선 CR은 지나고 LF 뒤에서 멈췄다. 유저 모드 구획(RP2)의 채널이 슈퍼바이저 쓰기만 받는 `PRR1`에 쓰면 목적지 버스 오류(`DER`)였고, RP0(슈퍼바이저)에서는 써졌다. 매뉴얼만으로는 몰랐던 것 둘: `MODEr`·`HRRc`는 safety ENDINIT를 풀어야 써지고, 풀지 않고 쓰면 버스 오류 뒤 DMA가 리셋 전까지 접근을 받지 않았다. 패턴으로 끝난 트랜잭션은 남은 전송 수를 `TCOUNT`에 남겨, 리셋하지 않으면 다음 시작이 그 남은 수로 이어진다. 그래서 `pattern_found`가 위치를 돌려주며 채널을 리셋한다.
     - Dma 더블 버퍼: `SRC_GPSR01` 요청 하나마다 한 워드를 4워드 목적지 버퍼 둘에 받았다(`SHCT` BH). 버퍼 끝의 자동 전환과 `CHCSR.SWB`의 소프트웨어 전환, 언 버퍼(`FROZEN`)와 풀기가 매뉴얼대로였다. 매뉴얼만으로는 몰랐던 것: `CHCSR`에 `CICH`만 쓰면 `FROZEN`도 지워진다. 그래서 끝 플래그를 지운 것이 버퍼를 풀어 버렸고, 드라이버의 `CHCSR` 동작 쓰기가 `FROZEN`을 읽은 대로 함께 쓰게 했다(1을 다시 써도 그대로다).
@@ -390,7 +395,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - 디버거 경로 자체에도 하나 있었다. probe-rs의 `readMemory`는 4바이트를 2바이트씩 두 번 읽어 GTM에서 실패한다. 읽기를 포크의 `readRanges`(워드 읽기)로 바꿨다. 처음 46개의 SCU·Port 읽기는 16비트 두 번이었지만, 그 레지스터들은 16비트 읽기를 받는다.
     - ENDINIT 타임아웃 플래그(`EISR.TO`·`SEISR.TO`)는 서지 않았다.
     - 끝난 뒤 보드를 리셋했고, 데모 프로그램이 원래 클럭으로 다시 돈다.
-- **디버거로 못 보는 것:** 실제 인터럽트 진입, 실시간 타이밍, CPU 워치독(Wdg 드라이버). 이것들은 컴파일러가 있어야 한다.
+- **디버거로 못 보는 것:** 실제 인터럽트 진입, 실시간 타이밍. 이것들은 컴파일러가 있어야 한다. CPU 워치독은 나중에(2026-11-04) CPU0에 대리 코드를 돌려 칩에서 확인했다(위 보드 시험).
 
 ### Mcu의 GTM 클럭 (2026-11-02)
 
@@ -505,7 +510,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 - **아직 확인 못 한 것:** 이번 설정에 없어 Tresos 값과 맞춰 보지 못했다. 루프백(`NPCR.LBM`)의 인코딩, 확장 필터 요소, 폴링 마스크, 여러 컨트롤러가 메시지 RAM을 나누는 순서가 그렇다.
 - **편집기:** Can 모듈(`CanGeneral`, `CanConfigSet` > `CanController`, `CanHardwareObject`). 컨트롤러 폼은 노드와 수신 입력(그 입력의 핀과 함께), 비트 타이밍, 계산된 분주비·샘플 포인트·메시지 RAM 주소·레지스터 값을 보인다. 객체 폼은 Rx FIFO와 원소 수, 핸들, 버퍼나 FIFO, 필터 요소와 그 번호를 보인다.
 - **Tx FIFO와 큐(2026-11-03):** 송신 객체에 `fifo`를 주면 전용 버퍼 뒤의 Tx FIFO이고, `queue`이면 Tx 큐다. `TXBC`에 `NDTB`·`TFQS`·`TFQM`을 나눠 쓰고, 드라이버는 `TXFQS`의 넣을 위치에 쓴다.
-- **아직 없는 것:** 범위·이중 ID 필터, FIFO 워터마크와 덮어쓰기 모드, 한 객체에 필터 여럿, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, 인터럽트 노드 배정(ILE, SRC), 웨이크업, Pretended Networking, TTCAN.
+- **아직 없는 것:** 범위·이중 ID 필터, FIFO 워터마크와 덮어쓰기 모드, 한 객체에 필터 여럿, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, Pretended Networking, TTCAN.
 
 ### 클럭 계산 (2026-11-01)
 
