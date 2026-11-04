@@ -338,8 +338,22 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - 매뉴얼에 따르면 CPU 워치독의 `CON0`는 그 CPU만 쓸 수 있어, 디버거로는 풀 수 없다.
     - `EICON0`·`SEICON0`는 SCU의 접근 보호만 따른다. 워치독 카운터도 건드리지 않는다.
     - Port의 `PDR`·`PDISC`는 `E`, 클럭 레지스터(`SYSPLLCON`, `CCUCON`)는 `SE`다.
-- **Tresos 비교의 범위(2026-11-04):** EB 프로젝트의 네 작업공간에 있는 MCAL 모듈 설정은 Port, Mcu, Can, Spi, Wdg, FlsLoader뿐이고 여섯 모두 Tresos 출력과 비교했다. Dio, Gpt, Fls, Fee, Irq, Adc, Pwm, Icu, Dma는 그 설정이 없어 비교할 출력이 없다. Mcu 비교에 클럭 모니터·외부 클럭·TBU 채널을 더 옮기게 했고, 생성된 `EXTCON`과 `GtmTbuCfg`까지 네 곳 모두 32개 값이 같다(네 곳 모두 외부 클럭과 TBU를 끈 설정이라, 켠 경우의 대응은 아직 생성값과 맞춰 보지 못했다).
-- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개, CAN Rx FIFO를 더해 176개, Mcu 리셋을 더해 189개, 안전 워치독을 더해 200개, CAN Tx FIFO를 더해 212개, Adc를 더해 231개, Pwm을 더해 254개, Icu를 더해 278개, Dma를 더해 296개, `Port_SetPinDirection`을 더해 300개, CAN FD를 더해 313개, `Can_SetBaudrate`를 더해 322개, Can 슬립을 더해 330개, Pwm의 ATOM 채널을 더해 335개, Dma 원형 버퍼를 더해 337개, Dma 링크드 리스트를 더해 338개, Dma 더블 버퍼를 더해 346개, Dma 패턴 검출과 자원 구획을 더해 352개, Pwm 알림과 데드 타임을 더해 370개, Icu 타임스탬프·필터·알림·모드, Adc 하드웨어 트리거·결과 버퍼·한계 검사, Mcu 클럭 모니터·외부 클럭, Can 웨이크업, CPU 워치독을 더해 419개, CAN 범위·이중 필터·Icu reset 카운터 필터·`ALM21[15]`을 더해 426개가 되었다. 리셋한 보드에서 426개가 모두 통과했다(DAP miniWiggler 6 MHz, 33초).
+- **Tresos 비교의 범위(2026-11-04):** EB 프로젝트의 네 작업공간에 있는 MCAL 모듈 설정은 Port, Mcu, Can, Spi, Wdg, FlsLoader뿐이고 여섯 모두 Tresos 출력과 비교했다. Dio, Gpt, Fls, Fee, Irq, Adc, Pwm, Icu, Dma는 그 설정이 없어 비교할 출력이 없다. Mcu 비교에 클럭 모니터·외부 클럭·TBU 채널을 더 옮기게 했고, 생성된 `EXTCON`과 `GtmTbuCfg`까지 네 곳 모두 32개 값이 같다(네 곳 모두 외부 클럭과 TBU를 끈 설정이다). **켠 경우(2026-11-05):** 한 작업공간의 사본에서 외부 클럭과 TBU 채널을 켜고 Tresos로 다시 생성해 세 설정을 맞춰 봤다: EXTCLK0 fSPB·EXTCLK1 fMCAN 반전(분주 4), 둘 다 fOUT(분주 7), EXTCLK1 fSPB(TBU 채널 0·1). Tresos는 EXTCLK1이 fOUT1일 때만 `DIV1`을 쓰고(다른 클럭이면 0) `FDR`은 설정하지 않는다. 우리는 분주를 늘 써서 `EXTCON`이 달랐던 것을 고쳤고, 채널 0만 켠 두 설정에서 `EXTCON`·`GtmTbuCfg`를 포함한 32개 값이 모두 같다. 셋째 설정의 `EXTCON`도 같다. `GtmTbuCfg`는 채널 n의 `TBU_CHEN.ENDIS`(켬 10B)를 비트 2n+1:2n에, `TBU_CHn_CTRL`을 비트 4n+11:4n+8에 담는다. 채널 1까지 켠 설정은 우리가 TBU 채널 0만 다뤄 옮기지 않는다.
+- **보드 시험:** TriBoard TC3X5(TC36x)에서 `board-test`를 돌렸다. 처음에는 46개였고, TOM·GPT12·GTM 클럭을 더해 70개, CAN을 더해 108개, Spi를 더해 121개, Fls를 더해 139개, Fee를 더해 147개, FlsLoader를 더해 153개, PFLASH를 더해 160개, CAN Rx FIFO를 더해 176개, Mcu 리셋을 더해 189개, 안전 워치독을 더해 200개, CAN Tx FIFO를 더해 212개, Adc를 더해 231개, Pwm을 더해 254개, Icu를 더해 278개, Dma를 더해 296개, `Port_SetPinDirection`을 더해 300개, CAN FD를 더해 313개, `Can_SetBaudrate`를 더해 322개, Can 슬립을 더해 330개, Pwm의 ATOM 채널을 더해 335개, Dma 원형 버퍼를 더해 337개, Dma 링크드 리스트를 더해 338개, Dma 더블 버퍼를 더해 346개, Dma 패턴 검출과 자원 구획을 더해 352개, Pwm 알림과 데드 타임을 더해 370개, Icu 타임스탬프·필터·알림·모드, Adc 하드웨어 트리거·결과 버퍼·한계 검사, Mcu 클럭 모니터·외부 클럭, Can 웨이크업, CPU 워치독을 더해 419개, CAN 범위·이중 필터·Icu reset 카운터 필터·`ALM21[15]`을 더해 426개, Icu ERU 채널과 TTCAN을 더해 461개가 되었다. 리셋한 보드에서 461개가 모두 통과했다(DAP miniWiggler 6 MHz, 33초).
+    - TTCAN(2026-11-05): TC36x에서 TT 기능은 CAN00 하나뿐이다. 그래서 시험은 따로 둔 설정(`ttcan.toml`)을 쓴다. CAN00이 TTCAN 레벨 1의 시간 마스터, CAN01이 이벤트 방식 노드이고, 둘은 모듈 내부 루프백 버스(`NPCR.LBM`)에 있다. 500 kbit/s(NTU 160 CAN 클럭), 기본 주기 1000 NTU, 행렬 주기는 기본 주기 넷이다. 현재 시간 마스터·In_Schedule이 되었고, 주기 번호 0–3이 돌고 로컬 시간이 1 ms에 500 NTU였다. CAN01이 받은 기준 메시지(101H, 1바이트)의 Cycle_Count는 하나씩 올랐다. 단발 송신은 한 번만 나갔다. 연속 송신은 두 주기마다(20.8 ms에 5개) 나갔고 그 MSC는 0이었으며, `TXBCR`로 거두자 더 오지 않았다. 아무도 보내지 않는 Rx 트리거는 MSC가 7이 되어 `TTIR.SE1`과 오류 레벨 1(경고)이었고 스케줄은 계속되었다. 매뉴얼만으로는 몰랐던 것이 넷 있다.
+        - **로컬 시간:** INIT를 풀어도 로컬 시간이 0에 머물렀고 노드가 Synchronizing에서 멈췄다. 매뉴얼은 INIT 해제나 `TURCF.ELT` 중 하나라고 적었지만, `ELT`를 켜야 시간이 돌았다. 그래서 `Can_Init`이 NTU 다음에 `ELT`를 쓴다.
+        - **내부 루프백:** `TEST.LBCK`와 `MON`을 함께 쓰는 내부 루프백에서는 마스터 상태가 Master_Off였다.
+        - **자기 수신:** `LBCK`만 쓰는 루프백에서는 시간 마스터가 되었다. 그러나 기준 메시지는 Cycle_Count 1로 나가는데 자신의 `TTCTC.CC`는 0에 머물러 Tx 개수 부족(`TXU`)이 났다. 자기 기준 메시지를 다시 받는 탓으로 보여 CAN01을 붙였다.
+        - **Tx 버퍼 0:** 단발 송신 객체가 Tx 버퍼 0일 때, 기준 메시지가 나가는 순간 그 버퍼에 요청이 남아 있으면 두 번 확인되었다. 두 Tx 이벤트는 201비트 간격이었고(기준 메시지 시각과 200 NTU 창), 기준 메시지의 길이도 바뀌었다. 버퍼 0은 기준 메시지의 나머지 페이로드(`TTRMC.RMPS`) 몫이라, TT 노드의 송신 객체는 버퍼 1부터 놓는다. 그 뒤로 한 번만 나갔다.
+        - **`TXBCF`:** 연속 송신을 거둘 때 그 송신이 이미 시작해 성공하면 `TXBCF`가 서지 않는 때가 있었다. 그래서 요청이 사라졌는지는 `TXBRP`로 본다.
+    - Icu ERU 채널(2026-11-05): LED 핀 가운데 ERU 입력이 있는 P33.7은 CAN 웨이크업이 쓴다. 대신 부록의 ERU 입력 표에서 핀이 아닌 입력을 찾았다. TOM1 채널 12의 출력은 ERU 입력 채널 5의 입력 b(`SCU_E_REQ5_1`, 매뉴얼 GTM의 SCU 연결 표)로 간다. 그래서 핀 없는 Pwm 채널(10 Hz, 50 %)을 두고 그 상승 에지를 감지했다. 결과는 다음과 같았다.
+        - 150 ms 안에 활성이었고, 0 %에서는 250 ms 동안 없었다.
+        - `EIEN`을 끄면 `INTF5`는 서도 idle로 읽었다.
+        - 두 에지는 `REN`·`FEN`이었다.
+        - 알림(`IGCR0.IGP1`)에서 `SRC_SCUERU1.SRR`와 알림이 한 번씩 나왔고, 슬립 모드에서는 없었다.
+        - `Icu_DeInit` 뒤에는 같은 `EICR2`·`IGCR0`의 CAN 웨이크업 절반이 그대로였다.
+        - 보드가 시작하는 프로그램은 ERU 채널 4를 입력 d와 출력 채널 1로 설정해 둔다. Icu 초기화는 그 절반을 건드리지 않는다.
+    - LED1 수준: `--only`로 port·dio 단계 없이 icu만 돌리면, LED1이 보드 프로그램이 남긴 수준에서 시작했다. 그래서 끝의 `P33_IN` 점검이 가끔 틀렸다. 지금은 icu 시험이 먼저 LED1을 끈다.
     - CAN 범위·이중 필터: CAN01에 둔 CAN1(폴링, 내부 루프백)에서 표준 ID 이중 필터(0x123, 0x456)와 확장 ID 범위 필터(0x1000–0x10FF)가 맞는 프레임만 받았다. 범위 필터에는 `XIDAM`이 걸리므로 `Can_Init`이 모두 1로 쓴다. 노드가 둘이 되어 `MCR.CLKSEL`이 0x0F가 되었다.
     - `ALM21[15]`(PLL·fSPB 생존): 대기 SMU의 플래그가 이미 서 있었다(웜 리셋에도 남아 언제 섰는지 모른다. 매뉴얼은 TCU 신호로도 선다고 적었다). `CMD_STDBY`는 같은 쓰기에 `BITPROT`가 있어야 `ASCE`가 바뀌어서, 처음 시도는 아무 일도 하지 않았다. `BITPROT`와 함께 지운 뒤에는 모니터를 켠 채 거짓 경보가 없었고, `PLL0MONTST`로 경보가 섰다가 다시 지워졌다. 대기 SMU는 꺼져 있고(`SMUEN` 0) 반응은 오류 핀뿐이라 리셋 위험은 없었다.
     - Icu: Led3Duty의 필터를 reset 카운터 디글리치(`ECTRL.EFLT_CTR_RE`·`FE`)로 바꿔도 깨끗한 신호에서는 up/down과 같이 150틱 줄었다.
@@ -514,7 +528,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
 - **아직 확인 못 한 것:** 이번 설정에 없어 Tresos 값과 맞춰 보지 못했다. 루프백(`NPCR.LBM`)의 인코딩, 확장 필터 요소, 폴링 마스크, 여러 컨트롤러가 메시지 RAM을 나누는 순서가 그렇다.
 - **편집기:** Can 모듈(`CanGeneral`, `CanConfigSet` > `CanController`, `CanHardwareObject`). 컨트롤러 폼은 노드와 수신 입력(그 입력의 핀과 함께), 비트 타이밍, 계산된 분주비·샘플 포인트·메시지 RAM 주소·레지스터 값을 보인다. 객체 폼은 Rx FIFO와 원소 수, 핸들, 버퍼나 FIFO, 필터 요소와 그 번호를 보인다.
 - **Tx FIFO와 큐(2026-11-03):** 송신 객체에 `fifo`를 주면 전용 버퍼 뒤의 Tx FIFO이고, `queue`이면 Tx 큐다. `TXBC`에 `NDTB`·`TFQS`·`TFQM`을 나눠 쓰고, 드라이버는 `TXFQS`의 넣을 위치에 쓴다.
-- **아직 없는 것:** 범위·이중 ID 필터, FIFO 워터마크와 덮어쓰기 모드, 한 객체에 필터 여럿, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, Pretended Networking(TC36x에 없다), TTCAN(MCMCAN에 있으나 스케줄·트리거 메모리까지 큰 기능이라 아직).
+- **아직 없는 것:** 범위·이중 ID 필터, FIFO 워터마크와 덮어쓰기 모드, 한 객체에 필터 여럿, CAN FD(데이터 단계 비트 타이밍, 큰 요소), 컨트롤러당 여러 비트 레이트, Pretended Networking(TC36x에 없다), TTCAN 레벨 0·2와 갭·외부 동기·트리거 인터럽트(레벨 1의 스케줄·트리거 메모리는 있다).
 
 ### 클럭 계산 (2026-11-01)
 
