@@ -117,6 +117,14 @@ DAP miniWiggler(TriBoard TC3X5의 TC36x, TAS, 릴리스 빌드, `tas_clock`과 `
 | MCAL 보드 시험 전체(346개, DAP) | 51 s(전 98 s) | 27 s(전 34 s) | 26 s(전 32 s) |
 
 - **읽기 속도:** 클럭에 거의 비례한다(1 MHz 97 KiB/s, 10 MHz 834 KiB/s, 15 MHz 1166 KiB/s). 4 MB PFLASH를 30 MHz로 읽으면 약 2초다.
+- **16핀 JTAG 케이블의 ECU 보드(TC36x, 읽기만):** 3 MHz는 읽혔지만 4 MHz와 6 MHz에서는 `0x8d`로 실패했고, 실패 뒤 어댑터 클럭이 400 kHz로 돌아갔다. 그때의 `tas_clock`은 PFLASH를 먼저 읽고 첫 오류에서 멈춰서, 4 MHz에서 빠른 영역(DSPR)을 읽어 보지 못했다. 그래서 신호 문제(어느 영역이든 실패)인지, 느린 접근이 클럭에 비해 오래 걸리는 문제(PFLASH 같은 느린 영역만 실패)인지 가리지 못했다.
+  - **가르는 시험(probe-rs `tas_clock each`, 2026-11-07):** 클럭마다 DSPR0 4 KiB(SRI), SCU `CHIPID`(SPB), PFLASH 16 KiB(대기 상태)를 따로 읽는다. 영역마다 클럭을 다시 맞추고(실패하면 TAS가 400 kHz로 돌아가므로), 실패해도 다음 영역으로 넘어간다.
+  - **TriBoard(DAP)에서 확인:** 1·3·4·6·10 MHz 모두 세 영역이 읽혔다. 4 MHz를 주면 3.75 MHz가 된다. SCU는 `0xF003_6000`부터 256바이트를 읽으면 디버거가 읽을 수 없는 워드가 있어 `0x8d`라, `CHIPID` 한 워드만 읽는다. TriBoard의 `0x8003_0000`은 지워져 있어 `PROBE_RS_PFLASH=80001000`으로 읽었다.
+  - **남은 것:** ECU를 다시 연결하면 `tas_clock each 3000000 4000000 6000000`을 돌린다(읽기만, 코어 정지 없음). 3.75 MHz 실패가 DSPR에서도 나는지 본다.
+- **ECU에서 돌릴 것(준비됨, 2026-11-07):** `perf_measure`는 CPU0을 멈추고 PSPR에 써 보므로 ECU에는 쓰지 않는다. 그래서 두 도구에 `--read-only`를 넣었다. 둘 다 코어를 잡지 않고 버스로 읽기만 한다. 코어를 잡지 않는 이유가 있다: 코어 상태 확인(`update_halted`)은 죽은 세션의 저널이 남아 있으면 그것을 되돌리려고 쓸 수 있다.
+  - `perf_measure --read-only`(`PROBE_RS_SPEED=3000`): `CHIPID` 읽기, 상태 확인(CPU0 `DBGSR` 읽기, 실행 중), DSPR0 4 B–32 KiB, PFLASH 16 KiB. 끝에 CPU0이 멈추지 않았는지(`DBGSR.HALT`) 출력한다. TriBoard 3 MHz: 레지스터 하나 0.20 ms, 상태 확인 0.19 ms, DSPR0 32 KiB 283 KiB/s, PFLASH 16 KiB 280 KiB/s.
+  - `hsm_status --read-only`: `CHIPID`, `HSM_ID`, `DBGBASE`만 읽는다(`DBGBASE`를 쓰지 않는다). TriBoard: `HSM_ID` `0x00bec002`, `DBGBASE`는 버스 오류(HSM 디버그 창이 닫힘).
+  - 순서: `CHIPID`가 `0x87226480`인지 본다 → `tas_clock each 3000000 4000000 6000000` → `perf_measure --read-only` → `hsm_status --read-only`. 결과를 이 문서와 HSM 리뷰에 적는다.
 - **지연:** halt·run·레지스터 읽기는 6 MHz에서 이미 클럭보다 USB와 TAS 왕복이 정한다. MCAL 보드 시험도 6 MHz와 30 MHz의 차이가 작다.
 - **파워온 뒤 연결:** USB를 바꿔 꽂아 보드가 꺼졌다 켜진 뒤에는 `CBS_OSTATE`가 0(OCDS 꺼짐)이라 핫 어태치만으로는 halt가 되지 않았다(`CoreDidNotHalt`, `DBGSR` 0). `probe-rs reset` 한 번 뒤 `OSTATE` = `0x00080001`이 되고 모든 시험이 통과했다.
 - **DAP 요청 지연:** TAS로 버스를 바로 읽으면 0.15 ms인 레지스터 읽기가 DAP 서버를 거치면 1.8 ms였다. 두 가지가 겹쳤다. 코어가 모두 멈춘 동안에도 요청마다 앞뒤로 코어 상태를 확인했고(상태와 알림, 코어마다 RPC 두 번), 요청이 조각으로 오면(`TCP_NODELAY`를 켠 클라이언트가 머리와 본문을 따로 씀) 서버가 나머지를 1 ms씩 잠들며 기다렸다(Windows에서 한 번에 1–2 ms). 모두 멈춘 상태를 100 ms 안에 확인했다면 실행 상태를 바꾸지 않는 요청은 확인을 건너뛰고, 덜 온 메시지와 요청 직후의 기다림은 처음 2 ms 동안 잠들지 않고 살핀다. 둘 중 하나만으로는 그대로였고, 둘을 함께 해 0.25 ms가 됐다.
