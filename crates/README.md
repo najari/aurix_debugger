@@ -137,7 +137,10 @@ file from `--set ATTACH=...`: the flash demo ones `tc36x_demo_2cores.json`, `ort
 `tc36x_orti_trace.json` (`build_orti.ps1 -Trace -Board tc36x`) and `sw_trace_2cores`
 `tc36x_trace_2cores.json` (with `build_trace_cpu1.ps1 -Board tc36x`, started with
 `start_in_flash --core 1`, which takes the boot-halted CPU1 out of boot halt). On the board they
-hold as on the TC275 (STM0 runs at 100 MHz there too). So does `gtm_mcs` with
+hold as on the TC275 (STM0 runs at 100 MHz there too). The TC36x attach files name the programs
+where this repository builds them (`m25_tcf/examples/aurix_tcf_demo/build`, the flash demo, and
+`zed/aurix_tcf_demo/build`, the others), and the flash demo's source breakpoints take that
+directory from `--set AURIX_DEMO=D:/work/claude/aurix_debugger/m25_tcf/examples/aurix_tcf_demo`. So does `gtm_mcs` with
 `tc36x_gtm_demo.json` (`build_gtm.ps1 -Board tc36x`): the boot application of the test board
 leaves the GTM off (`GTM_CLC` = 3), so the program switches it on; and since a word of the TC3xx
 MCS memory never written fails its ECC check when an MCS reads ahead into it, stopping the

@@ -381,6 +381,7 @@ Tresos가 하는 일을 Rust 프로그램으로 나눈다.
     - CPU 워치독: `WDTCPU0CON0`은 CPU0만 쓸 수 있어, CPU0의 PSPR에 대리 코드(메일박스에서 주소와 값을 받아 CPU0으로 저장하는 44바이트, `tricore-as`로 어셈블)를 두고 디버거가 `ICR.IE`를 끄고 `PSW`·`PC`를 맞춘 뒤 CPU0을 돌렸다. 그 저장을 거치는 `Registers`로 Rust Wdg 드라이버를 그대로 돌려 `Wdg_Init`(REL·PW·`LCK`·`ENDINIT`, `CON1`), fast 모드, 서비스, off(`DR`·`DS`)가 칩에서 맞았고 오류 플래그가 없었다. 끝에 CPU0을 멈추고 `PSW`·`PC`·`ICR`을 되돌렸다.
     - Can 웨이크업: M_CAN은 전원 차단 중 버스를 보지 않고 TC36x에는 WCAN이 없어, 수신 핀(P33.7, `CAN00_RXDE`)의 ERU 입력(`SCU_E_REQ4_0`, 채널 4 입력 A)을 칩 데이터에서 찾아 하강 에지를 잠든 동안만 켰다. Dio로 그 핀(LED4)을 내리자 `EIFR.INTF4`와 `SRC_SCUERU0.SRR`가 서고 `Can_CheckWakeup`이 참이었다. 따로 적었던 `ILE`는 MCMCAN이 아니라 FlexRay의 레지스터였고, CAN 라인은 이미 `GRINT1`·`GRINT2`로 고르고 SRC의 CPU·DMA는 `[irq]`가 정한다.
     - Mcu 클럭 모니터·외부 클럭: `CCUCON3`·`CCUCON4`(fBACK 범위 문턱값 153–188, fPLL0 300 MHz)를 켜도 경보가 새로 서지 않았고, 시험 비트로 `ALM8[1]`(범위)과 `ALM8[2]`(생존)가 섰다. 그 전에 `AG8CF0`–`2`·`AG8FSP`를 읽어 반응이 없음을 확인했다. PLL·fSPB의 시험 비트는 대기 SMU의 `ALM21[15]`로 가 반응을 확인하지 않아 쓰지 않았다. 외부 클럭은 `FDR`·`EXTCON` 값까지 봤다(EXTCLK0 P23.1, EXTCLK1 P11.12는 보드의 연결을 몰라 구동하지 않았다).
+    - **외부 클럭 핀(2026-11-08):** TriBoard TC3X5 매뉴얼로 연결을 확인했다. P23.1은 R312를 거쳐 CAN1 트랜시버의 TXD에, P11.12는 R371을 거쳐 이더넷 PHY의 RXC·TXC에 이어져 있다(둘 다 장착). P11.12를 출력으로 하면 PHY의 클럭과 부딪친다. EXTCLK1은 P32.4로도 나오고, P32.4는 주변장치 커넥터(X602/X702 52번)에만 나가 있다. 그래서 보드 프로젝트에서 P32.4를 `CCU_EXTCLK1`로 두고, 그 핀의 입력(`GTM_TIM0_IN5_5`)을 TIM0 채널 5로 다시 읽었다. 출력 중에도 패드의 입력은 살아 있다. fSPB/4(25 MHz)는 100 MHz 틱으로 주기 4(high 2), `EXTCON.DIV1` 99(fSPB/100, 1 MHz)는 주기 100(high 50)으로 정확했다. 보드 시험 506개 통과. EXTCLK0은 P23.1뿐이라 핀에서 확인하지 않았다(CAN1 커넥터로 신호가 나간다).
     - Adc: G2의 VDDK를 TOM0 채널 6(100 Hz)의 상승 에지로 변환했다. 트리거는 `GTM_ADCTRIG0OUT0.SEL2` = 1(`ADC_TRIG0_2`)에서 G2의 `REQTRI`(`XTSEL` 8)로 들어간다. PWM이 돌기 전에는 결과가 없었고, 네 샘플 모두 `SRC_VADCG2SR0`와 함께 선형 결과 버퍼에 들어온 뒤 트리거가 꺼졌다. GTM의 ADC 트리거 선택 표는 부록에서 뽑았다. 한계 검사(3000 넘음)에서 VAREF는 채널 이벤트와 함께 읽혔고(4092), VAGND는 버려졌다. 결과 레지스터는 읽으면 VF가 지워져서, 시험이 드라이버보다 먼저 읽으면 결과가 사라진다.
     - Icu: TBU 채널 0(`TBU_TS0`, CMU_CLK0)을 Mcu의 GTM 설정에 넣었다. LED3 상승 에지의 타임스탬프 다섯 개가 정확히 9999872틱 간격으로 네 칸 순환 버퍼에 들어갔고(위치 1, 알림 두 번), up/down 디글리치 필터(`FLT_RE` 199, `FLT_FE` 49)가 LED3의 high를 정확히 150틱 줄였다. 슬립 모드에서는 웨이크업이 아닌 Led1Edge의 `IRQ_EN`이 0이 되어 요청과 알림이 없었고, 타임스탬프(웨이크업)는 그대로였다.
     - Pwm 알림·데드 타임: LED2의 채널을 TOM1 채널 5로 옮겨, 그 DTM(CDTM1_DTM1 채널 1)의 정상 출력을 TOUT27(LED2), 반전 출력을 TOUT28(LED3)로 냈다. TIM이 잰 LED2의 high는 TOM의 듀티에서 상승 에지 데드 타임 500틱을 뺀 값(9999872틱 중 2499341, 7499276), LED3의 high는 나머지에서 300틱을 뺀 값(7499732, 2499796)으로 1틱 안에서 맞았다(TOM·DTM·TIM이 모두 같은 GTM 클럭). 알림은 상승·하강·둘 다에서 `IRQ_EN`, 플래그, `SRC_GTMTOM12.SRR`가 서고 인터럽트 단계가 알림을 한 번 불렀다. 0 %와 `Pwm_DisableNotification` 뒤에는 부르지 않았다. 반전 출력을 고르는 `GTM_TOUTSELn` 값은 부록의 레지스터 설명에서 뽑았고, 같은 읽기가 이미 손으로 확인한 정상 출력 표 126개 TOUT를 그대로 다시 만들었다.
@@ -583,7 +584,7 @@ EB 프로젝트의 네 작업공간의 Port 설정을 옮겨 비교했다.
 - 양산 ECU의 ASIL 요구.
 - API 모양: Rust다운 API만으로 갈지, AUTOSAR 모양 층도 둘지. AUTOSAR 규격 사용 조건.
 - 설정 형식: TOML만으로 갈지, ECUC ARXML 호환이 처음부터 필요한지.
-- 이 보드(TriBoard)의 TC36x 패키지. 예제는 EB 양산 ECU와 같은 TQFP144로 두었다.
+- ~~이 보드(TriBoard)의 TC36x 패키지~~ 풀림(2026-11-08): TriBoard TC3X5 매뉴얼에 TC365, LQFP-176이라고 적혀 있고, 회로도의 핀 번호(P32.4 88, P23.1 90, P11.12 167)가 SPIRIT IO의 LQFP176과 같다. 보드 프로젝트 넷(`project`, `ttcan`, `ttcan0`, `ttcan2`)을 LQFP176으로 바꿨다. 생성된 값은 첫 줄 주석 말고는 같다. EB 양산 ECU와 같은 TQFP144 예제는 `examples/tc364-tqfp144`에 그대로 있다.
 - 우리 코드의 공개 범위.
 - HighTec LLVM의 TriCore DWARF가 probe-rs 포크의 언와인더와 맞는지(1단계에서 확인).
 
