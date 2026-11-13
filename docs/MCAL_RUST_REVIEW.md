@@ -114,6 +114,20 @@ flowchart LR
 
 이 PC에는 HighTec GCC(C) v4.9.3.0과 Windows용 rustup(1.98.1·1.99.1·stable)만 있다.
 
+**다시 확인(2026-11-13):** (이날은 HighTec Rust를 찾지 못했다. 다음 날 `C:\HighTecRust`에 있음을 확인했다. 아래 "TriCore 빌드" 참고.) rustup에는 호스트(x86_64·i686 MSVC)와 wasm 타깃만 있고, `C:\HighTec\toolchains`에는 C 컴파일러(GCC 4.9.4, HDP-v4.9.3.0-infineon-1.0)만 있다. 그 GCC도 라이선스 파일이 없어 컴파일하지 않는다(`RLM_LICENSE`가 가리키는 `C:\HighTec\licenses`에 `.lic`가 없다). 쓸 수 있는 TriCore C 컴파일러는 TASKING TriCore v6.3r1(`cctc`, `C:\TASKING\TriCore_v6_3_r1_p4` 등)이다. 그래서 컴파일러 단계에서 지금 한 일은 이렇다:
+- **C 쪽:** TASKING으로 C 인터페이스의 헤더(`mcal-capi`, 생성된 `triboard-c`)와 C 시험 프로그램을 TC1.6.2, C99, 경고를 오류로 두고 컴파일했다. `capi-test`의 시험이 컴파일러가 있으면 이것을 다시 하고, 배치 검사(`c/abi_check.c`)로 `Can_PduType`(12바이트, `id` 4, `sdu` 8), `PduInfoType`(12), `Can_HwType`(8)의 크기와 오프셋을 본다.
+- **찾은 차이:** TASKING은 C enum을 1바이트로, MSVC와 GCC는 4바이트로 잡는다. `Can_ControllerStateType`과 `Port_PinDirectionType`이 C enum이고 Rust 쪽이 C `int`로 받으면, 컴파일러에 따라 인자가 어긋날 수 있다. 그래서 둘을 `uint8` typedef와 `#define` 상수로 바꾸고 Rust도 `u8`로 받게 했다.
+- **Rust 쪽:** 같은 배치를 `mcal-capi`가 포인터가 32비트인 타깃에서 컴파일 때 검사한다(`const` assert). i686 타깃으로 빌드해 통과했다. 드라이버 크레이트 전부와 생성된 설정(`triboard-cfg`)도 i686 no_std로 빌드된다.
+- **HighTec GCC:** 라이선스가 없어 쓰지 않는다.
+
+**TriCore 빌드(2026-11-14):** HighTec Rust 1.0이 `C:\HighTecRust\toolchains\rust\v1.0.0`에 있다. rustc 1.72.0-dev, LLVM 16.0.5, 타깃 `tc162-htc-none`(TC3xx)과 `tc18-htc-none`·`tc18a-htc-none`(TC4xx)이다. 라이선스는 `C:\HighTecRust\lic`에 있고, `RLM_LICENSE`가 그 폴더를 가리켜야 한다.
+- **막힌 것:** 우리 코드는 Rust 1.72보다 새 문법과 API를 썼다. edition 2024(cargo 1.72가 워크스페이스 매니페스트를 못 읽음), `is_multiple_of`(1.87), `div_ceil`(1.73), let 체인(1.88), `unsafe extern`·`safe fn`·`#[unsafe(no_mangle)]`(1.82)이다. 새 cargo에 HighTec rustc를 붙이면 `--check-cfg`를 넘겨서 쓸 수 없다.
+- **정한 것:** 펌웨어 크레이트만 1.72에 맞춘다. 드라이버 15개, `mcal-hw`, `mcal-capi`, 생성된 설정 크레이트 다섯이 edition 2021, `rust-version = "1.72"`이고, PC 도구는 edition 2024 그대로다. let 체인은 중첩 `if`로 바꿨다. `is_multiple_of`는 나눗수가 0일 수 있는 곳에 같은 결과를 내는 `multiple_of`로, `div_ceil`은 나눗셈으로 바꿨다. 생성기는 알림을 `extern "Rust"` 선언(`link_name`)과 안전한 래퍼 `fn`으로, C 이름을 `#[export_name]`으로 낸다. 생성물이 edition 2021 rustfmt에도 그대로이게 import 순서도 맞췄다. 생성기 시험은 edition 2021로 생성물을 컴파일한다.
+- **빌드 도구:** `mcal-tricore`(PC)가 크레이트의 매니페스트를 읽어 HighTec `rustc`를 의존 순서대로 부른다. 펌웨어 크레이트는 서로에게만 의존한다. TriBoard 설정과 `mcal-capi`를 주면 18개 크레이트가 TriCore rlib으로 빌드되고(디버그·릴리스), TTCAN 설정 셋과 TC364 예제도 빌드된다. 오브젝트는 `ELF32, Infineon Tricore, TC1.6.2`다.
+- **C 인터페이스:** `mcal-capi`의 32비트 배치 검사가 이번에 실제 TriCore 타깃에서 돌았고 통과했다. 기호 표상 `mcal-capi`가 C 함수 18개를 정의한다. `CanIf_*`, `Det_ReportError`, `DioConfigSet`은 미해결로 남고, 설정 크레이트가 `PortConfigSet`, `DioConfigSet`, `CanConfigSet`, Dio 그룹을 읽기 전용 데이터로 내보낸다.
+- **회귀:** PC 시험 277개, clippy 경고 0, 보드 시험 509개(TriBoard, JTAG) 통과. 생성 결과 비교도 다섯 프로젝트 모두 같다.
+- **남은 것:** 링크해서 칩에서 돌리는 것. 시작 코드(`tc162-rt` 같은 런타임), 링커 스크립트, 패닉 처리기가 있는 펌웨어 바이너리와, 그것을 C 응용(TASKING)과 링크하는 경로다. HighTec 예제(`examples/rust-tsim-example`, `rust-tc375-lite-kit-example`)가 출발점이다.
+
 컴파일러에 묶이지 않게 하는 규칙:
 
 - 안정판 Rust 문법만 쓴다. HighTec 고유 속성은 `aurix-rt`와 `mcal-lib` 안에만 둔다.
@@ -194,7 +208,7 @@ flowchart LR
 **정할 것**
 
 - AUTOSAR 규격 사용 조건(위 "API 모양"과 같은 질문).
-- TriCore용 Rust의 C ABI가 HighTec C 컴파일러와 맞는지(컴파일러 단계에서 확인).
+- TriCore용 Rust의 C ABI가 TriCore C 컴파일러와 맞는지. C 쪽 배치(TASKING)와 Rust 쪽 배치(HighTec Rust, `tc162-htc-none`)는 맞췄다(2026-11-14). 인자 전달 규약은 C 응용과 링크해 칩에서 돌려야 확인할 수 있다.
 - AUTOSAR `Init(ConfigPtr)`는 여러 설정 집합을 전제하지만 우리는 하나만 만든다. C 헤더는 한 집합만 선언한다.
 
 ## 생성기
