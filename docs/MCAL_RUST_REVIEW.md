@@ -152,6 +152,51 @@ flowchart LR
 - **Rust다운 API:** 소유권으로 자원을 나눈다(핀, CAN 노드, 타이머 채널). 설정은 생성된 타입으로 받는다. 오류는 `Result`다.
 - **AUTOSAR 모양 층(선택):** `#[no_mangle] extern "C" fn Can_Write(…)`처럼 AUTOSAR SWS의 이름과 인자를 따른다. 기존 C 상위 계층(EB 스택 등)이나 AUTOSAR 도구와 함께 쓸 때만 필요하다. AUTOSAR 규격을 제품 개발에 쓰는 조건(AUTOSAR 파트너십)은 확인해야 한다.
 
+### C 코드 생성 (2026-11-12 검토)
+
+생성기가 Rust 설정 크레이트 말고 C 코드도 만들게 할지 검토했다. 결론은 **Rust 드라이버 위에 AUTOSAR 모양 C ABI 층을 두고, 생성기는 그 층이 쓸 C 헤더를 함께 만드는 것**이다(위 "API 모양"의 선택 층).
+
+**지금 구조**
+
+- `mcal-model`이 프로젝트를 검사하고 레지스터 값을 계산한다(plan). `mcal-gen`은 모듈마다 `*_source` 함수로 그것을 Rust 텍스트로 찍는다. 같은 입력이면 같은 출력이고, 기대 파일로 시험한다.
+- 생성물은 드라이버 크레이트의 설정 타입(`mcal_can::config::CanConfig` 등)으로 된 `static`과 핸들 상수다. 설정 타입은 `&'static [T]`, 값을 품은 enum, `Option`, `bool`을 써서 C와 배치가 맞지 않는다. 저장소에 `#[repr(C)]`·`extern "C"`는 없다.
+- 드라이버는 `Registers` 트레이트에 대해 제네릭이다(칩에서는 `Mmio`, PC에서는 mock이나 디버거). 15개 모듈에 공개 함수가 약 100개다. 알림은 응용이 정의하는 `#[unsafe(no_mangle)] fn`, 상위 계층 알림은 `Indications` 트레이트다.
+
+**"C 코드 생성"의 세 가지 뜻**
+
+| 방식 | 내용 | 판단 |
+|---|---|---|
+| A. Rust 드라이버 + C ABI 층 + C 헤더 생성 | 드라이버와 설정 값은 Rust 그대로. C 응용에 `extern "C"` AUTOSAR 이름 함수와 생성된 C 헤더(핸들, 스위치, 콜백 선언)를 준다 | 권장 |
+| B. 벤더 C MCAL용 `*_PBcfg.c` 생성 | 벤더 드라이버가 읽는 설정 구조체를 우리가 만든다(Tresos 대체) | 하지 않는다. 구조체 배치가 벤더 자료라 클린룸 원칙과 부딪히고 벤더 버전에 묶인다. 지금처럼 값만 비교한다 |
+| C. 드라이버도 C로 | 같은 MCAL을 두 언어로 유지 | 하지 않는다. 구현·시험·보드 검증이 두 벌이 된다 |
+
+**A의 설계**
+
+- **생성물:** Rust 설정 크레이트는 그대로다(드라이버가 쓴다). 여기에 모듈마다 C 헤더(`Dio_Cfg.h`, `Port_Cfg.h`, `Can_Cfg.h` …)를 더한다. 들어가는 것은 핸들 상수(AUTOSAR 표준 이름, 예: `CanConf_CanHardwareObject_Single_Tx`), 빌드 전 스위치(`CAN_DEV_ERROR_DETECT STD_ON`), 설정 집합의 `extern` 선언, 알림 콜백의 선언이다. 벤더 고유 이름(예: `Can_17_McmCan`)은 쓰지 않는다.
+- **설정은 불투명:** Rust가 설정을 `#[no_mangle]` static으로 내보내고 C 헤더는 불완전 타입(`extern const Can_ConfigType CanConfigSet;`)으로만 선언한다. C 쪽에 구조체 배치를 따라 만들 필요가 없다.
+- **하나의 기호 목록:** 모듈마다 내보낼 기호(이름, 값, 설명)를 한 번 만들고 Rust와 C를 그 목록에서 찍는다. 두 언어의 핸들이 어긋나지 않게 하려는 것이다. 설정 전체를 공통 표현으로 바꾸지는 않는다.
+- **C ABI 층(`mcal-capi`, staticlib):** `extern "C" fn Can_Init(const Can_ConfigType*)`, `Can_Write` …가 `Mmio`로 드라이버를 부른다. `Result`는 `Std_ReturnType`으로, 오류는 C의 `Det_ReportError`로 알린다. `Indications`는 C의 `CanIf_RxIndication` 등을 부르는 구현이 된다. 데이터 타입(`Can_PduType` 등)만 `#[repr(C)]`로 새로 둔다. 알림 함수는 C에서 정의하도록 `extern "C"`로 선언해야 하므로, 생성되는 Rust도 그때는 바뀐다.
+- **PC에서 검증:** C ABI 층을 호스트용으로 빌드하고 mock `Registers`로 돌리면, 보드나 TriCore 툴체인 없이도 C 시험 프로그램이 `Dio_WriteChannel`부터 `Can_Write`까지 부르는 것을 확인할 수 있다. 생성된 헤더는 PC의 C 컴파일러로 문법 검사를 한다.
+
+**단계**
+
+1. 기호 목록과 C 헤더: Dio, Port, Can 먼저. 기대 파일 시험과 C 컴파일 검사. **됨(2026-11-12, aurix_mcal):**
+   - `mcal-gen`의 `can_handles`, `dio_channel_handles`, `port_handles`가 핸들(이름, 값, 설명)을 한 번 만들고, Rust와 C가 그것을 쓴다. 핸들을 이 목록으로 옮긴 뒤에도 기존 Rust 출력은 다섯 예제 프로젝트 모두 한 글자도 바뀌지 않았다.
+   - `[generate] c_out`이 있으면 `generate_c`가 `Port_Cfg.h`, `Dio_Cfg.h`, `Can_Cfg.h`를 쓰고, Rust 설정 `static`에 `export_name`(`PortConfigSet`, `DioConfigSet`, `CanConfigSet`)과 Dio 채널 그룹의 C 이름 static을 붙인다. 시험 칩 프로젝트로 기대 파일 시험을 한다. TriBoard 프로젝트는 `c_out = "triboard-c"`이다.
+2. `mcal-capi`: 같은 세 모듈, 호스트 staticlib와 mock으로 C 시험 프로그램. **됨(2026-11-12):**
+   - `mcal-capi`(no_std): Dio 8개 함수, Port 4개, `Can_Init`·`Can_SetControllerMode`·`Can_Write`와 메인 함수 셋. C 헤더 다섯 개(`Std_Types.h`, `Det.h`, `Dio.h`, `Port.h`, `Can.h`). 레지스터는 칩에서 `Mmio`, PC 시험에서는 `with_registers`로 받은 모델이다.
+   - Tx 확인은 `Can_Write`가 Tx 핸들마다 PDU를 기억해 두었다가 `CanIf_TxConfirmation(PduId)`로 돌려준다. Rust 드라이버는 핸들만 알려 주기 때문이다.
+   - `capi-test`: C 프로그램(`c/capi_test.c`)을 MSVC로 경고를 오류로 두고 컴파일한다. 생성된 헤더의 문법 검사도 이것으로 된다. 그 C 프로그램이 TriBoard 설정으로 Port(초기화, 모드, 방향과 그 오류 셋), Dio(채널, 그룹, 포트, 잘못된 채널, null 그룹), Can(초기화, 시작, 송신, 길이·포인터·컨트롤러 오류, FIFO로 받은 프레임, Tx 이벤트의 확인)을 부르고, Rust가 레지스터를 확인한다. 통과했고, 워크스페이스 시험은 모두 276개다.
+   - **확인할 것:** 헤더와 `mcal-capi`의 모듈·서비스·오류 ID는 AUTOSAR SWS를 따라 넣었다. 제품에 쓰기 전에 쓰려는 AUTOSAR 판의 SWS와 하나씩 맞춰 봐야 한다.
+3. 나머지 모듈: 공개 함수 약 100개를 AUTOSAR 함수와 하나씩 대응시킨다.
+4. 보드: TriCore용 Rust 빌드가 먼저다(HighTec 컴파일러 단계).
+
+**정할 것**
+
+- AUTOSAR 규격 사용 조건(위 "API 모양"과 같은 질문).
+- TriCore용 Rust의 C ABI가 HighTec C 컴파일러와 맞는지(컴파일러 단계에서 확인).
+- AUTOSAR `Init(ConfigPtr)`는 여러 설정 집합을 전제하지만 우리는 하나만 만든다. C 헤더는 한 집합만 선언한다.
+
 ## 생성기
 
 Tresos가 하는 일을 Rust 프로그램으로 나눈다.
