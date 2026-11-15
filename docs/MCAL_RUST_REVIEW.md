@@ -126,7 +126,10 @@ flowchart LR
 - **빌드 도구:** `mcal-tricore`(PC)가 크레이트의 매니페스트를 읽어 HighTec `rustc`를 의존 순서대로 부른다. 펌웨어 크레이트는 서로에게만 의존한다. TriBoard 설정과 `mcal-capi`를 주면 18개 크레이트가 TriCore rlib으로 빌드되고(디버그·릴리스), TTCAN 설정 셋과 TC364 예제도 빌드된다. 오브젝트는 `ELF32, Infineon Tricore, TC1.6.2`다.
 - **C 인터페이스:** `mcal-capi`의 32비트 배치 검사가 이번에 실제 TriCore 타깃에서 돌았고 통과했다. 기호 표상 `mcal-capi`가 C 함수 18개를 정의한다. `CanIf_*`, `Det_ReportError`, `DioConfigSet`은 미해결로 남고, 설정 크레이트가 `PortConfigSet`, `DioConfigSet`, `CanConfigSet`, Dio 그룹을 읽기 전용 데이터로 내보낸다.
 - **회귀:** PC 시험 277개, clippy 경고 0, 보드 시험 509개(TriBoard, JTAG) 통과. 생성 결과 비교도 다섯 프로젝트 모두 같다.
-- **남은 것:** 링크해서 칩에서 돌리는 것. 시작 코드(`tc162-rt` 같은 런타임), 링커 스크립트, 패닉 처리기가 있는 펌웨어 바이너리와, 그것을 C 응용(TASKING)과 링크하는 경로다. HighTec 예제(`examples/rust-tsim-example`, `rust-tc375-lite-kit-example`)가 출발점이다.
+- **칩에서 실행(2026-11-15):** `examples/triboard-tc3x5/blink`는 우리 드라이버와 생성된 TriBoard 설정으로 만든 Rust 프로그램이다. `Port_Init`을 하고 LED1을 Dio로 250 ms마다 뒤집으며, `STATUS`·`BLINKS`를 남긴다.
+  - **링크:** CPU0 RAM에 링크했다(`ram.ld`: PSPR `0x70100000`, DSPR `0x7000C000`). 그래서 플래시를 쓰지 않는다. `mcal-tricore`가 프로그램 크레이트를 HighTec `rust-lld`로 링크한다. 미해결 기호는 HighTec `core`가 부르는 `abort` 하나뿐이었고, 예제가 정의한다. 결과는 `.text` 3.5 KB, `.rodata` 480 B, 데이터 8 B다.
+  - **실행:** `start_in_flash`로 RAM에 올리고 DAP 스크립트로 CPU0을 실행했다. 데이터와 스택이 부트 앱의 CSA(`FCX` `0x700020C0`부터 `LCX` `0x70005F80`까지)와 겹치지 않음을 먼저 확인했다. `STATUS`는 1(`Port_Init` 성공)이었고, `BLINKS`는 4초 동안 5에서 13으로 늘었다. 멈춘 뒤 `P33_OUT`이 `0xE0`(LED1만 켜짐, 13번 뒤집은 결과)이고, `P33_IOCR4`는 P33.4–7 출력이었다. 보드는 JTAG(OCDS)로 연결된 상태였다.
+- **남은 것:** 플래시에서 시작하는 펌웨어(시작 코드: 스택, CSA, 0 채우기·복사, 워치독)와, C 응용(TASKING)과 C 인터페이스를 함께 링크하는 경로.
 
 컴파일러에 묶이지 않게 하는 규칙:
 
