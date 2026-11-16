@@ -126,9 +126,9 @@ flowchart LR
 - **빌드 도구:** `mcal-tricore`(PC)가 크레이트의 매니페스트를 읽어 HighTec `rustc`를 의존 순서대로 부른다. 펌웨어 크레이트는 서로에게만 의존한다. TriBoard 설정과 `mcal-capi`를 주면 18개 크레이트가 TriCore rlib으로 빌드되고(디버그·릴리스), TTCAN 설정 셋과 TC364 예제도 빌드된다. 오브젝트는 `ELF32, Infineon Tricore, TC1.6.2`다.
 - **C 인터페이스:** `mcal-capi`의 32비트 배치 검사가 이번에 실제 TriCore 타깃에서 돌았고 통과했다. 기호 표상 `mcal-capi`가 C 함수 18개를 정의한다. `CanIf_*`, `Det_ReportError`, `DioConfigSet`은 미해결로 남고, 설정 크레이트가 `PortConfigSet`, `DioConfigSet`, `CanConfigSet`, Dio 그룹을 읽기 전용 데이터로 내보낸다.
 - **회귀:** PC 시험 277개, clippy 경고 0, 보드 시험 509개(TriBoard, JTAG) 통과. 생성 결과 비교도 다섯 프로젝트 모두 같다.
-- **칩에서 실행(2026-11-15):** `examples/triboard-tc3x5/blink`는 우리 드라이버와 생성된 TriBoard 설정으로 만든 Rust 프로그램이다. `Port_Init`을 하고 LED1을 Dio로 250 ms마다 뒤집으며, `STATUS`·`BLINKS`를 남긴다.
+- **칩에서 실행(2026-11-15):** `examples/triboard-tc3x5/blink`는 우리 드라이버와 생성된 TriBoard 설정으로 만든 Rust 프로그램이다. `Port_Init`을 하고 LED1을 Dio로 뒤집으며(fSTM 100 MHz를 가정한 250 ms 지연), `STATUS`·`BLINKS`를 남긴다.
   - **링크:** CPU0 RAM에 링크했다(`ram.ld`: PSPR `0x70100000`, DSPR `0x7000C000`). 그래서 플래시를 쓰지 않는다. `mcal-tricore`가 프로그램 크레이트를 HighTec `rust-lld`로 링크한다. 미해결 기호는 HighTec `core`가 부르는 `abort` 하나뿐이었고, 예제가 정의한다. 결과는 `.text` 3.5 KB, `.rodata` 480 B, 데이터 8 B다.
-  - **실행:** `start_in_flash`로 RAM에 올리고 DAP 스크립트로 CPU0을 실행했다. 데이터와 스택이 부트 앱의 CSA(`FCX` `0x700020C0`부터 `LCX` `0x70005F80`까지)와 겹치지 않음을 먼저 확인했다. `STATUS`는 1(`Port_Init` 성공)이었고, `BLINKS`는 4초 동안 5에서 13으로 늘었다. 멈춘 뒤 `P33_OUT`이 `0xE0`(LED1만 켜짐, 13번 뒤집은 결과)이고, `P33_IOCR4`는 P33.4–7 출력이었다. 보드는 JTAG(OCDS)로 연결된 상태였다.
+  - **실행:** `start_in_flash`로 RAM에 올리고 DAP 스크립트로 CPU0을 실행했다. 데이터와 스택이 부트 앱의 CSA(`FCX` `0x700020C0`부터 `LCX` `0x70005F80`까지)와 겹치지 않음을 먼저 확인했다. `STATUS`는 1(`Port_Init` 성공)이었고, `BLINKS`는 4초 동안 5에서 13으로 늘었다. 정정(2026-11-16): 4초에 8번이니 500 ms마다였다. 클록을 아무도 설정하지 않아 fSTM이 리셋 값 50 MHz였다(아래 "Mcu C 인터페이스"). 리셋 직후 `CCUCON0`은 `0x05120112`이고, 보드의 부트 앱도 클록을 바꾸지 않는다. 멈춘 뒤 `P33_OUT`이 `0xE0`(LED1만 켜짐, 13번 뒤집은 결과)이고, `P33_IOCR4`는 P33.4–7 출력이었다. 보드는 JTAG(OCDS)로 연결된 상태였다.
 - **TASKING C 응용과 링크(2026-11-15):** `examples/triboard-tc3x5/blink-c`는 TASKING으로 빌드한 C 응용이다. C 인터페이스로 Rust 드라이버를 부르고, TriBoard의 CPU0 RAM에서 돈다(`blink-c-ram.elf`). 플래시 이미지는 아래 "플래시에서 시작"에 있다.
   - **Rust 쪽:** `mcal-capi`와 `triboard-cfg`를 담은 staticlib이다. `mcal-tricore`가 fat LTO(`-C lto=fat -C codegen-units=1`)로 오브젝트 하나에 담고, `-C llvm-args=-align-all-functions=1`로 함수를 2바이트로 정렬한다.
     - HighTec LLVM은 함수 섹션(`.text.<fn>`) 정렬을 1로 낸다. 그래서 TASKING `ltc`가 `Port_Init`을 `0x800026F3`에 두었고, 호출(`R_TRICORE_24REL`)이 E121 "not 1-mau aligned"로 실패했다. `rust-lld`는 섹션을 차례로 이어 붙이고 TriCore 명령이 모두 짝수 크기라 드러나지 않았다.
@@ -168,11 +168,30 @@ flowchart LR
     - CPU0 PC는 `0xA0300A14`였다(`delay_us`, `main` 바로 앞). `DBGSR`은 실행 중이었다.
   - **클록:** 플래시에서 스스로 시작하면 클록을 아무도 설정하지 않는다. `CCUCON0` `0x05120112`(`STMDIV` 2)이고 fSTM은 백업 클록 100 MHz의 절반인 50 MHz다.
     - 그래서 100 MHz를 가정한 `delay_us(250000)`이 500 ms다. STM `0x2B3B124C` ÷ 50 MHz ≈ 14.5 s는 `BLINKS` 29 × 0.5 s와 맞다.
-    - RAM에서 돌릴 때는 부트 앱이 클록을 설정해 두어 250 ms였다. 이 예제에는 클록 설정이 없다.
+    - RAM에서도 같았다. 위 RAM 실행의 `BLINKS` 5 → 13(검사는 "4보다 크다", "12보다 크다"였다)도 500 ms 간격이다. 처음에 "부트 앱이 클록을 설정해 250 ms"라고 적은 것은 틀렸다(2026-11-16 정정).
   - **되돌림:** 백업 JSON을 16 KiB 바이너리로 풀어 같은 섹터에 다시 썼다(`--verify`).
     - 다시 읽은 16 KiB가 백업과 바이트 단위로 같았다.
     - 리셋 뒤 CPU0은 기존 앱 영역(`0xA0304962`)에서 실행 중이다.
-- **남은 것:** Mcu의 C 인터페이스(`mcal-capi`에는 Dio, Port, Can만 있다)와 이 예제의 클록 설정, 그리고 TASKING으로 링크한 이미지의 Rust DWARF.
+- **Mcu C 인터페이스와 클록 설정(2026-11-16):** `mcal-capi`에 Mcu를 더했고, `blink-c`가 시작할 때 C에서 클록을 설정한다.
+  - **함수:** `Mcu_Init`, `Mcu_InitClock`, `Mcu_DistributePllClock`, `Mcu_GetPllStatus`, `Mcu_GetResetReason`, `Mcu_GetResetRawValue`, `Mcu_PerformReset`이다(`Mcu.h`, 모듈 ID 101). RAM 영역과 모드 함수는 없다.
+    - `Mcu_Init`: 리셋 설정(`RSTCON`, `ARSTDIS`)을 하고 설정을 기억한다. 포인터가 없거나 쓰기가 실패하면 `MCU_E_INIT_FAILED`.
+    - `Mcu_InitClock`: 드라이버의 `init_clock`(오실레이터, PLL, 분배, K2 단계), 클록 감시, 외부 클록, GTM 순이다(`board-test`의 순서). GTM은 fGTM이 있어야 하므로 여기서 한다. 없는 설정은 `MCU_E_PARAM_CLOCK`, 드라이버 실패는 `E_NOT_OK`다.
+    - AUTOSAR와 다른 점: `init_clock`이 PLL로 분배까지 한다(K2를 PLL을 원천으로 두고 내리기 때문). 그래서 `Mcu_DistributePllClock`은 두 PLL(`SYSPLLSTAT`, `PERPLLSTAT`의 `LOCK`)이 잠겼는지만 보고, 아니면 `MCU_E_PLL_NOT_LOCKED`다.
+    - `Mcu_ResetType`은 드라이버의 리셋 원인을 바이트로 옮긴 것이다(`MCU_POWER_ON_RESET` 0 … `MCU_MULTIPLE_RESET` 10, `MCU_RESET_UNDEFINED` 0xFF). `Mcu_Init` 전에는 모든 함수가 `MCU_E_UNINIT`을 알린다.
+    - `MCU_DEV_ERROR_DETECT` 스위치는 프로젝트에 없어서 늘 `STD_ON`이다.
+  - **설정:** `mcal-mcu::config::McuConfig`(클록 설정 목록과 GTM·감시·외부 클록·리셋 설정에 대한 참조)가 C가 받는 타입이다. `mcal-gen`은 `c_out`이 있을 때만 `mcu.rs`에 `MCU_CONFIG`(`#[export_name = "McuConfigSet"]`)를 붙이고 `Mcu_Cfg.h`(`McuConf_McuClockSettingConfig_CLOCK_CONFIG` 0, `McuConfigSet` 선언)를 쓴다. 그래서 TTCAN 설정 크레이트들은 바뀌지 않았다.
+  - **PC 시험:** `capi-test`의 C 쪽은 초기화 전 `MCU_E_UNINIT`, 널 포인터, 클록 설정, 분배, 잠금, 리셋 원인·원시값, 없는 설정을 확인한다. Rust 쪽은 SCU·GTM 모델의 레지스터(`RSTCON`, `ARSTDIS`, `SYSPLLCON0`, `SYSPLLCON1`, `CCUCON0`, `CMU_CLK_EN`)와 ENDINIT 위반이 없음을 확인한다. TASKING도 헤더와 크기 검사(`Mcu_PllStatusType`·`Mcu_ResetType` 1 B, `Mcu_ClockType` 4 B)를 경고 없이 컴파일한다.
+  - **`blink-c`:** `main.c`가 `Mcu_Init`, `Mcu_GetResetRawValue`, `Mcu_InitClock`, `Mcu_DistributePllClock`, `Mcu_GetPllStatus`를 부른 뒤 `Port_Init`을 한다. 결과는 `CLOCK`(InitClock << 8 | Distribute, 0이면 둘 다 `E_OK`), `PLL`, `RESET`에 남긴다. 플래시 이미지는 6988 B로 여전히 PF1 섹터 0 하나 안이다.
+  - **결과(TriBoard, RAM 이미지, JTAG):** `CLOCK` 0, `PLL` 0(잠김), `RESET` `0x00010000`(PORST)이었다. `STATUS` 1, `DET_COUNT` 1, `DET_LAST` `0x0078010A`였다. `BLINKS`는 2초에 8번 늘어(2 → 10) 250 ms 간격이 되었다. 시험 뒤 `CCUCON0`은 `0x17230113`(설정값)이었다.
+    - 리셋 → 올리기 → 검사를 네 번 되풀이했고 모두 통과했다.
+    - 그 전에 다섯 번 중 두 번은 `BLINKS`가 2에서 멈췄다. 그때 CPU0은 다른 코드(`PC` `0x80407BD2`, PF1 `0xA0404000` 섹터)를 실행 중이었다. `BIV`는 `0x80400400`이었고, CSA(`FCX` `0x000700B3`)는 우리 것이 아니었으며, `PSW.IS` 1, `ICR.PIPN` 10이었다.
+    - 그런데 `RSTSTAT`에는 새 리셋이 없었고(`PORST`만), `RSTCON`은 우리 값 `0x240`, 우리 변수도 그대로였다. SMU 경보 그룹과 워치독 상태는 정상 실행과 같았다. 트랩 벡터와 우선순위 10 벡터에 정지점을 건 실행에서는 일이 나지 않았다.
+    - 원인은 모른다. 시험 중 TAS 서버가 "다른 클라이언트 1개"를 두 번 알렸지만, 둘 다 통과한 실행 앞이었고 다른 디버거 프로세스는 찾지 못했다.
+  - **결과(TriBoard, 플래시 이미지, 허락받음):** 지난번과 같이 PF1 섹터 0 하나만 백업하고 썼다(`--verify`). 백업은 원래 앱과 바이트 단위로 같았다.
+    - `probe-rs reset` 뒤 칩이 스스로 시작해 오실레이터와 PLL을 설정했다. 버스 읽기로 `CLOCK` 0, `PLL` 0, `CCUCON0` `0x17230113`, `SYSPLLSTAT` `0x24`·`PERPLLSTAT` `0x34`(`LOCK`), `OSCCON` `0x0005031A`를 확인했다.
+    - DAP 스크립트(`attach`만): 검사 7개가 모두 맞았다. `BLINKS`가 2초에 78에서 86으로 늘어 250 ms 간격이다. CPU0 PC는 `0xA03015CE`(지연 루프)였다.
+    - 원래 앱을 되돌렸고, 다시 읽은 16 KiB가 백업과 같았다. 리셋 뒤 원래 앱이 `0xA0304962`에서 돌고 `CCUCON0`은 리셋 값 `0x05120112`다.
+- **남은 것:** 위의 원인 모를 정지 두 번, 전원을 껐다 켠 뒤(차가운 오실레이터) 플래시 시작, TASKING으로 링크한 이미지의 Rust DWARF.
 
 컴파일러에 묶이지 않게 하는 규칙:
 
