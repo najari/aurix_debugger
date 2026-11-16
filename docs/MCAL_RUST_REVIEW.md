@@ -147,7 +147,7 @@ flowchart LR
     - 실행 중 `FCX` `0x000D013D`, `LCX` `0x000D0102`였다. 부트 앱의 것이 아니라 `cstart`가 만든 CSA(`0xD0004000`–`0xD0005000`)다. `BIV`는 `0x70104000`, `BTV`는 `0x70107000`이었다.
     - `P33_OUT`은 `0xE0`(LED1 켜짐), `P33_IOCR4`는 `0x80808080`이었다.
   - **한계:**
-    - `ltc`는 Rust 오브젝트의 DWARF를 최종 ELF에 넣지 않는다. 최종 `.debug_info`는 C 것뿐이다. DWARF 4 그대로든 `-Z dwarf-version=3`이든 같았다. 그래서 TASKING으로 링크한 이미지에서 Rust 코드는 심볼만 있고 소스 줄 정보가 없다. Rust만 링크한 `blink`(`rust-lld`)에는 있다.
+    - ~~`ltc`는 Rust 오브젝트의 DWARF를 최종 ELF에 넣지 않는다.~~ 해결(2026-11-16): 아래 "TASKING 이미지의 Rust 디버그 정보".
     - 미리 쓴 `core`·`compiler_builtins`는 split DWARF(`.dwo`)로 staticlib에 들어 있다.
 - **플래시에서 시작(2026-11-16):** 같은 C 응용을 PF1에 링크한 `blink-c-flash.elf`를 칩이 리셋 뒤 스스로 시작한다. 디버거는 붙기만 한다.
   - **이미지:** `mcal-tricore`의 TASKING 링크는 이미지마다 한다(`[package.metadata.mcal-tricore.tasking.images.<image>]`: LSL, `cctc`·`ltc` 옵션). 결과는 `<name>-<image>.elf`다. `blink-c`는 `ram`(`ram.lsl`, `-N`)과 `flash`(`flash.lsl`)를 만든다.
@@ -191,7 +191,33 @@ flowchart LR
     - `probe-rs reset` 뒤 칩이 스스로 시작해 오실레이터와 PLL을 설정했다. 버스 읽기로 `CLOCK` 0, `PLL` 0, `CCUCON0` `0x17230113`, `SYSPLLSTAT` `0x24`·`PERPLLSTAT` `0x34`(`LOCK`), `OSCCON` `0x0005031A`를 확인했다.
     - DAP 스크립트(`attach`만): 검사 7개가 모두 맞았다. `BLINKS`가 2초에 78에서 86으로 늘어 250 ms 간격이다. CPU0 PC는 `0xA03015CE`(지연 루프)였다.
     - 원래 앱을 되돌렸고, 다시 읽은 16 KiB가 백업과 같았다. 리셋 뒤 원래 앱이 `0xA0304962`에서 돌고 `CCUCON0`은 리셋 값 `0x05120112`다.
-- **남은 것:** 위의 원인 모를 정지 두 번, 전원을 껐다 켠 뒤(차가운 오실레이터) 플래시 시작, TASKING으로 링크한 이미지의 Rust DWARF.
+- **TASKING 이미지의 Rust 디버그 정보(2026-11-16):** TASKING으로 링크한 `blink-c`에서 Rust 소스 줄에 정지점을 걸 수 있게 되었다.
+  - **원인:** `ltc`는 아무것도 참조하지 않는 섹션을 지우고(`-Oc`, 기본값), 디버그 섹션의 재배치도 참조로 따라간다.
+    - TASKING C 컴파일러는 함수마다 디버그 조각을 코드와 한 ELF 그룹(`.cluster.<이름>`)에 넣고, 그룹 밖의 공통 `.debug_info`는 그 조각들이 가리켜서 남는다.
+    - Rust 오브젝트에는 `.debug_info` 하나가 모든 함수를 설명하고, 아무것도 그것을 가리키지 않는다. 그래서 통째로 지워졌다.
+    - 확인: `-OC`(지우기 끔)로 링크하면 Rust 컴파일 단위 25개가 남지만, 적재 크기가 7 KB에서 22 KB로 커진다(쓰지 않는 C 인터페이스 함수와 설정까지 남음).
+    - 디버그 섹션만 `--extern`으로 참조하게 해도, 그것이 가리키는 함수가 모두 남는다. 함수 두 개짜리 시험 라이브러리에서 부르지 않은 `rust_b`가 남았다.
+  - **쓰지 않는 Rust 코드를 먼저 지운다:** `ltc`보다 앞에서 지워야 한다.
+    - LLVM `internalize`(`-C passes`)는 fat LTO가 크레이트를 합치기 전 이 크레이트 모듈에만 돌아, 의존 크레이트의 `#[no_mangle]` 함수(`Can_*` 등)를 남겼다(15 KB). 그래서 버렸다.
+    - `rust-lld -r --gc-sections`에 C 오브젝트의 미해결 기호(`llvm-nm -u`)를 뿌리(`-u`)로 주면, C가 쓰는 8개 함수와 설정만 남는다.
+  - **`ltc`의 비정상 종료:** 11-15에 버린 방법과 같은 증상이었다. 원인을 나눠 보니 `.note.hightec.tricore`가 아니라, gc가 지운 섹션을 가리키던 디버그 재배치(기호 0을 가리킴, 2920개)였다. 디버그를 빼면 링크되었다.
+    - `mcal-tricore`가 그 재배치를 ELF에서 지우고, 그 자리에 묘비 값을 쓴다. `.debug_line`에는 -1, `.debug_ranges`·`.debug_loc`에는 1(목록 끝 0, 0으로 읽히지 않게), 나머지에는 0이다.
+  - **디버그 섹션 남기기:** `llvm-objcopy --add-symbol`로 각 디버그 섹션에 전역 기호(`__mcal_tricore_debug_info` 등)를 붙이고, `ltc --extern`으로 참조한다.
+  - **결과:** 이미지 크기는 그대로다(RAM 6964 B, 플래시 6980 B, 전에는 6972 B). Rust 컴파일 단위는 25개이고, 쓰지 않는 `Can_Write`는 없다.
+    - `llvm-addr2line`으로 보면 `Port_Init`은 `mcal-capi/src/port.rs:65`, `Mcu_InitClock`은 `mcu.rs:82`로 풀린다.
+    - `llvm-dwarfdump --verify`의 오류는 TASKING 라이브러리(`abort.c` 등, 줄 표 없음) 쪽뿐이고, `-OC` 이미지에도 있다.
+  - **줄 표의 묘비 값:** 처음에는 0으로 두었다. 그랬더니 디버거가 `driver.rs:62`를 지운 함수의 사본(주소 `0x24`)에 걸었다.
+    - gimli 0.34(probe-rs)는 줄 표의 `set_address`가 -2 이상이면 그 시퀀스를 건너뛰지만, 0은 같은 시퀀스의 앞 주소보다 작을 때만 건너뛴다. 0에서 시작하는 죽은 시퀀스는 코드로 본다.
+    - 그래서 -1(DWARF 5의 묘비 값)로 바꾸었고, 주소 `0x1000` 아래의 줄 표 행이 0개가 되었다.
+    - Rust만 링크한 `blink`(`rust-lld` 최종 링크, 묘비 값 0)에도 그런 행이 497개 있었다. 이제 `-z dead-reloc-in-nonalloc=.debug_line=0xffffffff`로 0개다. 고치기 전 `blink`에서 정지점이 실제로 잘못 걸리는지는 시험하지 않았다.
+  - **TriBoard(RAM, JTAG):**
+    - `blink-c`: `mcal-dio/src/driver.rs:130`(`Dio_FlipChannel`에 인라인됨)에 정지점이 `0x70100202`로 걸렸다. 두 번 연달아 `driver.rs:130:15`에서 멈췄고, 그 사이 `BLINKS`가 2에서 3으로 늘었다. C 줄 `main.c:77`에서도 멈췄다.
+    - `blink`: 같은 줄이 `0x701002ca`로 걸려 같은 결과였다.
+  - **한계:**
+    - 최적화(`opt-level=s`)된 코드라, 함수 첫 줄(`dio.rs:92`)은 프롤로그라 정지점 자리가 아니다. 인라인된 줄은 정의한 파일(`driver.rs`)로 보인다.
+    - 인라인된 지역 변수 `c`는 읽지 못했다("전역 변수가 아님").
+    - C 오브젝트가 쓰지 않고 `compiler_builtins` 등 다른 아카이브 멤버만 쓰는 LTO 오브젝트의 기호는 gc가 지운다. 그런 경우 `ltc`가 미해결 기호로 실패하니, 잘못된 이미지가 조용히 나오지는 않는다.
+- **남은 것:** 위의 원인 모를 정지 두 번, 전원을 껐다 켠 뒤(차가운 오실레이터) 플래시 시작.
 
 컴파일러에 묶이지 않게 하는 규칙:
 
