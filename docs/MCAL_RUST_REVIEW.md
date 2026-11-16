@@ -129,7 +129,50 @@ flowchart LR
 - **칩에서 실행(2026-11-15):** `examples/triboard-tc3x5/blink`는 우리 드라이버와 생성된 TriBoard 설정으로 만든 Rust 프로그램이다. `Port_Init`을 하고 LED1을 Dio로 250 ms마다 뒤집으며, `STATUS`·`BLINKS`를 남긴다.
   - **링크:** CPU0 RAM에 링크했다(`ram.ld`: PSPR `0x70100000`, DSPR `0x7000C000`). 그래서 플래시를 쓰지 않는다. `mcal-tricore`가 프로그램 크레이트를 HighTec `rust-lld`로 링크한다. 미해결 기호는 HighTec `core`가 부르는 `abort` 하나뿐이었고, 예제가 정의한다. 결과는 `.text` 3.5 KB, `.rodata` 480 B, 데이터 8 B다.
   - **실행:** `start_in_flash`로 RAM에 올리고 DAP 스크립트로 CPU0을 실행했다. 데이터와 스택이 부트 앱의 CSA(`FCX` `0x700020C0`부터 `LCX` `0x70005F80`까지)와 겹치지 않음을 먼저 확인했다. `STATUS`는 1(`Port_Init` 성공)이었고, `BLINKS`는 4초 동안 5에서 13으로 늘었다. 멈춘 뒤 `P33_OUT`이 `0xE0`(LED1만 켜짐, 13번 뒤집은 결과)이고, `P33_IOCR4`는 P33.4–7 출력이었다. 보드는 JTAG(OCDS)로 연결된 상태였다.
-- **남은 것:** 플래시에서 시작하는 펌웨어(시작 코드: 스택, CSA, 0 채우기·복사, 워치독)와, C 응용(TASKING)과 C 인터페이스를 함께 링크하는 경로.
+- **TASKING C 응용과 링크(2026-11-15):** `examples/triboard-tc3x5/blink-c`는 TASKING으로 빌드한 C 응용이다. C 인터페이스로 Rust 드라이버를 부르고, TriBoard의 CPU0 RAM에서 돈다(`blink-c-ram.elf`). 플래시 이미지는 아래 "플래시에서 시작"에 있다.
+  - **Rust 쪽:** `mcal-capi`와 `triboard-cfg`를 담은 staticlib이다. `mcal-tricore`가 fat LTO(`-C lto=fat -C codegen-units=1`)로 오브젝트 하나에 담고, `-C llvm-args=-align-all-functions=1`로 함수를 2바이트로 정렬한다.
+    - HighTec LLVM은 함수 섹션(`.text.<fn>`) 정렬을 1로 낸다. 그래서 TASKING `ltc`가 `Port_Init`을 `0x800026F3`에 두었고, 호출(`R_TRICORE_24REL`)이 E121 "not 1-mau aligned"로 실패했다. `rust-lld`는 섹션을 차례로 이어 붙이고 TriCore 명령이 모두 짝수 크기라 드러나지 않았다.
+    - 미리 쓴 `compiler_builtins`의 Rust 함수도 정렬이 1이다. 이번 링크에서는 쓰이지 않았다. 쓰이더라도 홀수 주소 호출은 E121로 링크가 실패하니, 잘못된 이미지가 조용히 나오지는 않는다.
+  - **먼저 시도한 방법(버림):** `rust-lld -r --gc-sections`와 링커 스크립트로 Rust 쪽을 재배치 오브젝트 하나로 미리 링크하는 방법이다.
+    - gc로 버린 함수를 가리키던 디버그 재배치(약 5천 개)가 심볼 0을 가리키게 된다. 이것과, 합쳐진 `.note.hightec.tricore`가 함께 있으면 `ltc`가 비정상 종료(segmentation fault)한다.
+    - gc를 빼면 링크는 되지만, Rust 쪽이 316 KB로 커진다.
+  - **C 쪽:** TASKING `cctc`(`-g --default-near-size=0`)와 `ltc`, TASKING `cstart`(`libcs_fpu`)를 쓴다.
+    - `ram.lsl`은 `tc36x.lsl`에 `__REDEFINE_ON_CHIP_ITEMS`를 주고, 칩 메모리를 PSPR0과 DSPR0 둘만 다시 정의한다. 그래서 다른 곳에는 아무것도 놓일 수 없다. 코드가 가도록 PSPR0은 rom으로 둔다.
+    - `RESET`, `INTTAB`, `TRAPTAB`은 PSPR(`0x70100000`, `0x70104000`, `0x70107000`)이다. BMHD0–3은 `__BMHD_DISABLE`, SCR 항목은 끈다. `ltc -N`으로 초기값의 ROM 사본을 만들지 않는다.
+    - `--default-near-size=0`은, RAM의 전역 주소를 abs18(near)로 닿을 수 없기 때문이다.
+    - `cstart`의 기본값은 CSA, 스택, BTV/BIV, C 변수 초기화와 CPU0·안전 워치독 끄기다. 다른 코어는 시작하지 않는다(`__START_INIT_TC1..5 = 0`).
+  - **올리기 전 확인:** 로드 세그먼트 67개(2822 B)가 모두 DSPR0·PSPR0 안이고, 플래시·UCB에는 없다. 진입점은 `_START` `0x70100000`이다.
+  - **결과(TriBoard, JTAG):** `start_in_flash`로 올리고 DAP 스크립트로 실행했고, 검사 5개가 모두 맞았다.
+    - `STATUS` 1, `DET_COUNT` 1, `DET_LAST` `0x0078010A`(Dio 120, `Dio_WriteChannel` 0x01, `DIO_E_PARAM_INVALID_CHANNEL_ID` 0x0A)였다. Rust가 C의 `Det_ReportError`를 불렀다는 뜻이다. `BLINKS`는 5에서 13으로 늘었다.
+    - 실행 중 `FCX` `0x000D013D`, `LCX` `0x000D0102`였다. 부트 앱의 것이 아니라 `cstart`가 만든 CSA(`0xD0004000`–`0xD0005000`)다. `BIV`는 `0x70104000`, `BTV`는 `0x70107000`이었다.
+    - `P33_OUT`은 `0xE0`(LED1 켜짐), `P33_IOCR4`는 `0x80808080`이었다.
+  - **한계:**
+    - `ltc`는 Rust 오브젝트의 DWARF를 최종 ELF에 넣지 않는다. 최종 `.debug_info`는 C 것뿐이다. DWARF 4 그대로든 `-Z dwarf-version=3`이든 같았다. 그래서 TASKING으로 링크한 이미지에서 Rust 코드는 심볼만 있고 소스 줄 정보가 없다. Rust만 링크한 `blink`(`rust-lld`)에는 있다.
+    - 미리 쓴 `core`·`compiler_builtins`는 split DWARF(`.dwo`)로 staticlib에 들어 있다.
+- **플래시에서 시작(2026-11-16):** 같은 C 응용을 PF1에 링크한 `blink-c-flash.elf`를 칩이 리셋 뒤 스스로 시작한다. 디버거는 붙기만 한다.
+  - **이미지:** `mcal-tricore`의 TASKING 링크는 이미지마다 한다(`[package.metadata.mcal-tricore.tasking.images.<image>]`: LSL, `cctc`·`ltc` 옵션). 결과는 `<name>-<image>.elf`다. `blink-c`는 `ram`(`ram.lsl`, `-N`)과 `flash`(`flash.lsl`)를 만든다.
+  - **어디에 두나:** UCB는 쓰지 않으므로, 보드의 BMHD가 정한 곳에 두어야 한다. UCB를 읽어 확인했다(읽기만).
+    - BMHD0(`0xAF400000`): BMI `0x000E`, `BMHDID` `0xB359`, STAD `0xA0300000`(PF1 시작)이다.
+    - BMHD1–3: BMI `0x000F`, STAD `0xA0000000`이다.
+    - 네 개 모두 확인 단어 `0x43211234`(`+0x1F0`)가 있고 CRC가 맞다. CRC는 앞 두 단어를 큰 엔디언 바이트로 둔 CRC32다(TASKING `crc32w`). 그래서 SSW는 BMHD0을 따라 `0xA0300000`에서 시작한다.
+  - **`flash.lsl`:** `ram.lsl`처럼 칩 메모리를 다시 정의한다. DSPR0, PSPR0, 그리고 PF1 첫 논리 섹터(`0xA0300000`, 16 KiB) 하나만 rom으로 둔다. 그래서 코드, 상수, 변수 초기값, CPU0·CPU1 트랩 표가 모두 그 섹터 안에 놓이고, 다른 섹터는 지워지지 않는다.
+    - 위치: `RESET` `0xA0300000`, `INTTAB` `0xA0302000`, `TRAPTAB` `0xA0303E00`이다. BMHD0–3은 `__BMHD_DISABLE`이다(이미지에 UCB가 없다).
+    - 그 섹터는 캐시하지 않는 주소로만 매핑한다. `RESET`의 점프(`J`, 24비트 상대)는 `0xA0300000`에서 캐시 별칭 `0x8030xxxx`까지 닿지 않는다(E121). TASKING 기본값(`RESET` `0xA0000020`, 코드 `0x8000xxxx`)은 abs24로 닿는 범위라 드러나지 않는다.
+    - CPU1 트랩 표는 `TRAPTAB + 0x100`이라, `TRAPTAB`이 섹터 끝에서 0x200 앞이어야 한다.
+  - **올리기 전 확인:** 플래시 세그먼트 62개(2822 B)가 모두 `0xA0300000`–`0xA0303FFF` 안이다. 나머지 5개는 DSPR의 변수(파일 크기 0)다. 진입점 `_START`는 `0xA0300000`이다.
+  - **쓰기(허락받음):** 그 섹터에는 BMHD0이 시작시키는 기존 앱이 있었다(`pflash_usage`: `0xA0300000`–`0xA0317FFF`의 6섹터).
+    - `PROBE_RS_TRICORE_FLASH_BACKUP`으로 지우기 전에 백업했고, `probe-rs download --verify`로 썼다. 지워진 섹터는 `0xA0300000` 하나였다.
+  - **결과(TriBoard, `probe-rs reset` 뒤):**
+    - 버스 읽기(코어를 멈추지 않음): `STATUS` 1, `DET_COUNT` 1, `DET_LAST` `0x0078010A`였다. `BLINKS`는 리셋 직후 1에서 늘었다.
+    - DAP 스크립트(`attach`만, 이미지를 올리지 않음): 검사 5개가 모두 맞았다. `BLINKS`가 2초에 87에서 91로 늘었다.
+    - CPU0 PC는 `0xA0300A14`였다(`delay_us`, `main` 바로 앞). `DBGSR`은 실행 중이었다.
+  - **클록:** 플래시에서 스스로 시작하면 클록을 아무도 설정하지 않는다. `CCUCON0` `0x05120112`(`STMDIV` 2)이고 fSTM은 백업 클록 100 MHz의 절반인 50 MHz다.
+    - 그래서 100 MHz를 가정한 `delay_us(250000)`이 500 ms다. STM `0x2B3B124C` ÷ 50 MHz ≈ 14.5 s는 `BLINKS` 29 × 0.5 s와 맞다.
+    - RAM에서 돌릴 때는 부트 앱이 클록을 설정해 두어 250 ms였다. 이 예제에는 클록 설정이 없다.
+  - **되돌림:** 백업 JSON을 16 KiB 바이너리로 풀어 같은 섹터에 다시 썼다(`--verify`).
+    - 다시 읽은 16 KiB가 백업과 바이트 단위로 같았다.
+    - 리셋 뒤 CPU0은 기존 앱 영역(`0xA0304962`)에서 실행 중이다.
+- **남은 것:** Mcu의 C 인터페이스(`mcal-capi`에는 Dio, Port, Can만 있다)와 이 예제의 클록 설정, 그리고 TASKING으로 링크한 이미지의 Rust DWARF.
 
 컴파일러에 묶이지 않게 하는 규칙:
 
